@@ -88,6 +88,7 @@ def main() -> int:
         print(f"已从 checkpoint 恢复：step={trainer.step} iter={trainer.iteration} "
               f"replay={len(trainer.buffer)} 局面")
 
+    trainer.verify_fp8_compute()
     driver = trainer.make_driver()
     t_start = time.time()
 

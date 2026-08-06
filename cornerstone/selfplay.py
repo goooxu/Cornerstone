@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass, field
 
@@ -85,16 +86,29 @@ class SelfPlayDriver:
         self.logit_np = self.logit_host.numpy()
         self.wdl_np = self.wdl_host.numpy()
 
+    def _device_ctx(self):
+        """把当前 CUDA 设备设成本驱动所在的卡。
+
+        FP8 必须这么做：TransformerEngine 的 cuBLAS 句柄按**当前设备**取，
+        张量在 cuda:1 而当前设备是 cuda:0 时会报
+        `cublas_gemm: the function failed to launch on the GPU`，
+        而且报错点常常飘到注意力的 cuDNN kernel 上，离根因很远。
+        `torch.cuda.device` 是线程局部的，所以多卡多线程各设各的互不影响。
+        """
+        return (torch.cuda.device(self.device) if self.device.type == "cuda"
+                else contextlib.nullcontext())
+
     @torch.no_grad()
     def _evaluate(self, n: int) -> None:
         # 走 autocast 而不是手工转 dtype：权重保持 fp32 主副本，
         # 与训练路径完全一致，否则推理和训练看到的是两个不同的模型
         m = self.planes.shape[0] if self.fixed_batch else n
-        p = self.planes_t[:m].to(self.device, non_blocking=True)
-        s = self.scalars_t[:m].to(self.device, non_blocking=True)
-        with torch.autocast(self.device.type, dtype=self.dtype,
-                            enabled=self.device.type == "cuda"):
-            pol, wdl, _ = self.fwd(p, s)
+        with self._device_ctx():
+            p = self.planes_t[:m].to(self.device, non_blocking=True)
+            s = self.scalars_t[:m].to(self.device, non_blocking=True)
+            with torch.autocast(self.device.type, dtype=self.dtype,
+                                enabled=self.device.type == "cuda"):
+                pol, wdl, _ = self.fwd(p, s)
         self.logit_host[:n].copy_(pol[:n].float(), non_blocking=True)
         self.wdl_host[:n].copy_(wdl[:n].float().softmax(dim=-1), non_blocking=True)
         if self.device.type == "cuda":

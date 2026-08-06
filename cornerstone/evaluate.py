@@ -143,11 +143,14 @@ def evaluate_vs_network(
     两方各自建树、各用各的网络。`prepare()` 会告诉我们每个待评估局面归谁算，
     按标记分组前向再合并即可。
     """
+    import contextlib
+
     import numpy as np
 
     from . import _engine as E
     from .model import ACTIONS, BOARD, PLANES, SCALARS
 
+    dev = torch.device(device)
     parallel = max(2, min(parallel_games, games))
     mcts = E.MctsConfig(simulations=simulations, max_considered=16, temperature_plies=0)
     ev = E.EvalConfig(enabled=True, net_opponent=True, opening_plies=opening_plies)
@@ -170,11 +173,12 @@ def evaluate_vs_network(
             idx = np.flatnonzero(which[:n] == tag)
             if idx.size == 0:
                 continue
-            p = torch.from_numpy(planes[idx]).to(device)
-            s = torch.from_numpy(scalars[idx]).to(device)
-            with torch.autocast(torch.device(device).type, dtype=dtype,
-                                enabled=torch.device(device).type == "cuda"):
-                pol, w, _ = model(p, s)
+            # 当前 CUDA 设备必须与张量设备一致，否则 TE 的 FP8 GEMM 会启动失败
+            with (torch.cuda.device(dev) if dev.type == "cuda" else contextlib.nullcontext()):
+                p = torch.from_numpy(planes[idx]).to(device)
+                s = torch.from_numpy(scalars[idx]).to(device)
+                with torch.autocast(dev.type, dtype=dtype, enabled=dev.type == "cuda"):
+                    pol, w, _ = model(p, s)
             logits[idx] = pol.float().cpu().numpy()
             wdl[idx] = w.float().softmax(dim=-1).cpu().numpy()
         eng.feed(logits[:n], wdl[:n])

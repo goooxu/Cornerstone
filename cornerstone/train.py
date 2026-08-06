@@ -160,6 +160,31 @@ class Trainer:
         cos = 0.5 * (1 + math.cos(math.pi * t))
         return c.lr * (c.min_lr_ratio + (1 - c.min_lr_ratio) * cos)
 
+    def verify_fp8_compute(self) -> bool:
+        """跑一次前向，确认 FP8 层**确实在用 FP8 计算**，并把结论写进日志。
+
+        TE 在「权重是量化的、但计算没走量化」时只发一条 UserWarning，
+        淹在日志里很容易被忽略 —— 而这种情况下模型看着在训练、
+        实际上 FP8 名存实亡。与其等着从警告里推断，不如每次启动主动测一次。
+        """
+        if not self.cfg.fp8:
+            return True
+        import warnings
+        hits: list[str] = []
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with torch.no_grad(), torch.cuda.device(self.device), \
+                    torch.autocast("cuda", dtype=torch.bfloat16):
+                self.model(
+                    torch.zeros(8, E.NUM_PLANES, E.BOARD_N, E.BOARD_N, device=self.device),
+                    torch.zeros(8, E.NUM_SCALARS, device=self.device))
+            hits = [str(w.message) for w in caught
+                    if "quantized compute" in str(w.message)]
+        ok = not hits
+        print(f"[自检] FP8 计算{'已启用' if ok else '未启用 —— 权重是量化的但 GEMM 没走 FP8！'}",
+              flush=True)
+        return ok
+
     # ---- 自博弈 ----
     def make_driver(self):
         """单卡返回 SelfPlayDriver，多卡返回 MultiGpuSelfPlay，两者接口一致。
@@ -176,12 +201,6 @@ class Trainer:
         )
         seed = int(self.rng.integers(1 << 30))
         devices = visible_devices(c.selfplay_devices)
-        if c.fp8 and len(devices) > 1:
-            # TE 的 FP8 状态（cuBLAS 工作区、句柄）是**进程级且绑定单设备**的：
-            # 同一进程里在第二张卡上做 FP8 GEMM 会直接 "failed to launch on the GPU"。
-            # 正确的多卡 FP8 做法是每卡一个独立进程，属于后续工作。
-            print(f"[配置] FP8 模式下自博弈只能单卡，忽略 {devices[1:]}")
-            devices = [str(self.device)]
         if len(devices) <= 1:
             return SelfPlayDriver(self.model, self.device, num_games=c.parallel_games,
                                   mcts=mcts, seed=seed, compile_model=c.compile_model,

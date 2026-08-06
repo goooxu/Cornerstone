@@ -35,15 +35,61 @@ def test_weights_are_stored_as_mxfp8(linear):
     assert w._rowwise_scale_inv.shape[-1] == 256 // F.MX_BLOCK
 
 
-def test_fp8_master_weights_do_not_save_memory(linear):
-    """记录一个反直觉的事实：行/列两套布局都要存，所以每参数约 2.06 字节，
-    比 BF16 的 2 字节还多。FP8 在这里买的是吞吐不是显存。"""
+def test_mxfp8_costs_2_06_bytes_per_param(linear):
+    """MXFP8 每参数 2.06 字节：行/列两套 E4M3 数据 + 两套 E8M0 块缩放。
+
+    比**纯 BF16 存储**（2 字节）略多 —— 因为块缩放的 FP8 没法便宜地转置，
+    反向的两个 GEMM 需要不同的连续维，只能两套都留。
+
+    但项目里真正的对照不是「纯 BF16 存储」：非 FP8 配置走的是标准混合精度，
+    主权重是 **fp32**（4 字节/参数），autocast 只在计算时临时转 BF16。
+    对着那个基线，FP8 是实打实省显存的 —— 见
+    test_fp8_saves_memory_against_the_actual_baseline。
+    """
     w = linear.weight
     fp8_bytes = (w._rowwise_data.numel() + w._columnwise_data.numel()
                  + w._rowwise_scale_inv.numel() + w._columnwise_scale_inv.numel())
-    bf16_bytes = w.numel() * 2
-    assert fp8_bytes > bf16_bytes
     assert fp8_bytes / w.numel() == pytest.approx(2.0625, abs=0.01)
+    assert fp8_bytes > w.numel() * 2          # 略多于纯 BF16 存储
+    assert fp8_bytes < w.numel() * 4          # 但远少于 fp32 主权重
+
+
+def test_fp8_saves_memory_against_the_actual_baseline():
+    """对着项目里真实的 BF16 配置比：后者的主权重是 **fp32**（标准混合精度）。
+
+    节省的比例取决于有多少参数被量化（首尾 block 与所有卷积/Norm/头都不量化），
+    所以这里不钉总量比值，而是钉两条与规模无关的性质：
+      1. 非 FP8 配置的参数确实是 fp32
+      2. 被量化的那部分，2.06 字节/参数，约为 fp32 的 52%
+    """
+    from cornerstone.model import CornerNet, ModelConfig
+
+    def stats(fp8: bool):
+        with torch.cuda.device("cuda"):
+            m = CornerNet(ModelConfig(dim=256, blocks=8, fp8=fp8)).cuda()
+        total = qbytes = qparams = 0
+        dtypes = set()
+        for p in m.parameters():
+            if F.is_quantized(p):
+                b = sum(x.numel() for x in (p._rowwise_data, p._columnwise_data,
+                                            p._rowwise_scale_inv, p._columnwise_scale_inv))
+                qbytes += b
+                qparams += p.numel()
+                total += b
+            else:
+                dtypes.add(p.dtype)
+                total += p.numel() * p.element_size()
+        return total, qbytes, qparams, dtypes
+
+    bf16_total, _, bf16_q, bf16_dtypes = stats(False)
+    fp8_total, qbytes, qparams, _ = stats(True)
+
+    assert bf16_q == 0, "非 FP8 配置不该有量化参数"
+    assert bf16_dtypes == {torch.float32}, (
+        f"非 FP8 配置的主权重应当是 fp32（autocast 只在计算时转 BF16），实际 {bf16_dtypes}")
+    assert qparams > 0
+    assert qbytes / (qparams * 4) == pytest.approx(0.5156, abs=0.02), "量化部分应约为 fp32 的一半"
+    assert fp8_total < bf16_total, "整体上 FP8 配置应当更省"
 
 
 def test_roundtrip_error_is_within_e4m3_resolution(linear):
