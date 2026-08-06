@@ -256,6 +256,33 @@ def test_fp8_model_works_when_current_device_differs():
         "退回了非量化计算 —— FP8 名存实亡"
 
 
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="需要至少两张卡")
+def test_fp8_adamw_works_when_current_device_differs():
+    """优化器也要能在「当前设备对不上」时正常更新。
+
+    护栏最早只加在模型前向上，结果 A/B 实验第二次崩在 Fp8AdamW 里：
+    read_weight 的 dequantize 也按当前设备分配，模型在 cuda:1 而当前设备
+    是 cuda:0 就报 Expected all tensors to be on the same device。
+    """
+    with torch.cuda.device("cuda:1"):
+        lin = F.fp8_linear(128, 256, bias=False).to("cuda:1")
+    before = F.read_weight(lin.weight).clone()
+    opt = F.Fp8AdamW(lin.parameters(), lr=1e-2)
+
+    torch.cuda.set_device(0)                      # 故意错开
+    for _ in range(5):
+        with torch.cuda.device("cuda:1"), F.fp8_autocast():
+            loss = lin(torch.randn(32, 128, device="cuda:1",
+                                   dtype=torch.bfloat16)).float().pow(2).mean()
+        loss.backward()
+        opt.step()
+        opt.zero_grad()
+    after = F.read_weight(lin.weight)
+    assert F.is_quantized(lin.weight)
+    assert (after - before).abs().mean() > 0
+    assert torch.isfinite(after).all()
+
+
 def test_fp8_adamw_handles_mixed_quantized_and_plain_params():
     lin = F.fp8_linear(64, 64, bias=False).cuda()
     plain = torch.nn.Linear(64, 64).cuda()

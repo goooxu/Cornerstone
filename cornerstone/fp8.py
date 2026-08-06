@@ -79,6 +79,21 @@ def is_quantized(t: torch.Tensor) -> bool:
     return isinstance(t, te.MXFP8Tensor) or hasattr(t, "_rowwise_data")
 
 
+def device_scope(t: torch.Tensor):
+    """把当前 CUDA 设备设成张量所在的卡。
+
+    TE 的量化/反量化和 GEMM 都按**当前设备**取上下文，不匹配时要么静默退回
+    非量化计算，要么报 `Expected all tensors to be on the same device` /
+    `illegal memory access`。这个坑在三个地方各踩了一次：
+    模型前向、自博弈推理、**优化器的反量化**。
+
+    所以护栏下沉到「碰 TE 的原语」这一层 —— read_weight / write_weight_ /
+    CornerNet.forward，而不是指望每个调用点都记得包一层。
+    """
+    dev = t.device
+    return torch.cuda.device(dev) if dev.type == "cuda" else contextlib.nullcontext()
+
+
 # ---- 随机舍入 ----
 
 def _block_amax(x: torch.Tensor, block: int = MX_BLOCK) -> torch.Tensor:
@@ -132,12 +147,17 @@ def write_weight_(param: torch.Tensor, value: torch.Tensor,
     if not is_quantized(param):
         param.data.copy_(value)
         return
-    src = stochastic_round(value, generator) if stochastic else value
-    param.quantize_(src.float())
+    with device_scope(param):
+        src = stochastic_round(value.to(param.device), generator) if stochastic \
+            else value.to(param.device)
+        param.quantize_(src.float())
 
 
 def read_weight(param: torch.Tensor) -> torch.Tensor:
-    return param.dequantize().float() if is_quantized(param) else param.data.float()
+    if not is_quantized(param):
+        return param.data.float()
+    with device_scope(param):
+        return param.dequantize().float()
 
 
 def dequantized_state_dict(model: torch.nn.Module) -> dict:
@@ -152,7 +172,11 @@ def dequantized_state_dict(model: torch.nn.Module) -> dict:
     """
     out = {}
     for k, v in model.state_dict().items():
-        out[k] = v.dequantize().float() if is_quantized(v) else v
+        if is_quantized(v):
+            with device_scope(v):
+                out[k] = v.dequantize().float()
+        else:
+            out[k] = v
     return out
 
 
@@ -169,7 +193,8 @@ def load_state_dict_into(model: torch.nn.Module, sd: dict) -> None:
             if k.endswith("_extra_state"):
                 continue
             if is_quantized(v):
-                v = v.dequantize()
+                with device_scope(v):
+                    v = v.dequantize()
             if k in params:
                 p = params[k]
                 if is_quantized(p):
@@ -203,40 +228,43 @@ class Fp8AdamW(torch.optim.Optimizer):
     @torch.no_grad()
     def step(self, closure=None):
         loss = closure() if closure is not None else None
-
         for group in self.param_groups:
             b1, b2 = group["betas"]
             lr, eps, wd = group["lr"], group["eps"], group["weight_decay"]
-
             for p in group["params"]:
                 if p.grad is None:
                     continue
-                state = self.state[p]
-                if not state:
-                    state["step"] = 0
-                    shape = p.shape
-                    state["m"] = torch.zeros(shape, dtype=self.state_dtype, device=p.device)
-                    state["v"] = torch.zeros(shape, dtype=self.state_dtype, device=p.device)
-
-                state["step"] += 1
-                t = state["step"]
-                g = p.grad.float()
-                w = read_weight(p)
-
-                m = state["m"].float().mul_(b1).add_(g, alpha=1 - b1)
-                v = state["v"].float().mul_(b2).addcmul_(g, g, value=1 - b2)
-                state["m"].copy_(m)
-                state["v"].copy_(v)
-
-                mh = m / (1 - b1 ** t)
-                vh = v / (1 - b2 ** t)
-                if wd:
-                    w = w * (1 - lr * wd)          # 解耦权重衰减，在 fp32 下做
-                w = w - lr * mh / (vh.sqrt() + eps)
-
-                write_weight_(p, w, stochastic=self.stochastic_rounding)
-
+                # 每个参数都在自己那张卡的上下文里更新：反量化/量化都按当前设备
+                # 取 TE 的上下文，模型在 cuda:2 而当前设备是 cuda:0 会直接报
+                # "Expected all tensors to be on the same device"
+                with device_scope(p):
+                    self._update(p, b1, b2, lr, eps, wd)
         return loss
+
+    def _update(self, p, b1, b2, lr, eps, wd) -> None:
+        state = self.state[p]
+        if not state:
+            state["step"] = 0
+            state["m"] = torch.zeros(p.shape, dtype=self.state_dtype, device=p.device)
+            state["v"] = torch.zeros(p.shape, dtype=self.state_dtype, device=p.device)
+
+        state["step"] += 1
+        t = state["step"]
+        g = p.grad.float()
+        w = read_weight(p)
+
+        m = state["m"].float().mul_(b1).add_(g, alpha=1 - b1)
+        v = state["v"].float().mul_(b2).addcmul_(g, g, value=1 - b2)
+        state["m"].copy_(m)
+        state["v"].copy_(v)
+
+        mh = m / (1 - b1 ** t)
+        vh = v / (1 - b2 ** t)
+        if wd:
+            w = w * (1 - lr * wd)          # 解耦权重衰减，在 fp32 下做
+        w = w - lr * mh / (vh.sqrt() + eps)
+
+        write_weight_(p, w, stochastic=self.stochastic_rounding)
 
 
 @contextlib.contextmanager
