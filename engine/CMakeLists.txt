@@ -43,6 +43,7 @@ pybind11_add_module(_engine
   src/pieces.cpp
   src/board.cpp
   src/playout.cpp
+  src/agents.cpp
   src/reference.cpp
   src/bindings.cpp)
 

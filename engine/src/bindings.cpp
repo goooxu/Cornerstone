@@ -2,6 +2,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include "cornerstone/agents.hpp"
 #include "cornerstone/board.hpp"
 #include "cornerstone/pieces.hpp"
 #include "cornerstone/playout.hpp"
@@ -190,6 +191,66 @@ PYBIND11_MODULE(_engine, m) {
     m.def("legal_moves_reference",
           [](const Board& b) { return to_i32(legal_moves_reference(b)); },
           py::arg("board"), "朴素参考实现，仅用于测试交叉比对");
+
+    // ---- 规则基线智能体 ----
+    py::enum_<AgentKind>(m, "AgentKind")
+        .value("Random", AgentKind::Random)
+        .value("GreedyArea", AgentKind::GreedyArea)
+        .value("GreedyMobility", AgentKind::GreedyMobility)
+        .value("FlatMCTS", AgentKind::FlatMCTS);
+
+    py::class_<AgentConfig>(m, "AgentConfig")
+        .def(py::init([](AgentKind kind, int rollouts, double w_size, double w_own_anchors,
+                         double w_opp_anchors, double temperature) {
+                 AgentConfig c;
+                 c.kind = kind;
+                 c.rollouts = rollouts;
+                 c.w_size = w_size;
+                 c.w_own_anchors = w_own_anchors;
+                 c.w_opp_anchors = w_opp_anchors;
+                 c.temperature = temperature;
+                 return c;
+             }),
+             py::arg("kind") = AgentKind::Random, py::arg("rollouts") = 1000,
+             py::arg("w_size") = 1.0, py::arg("w_own_anchors") = 1.0,
+             py::arg("w_opp_anchors") = 1.0, py::arg("temperature") = 0.0)
+        .def_readwrite("kind", &AgentConfig::kind)
+        .def_readwrite("rollouts", &AgentConfig::rollouts)
+        .def_readwrite("w_size", &AgentConfig::w_size)
+        .def_readwrite("w_own_anchors", &AgentConfig::w_own_anchors)
+        .def_readwrite("w_opp_anchors", &AgentConfig::w_opp_anchors)
+        .def_readwrite("temperature", &AgentConfig::temperature);
+
+    m.def("select_move",
+          [](const Board& b, const AgentConfig& cfg, uint64_t seed) {
+              uint64_t s = seed;
+              return select_move(b, cfg, s);
+          },
+          py::arg("board"), py::arg("config"), py::arg("seed") = 0);
+
+    m.def("play_match",
+          [](const AgentConfig& a, const AgentConfig& b, int64_t games, uint64_t seed,
+             int threads, int opening_plies) {
+              MatchResult r;
+              {
+                  py::gil_scoped_release release;
+                  r = play_match(a, b, games, seed, threads, opening_plies);
+              }
+              py::dict d;
+              d["games"] = r.games;
+              d["wins_a"] = r.wins_a;
+              d["wins_b"] = r.wins_b;
+              d["draws"] = r.draws;
+              d["score_a"] = r.score_a;
+              d["score_b"] = r.score_b;
+              d["plies"] = r.plies;
+              d["a_as_first"] = r.a_as_first;
+              d["a_wins_as_first"] = r.a_wins_as_first;
+              d["a_wins_as_second"] = r.a_wins_as_second;
+              return d;
+          },
+          py::arg("a"), py::arg("b"), py::arg("games"), py::arg("seed") = 0,
+          py::arg("threads") = 1, py::arg("opening_plies") = 0);
 
     m.def("decode_action", &decode_action, py::arg("action"));
     m.def("encode_action", [](int ori, int anchor_cell) { return encode_action(ori, anchor_cell); },
