@@ -34,6 +34,15 @@ RUNS="$(dirname "$REPO")/runs"
 A_EXP="${A_EXP:-ab-bf16}"
 B_EXP="${B_EXP:-ab-fp8}"
 
+# 两条腿各自用哪些 GPU。默认挤在一台机器上各占两张卡；
+# 有第二台机器时，在各自机器上分别 start 单条腿、各占四张卡：
+#   机器 1:  A_DEVICES=cuda:0,cuda:1,cuda:2,cuda:3 bash scripts/ab_experiment.sh start-a
+#   机器 2:  B_DEVICES=cuda:0,cuda:1,cuda:2,cuda:3 bash scripts/ab_experiment.sh start-b
+# **两条腿的卡数必须一致**，否则每卡的并行局数不同，就多了一个变量。
+A_DEVICES="${A_DEVICES:-cuda:0,cuda:1}"
+B_DEVICES="${B_DEVICES:-cuda:2,cuda:3}"
+ENGINE_THREADS="${ENGINE_THREADS:-64}"
+
 # 除 --fp8 与设备外，两边逐字相同
 COMMON=(
   --dim 256 --blocks 16 --attn-every 4
@@ -41,7 +50,6 @@ COMMON=(
   --simulations 64 --max-considered 16 --temperature-plies 12
   --batch-size 1024 --steps-per-iter 400
   --lr 0.002 --warmup-steps 500 --total-steps 200000
-  --engine-threads 64
   --compile-model false          # 两边都关，消掉这个变量
   --milestone-every-steps 10000
   --eval-opponent flat-mcts-4k --eval-simulations 128 --eval-every-iters 10
@@ -52,20 +60,30 @@ case "${1:-}" in
   start)
     for e in "$A_EXP" "$B_EXP"; do
       if [ -e "$RUNS/$e/ckpt/latest" ]; then
-        echo "$RUNS/$e 已有 checkpoint —— 对照实验必须从零开始。" >&2
-        echo "要重来请先手动清掉该目录。" >&2
+        echo "$RUNS/$e 已有 checkpoint —— 首次启动必须从零开始。" >&2
+        echo "要重来请先手动清掉该目录；要续训请用 start-a / start-b。" >&2
         exit 1
       fi
     done
-    bash "$REPO/scripts/train.sh" start "$A_EXP" \
-      --fp8 false --device cuda:0 --selfplay-devices cuda:0,cuda:1 "${COMMON[@]}"
-    bash "$REPO/scripts/train.sh" start "$B_EXP" \
-      --fp8 true  --device cuda:2 --selfplay-devices cuda:2,cuda:3 "${COMMON[@]}"
+    "$0" start-a
+    "$0" start-b
+    ;;
+  start-a)
+    bash "$REPO/scripts/train.sh" start "$A_EXP" --fp8 false \
+      --device "${A_DEVICES%%,*}" --selfplay-devices "$A_DEVICES" \
+      --engine-threads "$ENGINE_THREADS" "${COMMON[@]}"
+    ;;
+  start-b)
+    bash "$REPO/scripts/train.sh" start "$B_EXP" --fp8 true \
+      --device "${B_DEVICES%%,*}" --selfplay-devices "$B_DEVICES" \
+      --engine-threads "$ENGINE_THREADS" "${COMMON[@]}"
     ;;
   stop)
     bash "$REPO/scripts/train.sh" stop "$A_EXP"
     bash "$REPO/scripts/train.sh" stop "$B_EXP"
     ;;
+  stop-a) bash "$REPO/scripts/train.sh" stop "$A_EXP" ;;
+  stop-b) bash "$REPO/scripts/train.sh" stop "$B_EXP" ;;
   status)
     for e in "$A_EXP" "$B_EXP"; do
       echo "=== $e ==="
