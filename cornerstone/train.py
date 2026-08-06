@@ -67,6 +67,7 @@ class TrainConfig:
     # replay
     replay_capacity: int = 3_000_000
     min_positions: int = 20_000     # 攒够这么多局面才开始训练
+    max_epochs_per_iter: float = 4.0  # 单轮最多把 replay 过几遍，防止小 buffer 上过拟合
 
     # checkpoint / 评测
     ckpt_every_steps: int = 2000
@@ -184,6 +185,18 @@ class Trainer:
         return MultiGpuSelfPlay(self.model, devices, num_games=c.parallel_games,
                                 mcts=mcts, seed=seed, compile_model=c.compile_model,
                                 engine_threads=max(1, c.engine_threads // len(devices)))
+
+    def steps_for_iteration(self) -> int:
+        """按 replay 里现有的数据量给本轮的训练步数限流。
+
+        续训后如果 replay 快照丢了（或刚开跑），buffer 只有几万个局面，
+        照 steps_per_iter x batch_size 训下去等于在同一批数据上过好多遍，
+        loss 会掉得很好看，模型却在过拟合。实测这种情况下 loss 从 4.64 直接
+        掉到 3.39 —— 数字变好，其实是坏了。
+        """
+        c = self.cfg
+        cap = max(1, int(len(self.buffer) * c.max_epochs_per_iter / c.batch_size))
+        return min(c.steps_per_iter, cap)
 
     # ---- 训练 ----
     def train_steps(self, n: int, should_stop=None) -> dict:

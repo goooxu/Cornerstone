@@ -121,7 +121,9 @@ def main() -> int:
         }
 
         if len(trainer.buffer) >= cfg.min_positions:
-            row.update(trainer.train_steps(cfg.steps_per_iter, should_stop=should_stop))
+            steps = trainer.steps_for_iteration()
+            row["planned_steps"] = steps
+            row.update(trainer.train_steps(steps, should_stop=should_stop))
 
         trainer.iteration += 1
 

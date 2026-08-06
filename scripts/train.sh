@@ -43,7 +43,9 @@ cmd_start() {
   mkdir -p "$RUNS/$EXP"
   if alive; then echo "实验 $EXP 已在训练 (pid $(cat "$PIDFILE"))"; return 0; fi
   cd "$REPO"
-  nohup python3 tools/train.py --exp "$EXP" "$@" >>"$LOGFILE" 2>&1 &
+  # -u 关掉 stdout 缓冲：日志重定向到文件时，print 默认是全缓冲的，
+  # 训练跑了半天日志里却什么都看不到
+  nohup python3 -u tools/train.py --exp "$EXP" "$@" >>"$LOGFILE" 2>&1 &
   echo $! >"$PIDFILE"
   sleep 8
   if alive; then

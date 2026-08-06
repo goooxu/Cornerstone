@@ -51,7 +51,7 @@ cmd_start() {
   fi
 
   cd "$REPO"
-  nohup python3 web/server.py "${args[@]}" >"$LOGFILE" 2>&1 &
+  nohup python3 -u web/server.py "${args[@]}" >"$LOGFILE" 2>&1 &
   echo $! >"$PIDFILE"
   sleep 12
   if alive; then
