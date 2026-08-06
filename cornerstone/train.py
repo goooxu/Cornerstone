@@ -301,7 +301,13 @@ class Trainer:
         self.load_checkpoint(path)
         snap = os.path.join(self.snapshot_dir, "replay.npz")
         if os.path.exists(snap):
-            self.buffer.load_shard(snap)
+            try:
+                self.buffer.load_shard(snap)
+            except Exception as e:                      # noqa: BLE001
+                # 快照读不出来（比如上次被强杀写坏了）不该拖垮整次续训：
+                # 模型和优化器状态已经恢复了，replay 大不了重新攒。
+                print(f"[续训] replay 快照损坏，忽略并从空 buffer 重新攒："
+                      f"{type(e).__name__}: {e}")
         return True
 
     def save_snapshot(self) -> None:

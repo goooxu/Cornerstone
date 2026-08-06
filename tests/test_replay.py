@@ -148,6 +148,29 @@ def test_capacity_evicts_oldest(games):
     assert len(buf.games) >= 1
 
 
+def test_save_shard_is_atomic(games, tmp_path):
+    """写快照必须走临时文件 + 原子重命名。
+
+    直接写最终路径的话，进程写到一半被强杀（开发机会话到期就是这样）会留下
+    半截的 npz，下次续训崩在 zlib 解压上 —— 而且是崩在「恢复」这一步，
+    等于把还完好的 checkpoint 也一起废掉。
+    """
+    buf = ReplayBuffer(capacity_positions=100_000)
+    buf.add_records(games)
+    path = str(tmp_path / "replay.npz")
+
+    # 先放一个可用的旧快照
+    buf.save_shard(path)
+    good = open(path, "rb").read()
+
+    # 模拟写到一半失败：临时文件残留，但最终路径仍是完好的旧文件
+    (tmp_path / "replay.npz.tmp.npz").write_bytes(b"truncated garbage")
+    assert open(path, "rb").read() == good, "最终路径不该被半截写入污染"
+
+    other = ReplayBuffer(capacity_positions=100_000)
+    assert other.load_shard(path) == len(buf.games)
+
+
 def test_save_and_load_roundtrip(games, tmp_path):
     buf = ReplayBuffer(capacity_positions=100_000)
     buf.add_records(games)

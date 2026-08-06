@@ -166,12 +166,19 @@ class ReplayBuffer:
     # ---- 持久化 ----
 
     def save_shard(self, path: str) -> None:
+        """先写临时文件再原子重命名。
+
+        直接写最终路径的话，进程在写到一半被强杀（开发机会话到期就是这样）
+        会留下一个半截的 npz，下次续训直接崩在 zlib 解压上 ——
+        而且是崩在「恢复」这一步，等于把整个 checkpoint 也一起废掉了。
+        """
         if not self.games:
             return
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        tmp = path + ".tmp.npz"
         lens = np.array([len(g) for g in self.games], dtype=np.int32)
         np.savez_compressed(
-            path,
+            tmp,
             lens=lens,
             actions=np.concatenate([g.actions for g in self.games]),
             players=np.concatenate([g.players for g in self.games]),
@@ -184,6 +191,7 @@ class ReplayBuffer:
             score0=np.array([g.score0 for g in self.games], dtype=np.int16),
             score1=np.array([g.score1 for g in self.games], dtype=np.int16),
         )
+        os.replace(tmp, path)
 
     def load_shard(self, path: str) -> int:
         z = np.load(path)
