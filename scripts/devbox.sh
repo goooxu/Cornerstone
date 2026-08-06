@@ -53,6 +53,11 @@ cmd_up() {
     --gpus all \
     --network host \
     --ipc=host \
+    `# --init 不是可选项：容器 PID 1 是 sleep infinity，它不会 wait() 回收子进程。` \
+    `# 训练进程退出后会一直挂成僵尸，而**僵尸进程的 GPU 上下文不会被释放** ——` \
+    `# nvidia-smi 里看到几十 GB 显存被一个 <defunct> 占着，新训练直接起不来。` \
+    `# 实际吃过：两个僵尸占了 47 GB 显存，只能销毁容器才能收回。` \
+    --init \
     --cap-add SYS_NICE \
     --ulimit memlock=-1 \
     --ulimit stack=67108864 \

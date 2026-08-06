@@ -24,6 +24,8 @@ RUNS="$WORKDIR/runs"
 HOSTS_FILE="${CORNERSTONE_HOSTS:-$REPO/.devhosts}"
 SSH="${CORNERSTONE_SSH:-$HOME/.local/bin/sshx}"
 INTERVAL="${CORNERSTONE_WATCH_INTERVAL:-180}"
+# 每条腿独占一台机器，引擎线程数按整机给。恢复时要和首次启动用的值一致。
+ENGINE_THREADS="${CORNERSTONE_ENGINE_THREADS:-128}"
 
 LOG="$RUNS/watchdog.log"
 PIDFILE="$RUNS/watchdog.pid"
@@ -51,22 +53,21 @@ is_training() {
     | grep -q '训练中'
 }
 
+# 恢复训练时**不能自己拼参数表**，只能转交给 ab_experiment.sh。
+# 这里曾经复制了一份完整的超参列表，等于同一套配置写在两个地方 ——
+# 一旦哪边改了另一边没跟上，恢复出来的就是另一个实验，而对照实验最怕的正是这个：
+# 第一次 A/B 就是毁在两条腿 games_per_iter 不一致（1024 vs 2048）上，
+# 而且从日志表面完全看不出来，只有把两边的启动命令逐字比对才会发现。
+# 现在配置只有 ab_experiment.sh 里那一份。
 start_training() {
-  local host="$1" exp="$2" devs="$3"
-  local flag="--fp8 false"
-  case "$exp" in *fp8*) flag="--fp8 true" ;; esac
-  rexec "$host" "bash $REPO/scripts/devbox.sh exec bash -c '
-    bash scripts/train.sh start $exp $flag \
-      --device ${devs%%,*} --selfplay-devices $devs \
-      --dim 256 --blocks 16 --attn-every 4 \
-      --parallel-games 4096 --games-per-iter 2048 \
-      --simulations 64 --max-considered 16 --temperature-plies 12 \
-      --batch-size 1024 --steps-per-iter 400 \
-      --lr 0.002 --warmup-steps 500 --total-steps 200000 \
-      --engine-threads 128 --compile-model false \
-      --milestone-every-steps 10000 \
-      --eval-opponent flat-mcts-4k --eval-simulations 128 --eval-every-iters 10 \
-      --seed 1' 2>&1 | tail -2"
+  local host="$1" exp="$2" devs="$3" arm vars
+  case "$exp" in
+    *fp8*) arm="start-b"; vars="B_EXP=$exp B_DEVICES=$devs" ;;
+    *)     arm="start-a"; vars="A_EXP=$exp A_DEVICES=$devs" ;;
+  esac
+  rexec "$host" "bash $REPO/scripts/devbox.sh exec \
+    env $vars ENGINE_THREADS=$ENGINE_THREADS \
+    bash scripts/ab_experiment.sh $arm 2>&1 | tail -2"
 }
 
 progress() {   # 直接读 NFS 上的 metrics，不用 ssh
