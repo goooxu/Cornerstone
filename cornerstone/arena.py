@@ -22,6 +22,15 @@ from .elo import elo_stderr, fit_elo
 BASELINES: dict[str, E.AgentConfig] = {
     "random": E.AgentConfig(kind=E.AgentKind.Random),
     "greedy-area": E.AgentConfig(kind=E.AgentKind.GreedyArea),
+    # 下面三个都是 GreedyMobility 的权重特例，用来把「扩张自己」和「堵住对方」
+    # 这两种策略隔离开单独量。同一套打分：
+    #     w_size x 棋子格数 + w_own x 己方角点前沿 - w_opp x 对方角点前沿
+    "corner-max": E.AgentConfig(          # 只最大化己方落点，完全不管对方
+        kind=E.AgentKind.GreedyMobility, w_size=0.0, w_own_anchors=1.0, w_opp_anchors=0.0
+    ),
+    "corner-min": E.AgentConfig(          # 只最小化对方落点，完全不管自己
+        kind=E.AgentKind.GreedyMobility, w_size=0.0, w_own_anchors=0.0, w_opp_anchors=1.0
+    ),
     # 权重由 tools/tune_mobility.py 扫出，见 docs/03-基线与评测.md
     "greedy-mobility": E.AgentConfig(
         kind=E.AgentKind.GreedyMobility, w_size=4.0, w_own_anchors=0.5, w_opp_anchors=20.0
@@ -35,6 +44,8 @@ BASELINES: dict[str, E.AgentConfig] = {
 DEFAULT_LADDER = [
     "random",
     "greedy-area",
+    "corner-max",
+    "corner-min",
     "greedy-mobility",
     "flat-mcts-256",
     "flat-mcts-1k",
