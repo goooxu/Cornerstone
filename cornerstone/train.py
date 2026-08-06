@@ -307,19 +307,34 @@ class Trainer:
         """
         keep = self.cfg.keep_last
         every = max(1, self.cfg.milestone_every_steps)
-        files = sorted(f for f in os.listdir(self.ckpt_dir)
-                       if f.startswith("step") and f.endswith(".pt"))
-        if len(files) <= keep:
+        steps = []
+        for f in os.listdir(self.ckpt_dir):
+            if f.startswith("step") and f.endswith(".pt"):
+                try:
+                    steps.append(int(f[4:-3]))
+                except ValueError:
+                    pass
+        steps.sort()
+        if len(steps) <= keep:
             return
-        for f in files[:-keep]:
-            try:
-                step = int(f[4:-3])
-            except ValueError:
+
+        # 里程碑不能用「step 是 every 的整数倍」判断：早期按数据量限流会让步数
+        # 计数错位，实际落盘点是 19832、23832 这种数，永远命中不了整数倍 ——
+        # 结果一个里程碑都留不下来，而没有对齐的历史 checkpoint，
+        # 「在同一步数处头对头」就做不了（上一次对照实验就是栽在这上面）。
+        # 改成：每跨过一个 every 区间，保留该区间里的第一个 checkpoint。
+        milestones, seen = set(), set()
+        for st in steps:
+            bucket = st // every
+            if bucket not in seen:
+                seen.add(bucket)
+                milestones.add(st)
+
+        for st in steps[:-keep]:
+            if st in milestones:
                 continue
-            if step % every == 0:
-                continue                      # 里程碑，留着
             try:
-                os.remove(os.path.join(self.ckpt_dir, f))
+                os.remove(os.path.join(self.ckpt_dir, f"step{st:08d}.pt"))
             except OSError:
                 pass
 

@@ -78,11 +78,14 @@ case "${1:-}" in
       echo "用法: $0 compare <步数>，例如 $0 compare 10000" >&2
       exit 1
     fi
-    A="$RUNS/$A_EXP/ckpt/$(printf 'step%08d.pt' "$STEP")"
-    B="$RUNS/$B_EXP/ckpt/$(printf 'step%08d.pt' "$STEP")"
-    for f in "$A" "$B"; do
-      [ -e "$f" ] || { echo "缺 $f（该步数的里程碑还没到）" >&2; exit 1; }
-    done
+    # 找**最接近**目标步数的 checkpoint 而不是要求精确命中 ——
+    # 落盘点受限流影响不会正好停在整数倍上（19832 而不是 20000）
+    read -r A A_STEP < <(python3 "$REPO/tools/nearest_ckpt.py" "$RUNS/$A_EXP/ckpt" "$STEP") \
+      || { echo "$A_EXP 还没有可用的 checkpoint" >&2; exit 1; }
+    read -r B B_STEP < <(python3 "$REPO/tools/nearest_ckpt.py" "$RUNS/$B_EXP/ckpt" "$STEP") \
+      || { echo "$B_EXP 还没有可用的 checkpoint" >&2; exit 1; }
+    D=$(( A_STEP > B_STEP ? A_STEP - B_STEP : B_STEP - A_STEP ))
+    echo "目标 step $STEP -> 实际 $A_EXP@$A_STEP vs $B_EXP@$B_STEP（相差 $D 步）"
     cd "$REPO"
     echo "在 step $STEP 处头对头（A=$A_EXP 为 BF16，B=$B_EXP 为 FP8）"
     python3 tools/compare_nets.py "$B" "$A" --games 400 --simulations 64 \
