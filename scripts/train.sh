@@ -63,9 +63,17 @@ cmd_stop() {
   local pid; pid="$(cat "$PIDFILE")"
   echo "发送 SIGTERM，等待收尾落盘…"
   kill "$pid" 2>/dev/null || true
-  # 训练进程收到 SIGTERM 后会退出当前的自博弈/训练循环并落盘，给足时间
-  for _ in $(seq 300); do alive || break; sleep 1; done
-  alive && { echo "超时，强制结束"; kill -9 "$pid" 2>/dev/null || true; }
+  # 训练进程收到 SIGTERM 后会退出当前的自博弈/训练循环并落盘。
+  # 时限要给够：收尾要写 checkpoint + 一份几百 MB 的 replay 快照。
+  # 超时被强杀的代价不是丢几步 —— 是**最终快照没写成**，
+  # 下次续训只能用较旧的周期快照，replay 少掉几十万局面。
+  # 实测就吃过一次：一条腿因此少了 40 万局面，另一条完好，
+  # 对照实验凭空多了一个不对称。
+  for _ in $(seq 900); do alive || break; sleep 1; done
+  if alive; then
+    echo "警告：等待 900s 仍未退出，强制结束 —— 最终 replay 快照可能没写成" >&2
+    kill -9 "$pid" 2>/dev/null || true
+  fi
   rm -f "$PIDFILE"
   echo "已停止。下次 start 会从 checkpoint 自动续训。"
 }
