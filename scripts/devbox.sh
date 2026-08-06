@@ -59,8 +59,12 @@ cmd_up() {
     --user "$(id -u):$(id -g)" \
     -e HOME="$CHOME" \
     -e PYTHONDONTWRITEBYTECODE=1 \
-    -e TRITON_CACHE_DIR="$CHOME/.triton" \
     -e PYTHONPATH="$REPO" \
+    `# 编译缓存放本地盘：inductor/triton 会写大量小文件，工作目录在网络盘上，` \
+    `# 放那儿会让 torch.compile 慢到不可接受。缓存丢了只是重编译，不影响正确性。` \
+    -e TRITON_CACHE_DIR="$HOT/cache/triton" \
+    -e TORCHINDUCTOR_CACHE_DIR="$HOT/cache/inductor" \
+    -e XDG_CACHE_HOME="$HOT/cache" \
     -e USER=cornerstone \
     -e LOGNAME=cornerstone \
     "${mounts[@]}" \

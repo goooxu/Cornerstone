@@ -23,10 +23,20 @@ EXP="${2:-bf16}"
 PIDFILE="$RUNS/$EXP/train.pid"
 LOGFILE="$RUNS/$EXP/train.log"
 
+# 只有 kill -0 是不够的：进程崩掉之后 PID 会被系统复用，
+# 那时 kill -0 依然成功，status 会误报「还在跑」，stop 更会去杀一个无关进程。
+# 所以还要核对 /proc/<pid>/cmdline 确实是本实验的训练进程。
 alive() {
   [ -f "$PIDFILE" ] || return 1
   local pid; pid="$(cat "$PIDFILE")"
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  local cmd
+  cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" || return 1
+  case "$cmd" in
+    *tools/train.py*--exp\ "$EXP"*) return 0 ;;
+    *) return 1 ;;                      # PID 被复用了，当作没在跑
+  esac
 }
 
 cmd_start() {

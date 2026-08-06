@@ -86,6 +86,12 @@ class TrainConfig:
             self.run_dir = os.path.join(os.path.dirname(repo_root), "runs", self.exp)
         if not self.hot_dir:
             self.hot_dir = os.path.join("/tmp", "cornerstone", self.exp)
+        if self.fp8 and self.compile_model:
+            # TE 的 FP8 自定义算子和 Dynamo 不兼容：先是 graph break 告警，
+            # 随后编译出来的图会撞 CUDA 非法访存。两者只能二选一。
+            # 代价是 FP8 跑拿不到 compile 的约 1.8x —— 这也算 FP8 的隐性成本之一。
+            print("[配置] fp8 与 torch.compile 不兼容，本次自动关闭 compile")
+            self.compile_model = False
         return self
 
 
@@ -165,6 +171,12 @@ class Trainer:
         )
         seed = int(self.rng.integers(1 << 30))
         devices = visible_devices(c.selfplay_devices)
+        if c.fp8 and len(devices) > 1:
+            # TE 的 FP8 状态（cuBLAS 工作区、句柄）是**进程级且绑定单设备**的：
+            # 同一进程里在第二张卡上做 FP8 GEMM 会直接 "failed to launch on the GPU"。
+            # 正确的多卡 FP8 做法是每卡一个独立进程，属于后续工作。
+            print(f"[配置] FP8 模式下自博弈只能单卡，忽略 {devices[1:]}")
+            devices = [str(self.device)]
         if len(devices) <= 1:
             return SelfPlayDriver(self.model, self.device, num_games=c.parallel_games,
                                   mcts=mcts, seed=seed, compile_model=c.compile_model,

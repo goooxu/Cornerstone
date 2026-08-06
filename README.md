@@ -54,11 +54,23 @@ docs/         设计与实验记录
 ## 训练与试玩
 
 ```bash
-bash scripts/devbox.sh exec python3 tools/train.py --smoke        # 小配置端到端跑通
-bash scripts/devbox.sh exec python3 tools/train.py --exp bf16     # 正式训练（重跑即续训）
-bash scripts/devbox.sh exec python3 tools/run_arena.py --games 400 --threads 128
-bash scripts/devbox.sh exec bash scripts/web.sh start             # 试玩服务，:8080
+D="bash scripts/devbox.sh exec"
+
+$D python3 tools/train.py --smoke          # 小配置端到端跑通，几分钟出结果
+$D bash scripts/train.sh start bf16        # 长跑训练（后台常驻）
+$D bash scripts/train.sh status bf16       # 看进度
+$D bash scripts/train.sh stop bf16         # 停止；下次 start 自动从 checkpoint 续训
+
+$D python3 tools/run_arena.py --games 400 --threads 128   # 基线阶梯 Elo
+$D python3 tools/compare_runs.py bf16 fp8                 # FP8 vs BF16 对照
+$D bash scripts/monitor.sh 15                             # CPU/GPU 利用率
+
+$D bash scripts/web.sh start               # 试玩服务，浏览器开 <开发机>:8080
 ```
+
+**换机器 / 会话到期**：checkpoint 与 replay 快照都写在工作目录的 `runs/` 下，
+新机器上先 `scripts/probe.sh` 确认环境，再 `scripts/build.sh` 重新编译引擎，
+然后 `scripts/train.sh start <exp>` 就会从上次落盘处接着跑。
 
 ## 文档
 
@@ -69,3 +81,5 @@ bash scripts/devbox.sh exec bash scripts/web.sh start             # 试玩服务
 - [docs/04-网络与自博弈训练.md](docs/04-网络与自博弈训练.md) —— CornerNet、Gumbel-AZ、replay
 - [docs/05-web试玩工具.md](docs/05-web试玩工具.md) —— 试玩工具的接口与前端
 - [docs/06-FP8主权重.md](docs/06-FP8主权重.md) —— MXFP8 主权重、随机舍入、踩过的坑
+- [docs/07-性能调优.md](docs/07-性能调优.md) —— 瓶颈三次转移、单卡 4.2×、四卡 22.7×
+- [docs/08-已知问题与后续.md](docs/08-已知问题与后续.md) —— 当前限制、优先级、经验教训

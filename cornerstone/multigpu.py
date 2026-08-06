@@ -44,13 +44,20 @@ class MultiGpuSelfPlay:
             if dev == next(model.parameters()).device:
                 rep = model
             else:
-                rep = CornerNet(model.cfg).to(dev)
-                rep.load_state_dict(model.state_dict())
+                # 必须在**目标设备的上下文里**构造。FP8 模式下 te.Linear 的
+                # MXFP8 权重会在当时的当前设备上分配，先在 cuda:0 建好再 .to(dev)
+                # 搬不过去（量化张量的数据与缩放是分开的几块），
+                # 运行时表现为 cuDNN kernel 里的非法访存，且报错位置离根因很远。
+                with torch.cuda.device(dev):
+                    rep = CornerNet(model.cfg).to(dev)
             rep.eval()
             self.replicas.append(rep)
             self.drivers.append(SelfPlayDriver(
                 rep, dev, num_games=per_gpu, mcts=mcts, seed=seed + 1000 * i,
                 compile_model=compile_model, engine_threads=engine_threads, dtype=dtype))
+
+        # 副本是空初始化的，先同步一次权重再预热
+        self.sync_weights()
 
         # 串行预热，把各卡的编译先做完。torch.compile 的编译期有全局状态，
         # 放到工作线程里并发编译会直接报错（表现为 Dynamo 内部的 weakref 异常）。
@@ -59,11 +66,35 @@ class MultiGpuSelfPlay:
 
     @torch.no_grad()
     def sync_weights(self) -> None:
-        src = self.source.state_dict()
+        """把训练权重推给各卡的副本。
+
+        FP8 参数不能直接 copy_ / load_state_dict：MXFP8 张量由「E4M3 数据 + E8M0 块缩放」
+        两部分组成，且行/列两套布局，跨设备的整体拷贝并不可靠。
+        走「反量化 -> 传到目标卡 -> 重量化」这条路，慢一点但正确。
+        这里的重量化用确定性舍入 —— 它只是把主权重复制过去，不是优化器更新，
+        不需要随机舍入的无偏性。
+        """
+        try:
+            from .fp8 import is_quantized, write_weight_
+        except ImportError:            # 没装 transformer_engine 时不可能有量化参数
+            def is_quantized(_t):
+                return False
+            write_weight_ = None
+
+        src_params = dict(self.source.named_parameters())
+        src_buffers = dict(self.source.named_buffers())
         for rep, dev in zip(self.replicas, self.devices):
             if rep is self.source:
                 continue
-            rep.load_state_dict({k: v.to(dev, non_blocking=True) for k, v in src.items()})
+            for name, p in rep.named_parameters():
+                s = src_params[name]
+                if is_quantized(s) or is_quantized(p):
+                    write_weight_(p, s.dequantize().to(dev).float(), stochastic=False)
+                else:
+                    p.data.copy_(s.data.to(dev, non_blocking=True))
+            for name, b in rep.named_buffers():
+                if name in src_buffers:
+                    b.data.copy_(src_buffers[name].data.to(dev, non_blocking=True))
 
     def run(self, target_games: int, max_seconds: float | None = None):
         """各卡并发跑，合并结果。target_games 会平均摊到各卡上。"""
