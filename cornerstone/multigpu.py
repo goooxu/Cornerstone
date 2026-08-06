@@ -96,7 +96,8 @@ class MultiGpuSelfPlay:
                 if name in src_buffers:
                     b.data.copy_(src_buffers[name].data.to(dev, non_blocking=True))
 
-    def run(self, target_games: int, max_seconds: float | None = None):
+    def run(self, target_games: int, max_seconds: float | None = None,
+            should_stop=None):
         """各卡并发跑，合并结果。target_games 会平均摊到各卡上。"""
         per = max(1, target_games // len(self.drivers))
         results: list[list[dict]] = [[] for _ in self.drivers]
@@ -105,7 +106,8 @@ class MultiGpuSelfPlay:
 
         def work(i: int) -> None:
             try:
-                results[i], stats[i] = self.drivers[i].run(per, max_seconds=max_seconds)
+                results[i], stats[i] = self.drivers[i].run(per, max_seconds=max_seconds,
+                                                          should_stop=should_stop)
             except BaseException as e:                      # noqa: BLE001
                 errors[i] = e
 

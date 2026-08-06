@@ -186,12 +186,15 @@ class Trainer:
                                 engine_threads=max(1, c.engine_threads // len(devices)))
 
     # ---- 训练 ----
-    def train_steps(self, n: int) -> dict:
+    def train_steps(self, n: int, should_stop=None) -> dict:
         c = self.cfg
         self.model.train()
         agg: dict[str, float] = {}
         t0 = time.perf_counter()
+        done = 0
         for _ in range(n):
+            if should_stop is not None and should_stop():
+                break
             batch_np = self.buffer.sample(c.batch_size, self.rng,
                                           threads=c.loader_threads, augment=c.augment)
             batch = {k: torch.from_numpy(v).to(self.device, non_blocking=True)
@@ -217,10 +220,13 @@ class Trainer:
             parts["grad_norm"] = gnorm.detach()
             for k, v in parts.items():
                 agg[k] = agg.get(k, 0.0) + float(v)
+            done += 1
 
-        out = {k: v / n for k, v in agg.items()}
+        if done == 0:
+            return {"lr": self.lr_at(self.step), "train_steps_per_s": 0.0}
+        out = {k: v / done for k, v in agg.items()}
         out["lr"] = self.lr_at(self.step)
-        out["train_steps_per_s"] = n / (time.perf_counter() - t0)
+        out["train_steps_per_s"] = done / (time.perf_counter() - t0)
         return out
 
     # ---- checkpoint ----

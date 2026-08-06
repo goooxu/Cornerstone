@@ -9,6 +9,7 @@
 
 import argparse
 import os
+import signal
 import sys
 import time
 from dataclasses import fields
@@ -54,8 +55,29 @@ def build_config(argv=None) -> tuple[TrainConfig, argparse.Namespace]:
     return cfg.resolve(REPO), args
 
 
+# 开发机单次会话有时长上限，被回收时收到的是 SIGTERM。
+# 一轮自博弈可能要几分钟，不能等它跑完才收尾，否则会被强杀、丢掉未落盘的进度。
+# 这里把信号转成一个协作式的停止标志，自博弈与训练循环都会检查它。
+_STOP = False
+
+
+def _request_stop(signum, _frame):
+    global _STOP
+    if _STOP:                       # 第二次信号就别再等了
+        print("再次收到信号，立即退出", flush=True)
+        sys.exit(1)
+    _STOP = True
+    print(f"收到信号 {signum}，尽快收尾并落盘…", flush=True)
+
+
+def should_stop() -> bool:
+    return _STOP
+
+
 def main() -> int:
     cfg, args = build_config()
+    signal.signal(signal.SIGTERM, _request_stop)
+    signal.signal(signal.SIGINT, _request_stop)
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
@@ -70,6 +92,9 @@ def main() -> int:
     t_start = time.time()
 
     while True:
+        if _STOP:
+            print("按请求停止")
+            break
         if args.max_iters and trainer.iteration >= args.max_iters:
             break
         if args.max_minutes and (time.time() - t_start) / 60 >= args.max_minutes:
@@ -80,7 +105,7 @@ def main() -> int:
             break
 
         driver.sync_weights()      # 把上一轮训好的权重推给各卡的副本
-        recs, sp = driver.run(cfg.games_per_iter)
+        recs, sp = driver.run(cfg.games_per_iter, should_stop=should_stop)
         trainer.buffer.add_records(recs)
 
         row = {
@@ -96,11 +121,11 @@ def main() -> int:
         }
 
         if len(trainer.buffer) >= cfg.min_positions:
-            row.update(trainer.train_steps(cfg.steps_per_iter))
+            row.update(trainer.train_steps(cfg.steps_per_iter, should_stop=should_stop))
 
         trainer.iteration += 1
 
-        if cfg.eval_every_iters and trainer.iteration % cfg.eval_every_iters == 0:
+        if cfg.eval_every_iters and trainer.iteration % cfg.eval_every_iters == 0 and not _STOP:
             res = evaluate_vs_baseline(
                 trainer.model, trainer.device, opponent=cfg.eval_opponent,
                 games=cfg.eval_games, simulations=cfg.eval_simulations,
@@ -123,9 +148,10 @@ def main() -> int:
         if cfg.snapshot_every_iters and trainer.iteration % cfg.snapshot_every_iters == 0:
             trainer.save_snapshot()
 
+    # 无论是正常结束还是被信号打断，都要落一份完整的 checkpoint + replay 快照
     trainer.save_checkpoint()
     trainer.save_snapshot()
-    print(f"已落盘 checkpoint 与 replay 快照到 {cfg.run_dir}")
+    print(f"已落盘 checkpoint 与 replay 快照到 {cfg.run_dir}（step {trainer.step}）", flush=True)
     return 0
 
 

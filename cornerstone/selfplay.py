@@ -114,8 +114,12 @@ class SelfPlayDriver:
         接口和 MultiGpuSelfPlay 保持一致，调用方不用分支。"""
 
     def run(self, target_games: int, max_seconds: float | None = None,
-            on_games=None) -> tuple[list[dict], SelfPlayStats]:
-        """跑到收集够 target_games 局（或超时）。返回 (对局列表, 统计)。"""
+            on_games=None, should_stop=None) -> tuple[list[dict], SelfPlayStats]:
+        """跑到收集够 target_games 局（或超时、或 should_stop() 为真）。
+
+        should_stop 用于响应 SIGTERM：一轮自博弈可能要几分钟，
+        不能等它跑完才收尾，否则会被强杀，丢掉未落盘的进度。
+        """
         was_training = self.model.training
         self.model.eval()
         out: list[dict] = []
@@ -124,6 +128,8 @@ class SelfPlayDriver:
         try:
             while len(out) < target_games:
                 if max_seconds is not None and time.perf_counter() - t0 > max_seconds:
+                    break
+                if should_stop is not None and should_stop():
                     break
                 n = self.engine.prepare(self.planes, self.scalars)
                 if n == 0:

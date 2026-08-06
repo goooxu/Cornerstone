@@ -61,7 +61,8 @@ cmd_stop() {
   local pid; pid="$(cat "$PIDFILE")"
   echo "发送 SIGTERM，等待收尾落盘…"
   kill "$pid" 2>/dev/null || true
-  for _ in $(seq 120); do alive || break; sleep 1; done
+  # 训练进程收到 SIGTERM 后会退出当前的自博弈/训练循环并落盘，给足时间
+  for _ in $(seq 300); do alive || break; sleep 1; done
   alive && { echo "超时，强制结束"; kill -9 "$pid" 2>/dev/null || true; }
   rm -f "$PIDFILE"
   echo "已停止。下次 start 会从 checkpoint 自动续训。"
