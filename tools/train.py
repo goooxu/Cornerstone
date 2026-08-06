@@ -107,6 +107,7 @@ def main() -> int:
         driver.sync_weights()      # 把上一轮训好的权重推给各卡的副本
         recs, sp = driver.run(cfg.games_per_iter, should_stop=should_stop)
         trainer.buffer.add_records(recs)
+        trainer.games_played += len(recs)
 
         row = {
             "selfplay_games": sp.games,
@@ -114,7 +115,10 @@ def main() -> int:
             "selfplay_evals_per_s": sp.evals_per_s,
             "selfplay_mean_batch": sp.mean_batch,
             "replay_positions": len(trainer.buffer),
-            "replay_games": trainer.buffer.total_games_seen,
+            # buffer_games 是进程内计数（续训后从快照重新播种），
+            # games_played 才是全生命周期的累计对局数
+            "buffer_games": trainer.buffer.total_games_seen,
+            "games_played": trainer.games_played,
             "mean_plies": sum(len(r["actions"]) for r in recs) / max(1, len(recs)),
             "draw_rate": sum(1 for r in recs if r["result0"] == 0) / max(1, len(recs)),
             "p0_win_rate": sum(1 for r in recs if r["result0"] > 0) / max(1, len(recs)),

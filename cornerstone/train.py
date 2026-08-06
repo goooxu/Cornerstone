@@ -112,6 +112,9 @@ class Trainer:
         self.buffer = ReplayBuffer(cfg.replay_capacity)
         self.step = 0
         self.iteration = 0
+        # 全生命周期产生过的对局数。不能用 buffer.total_games_seen 代替 ——
+        # 那是进程内计数器，续训时会被快照重新播种，看起来像「从头训了」。
+        self.games_played = 0
         self.last_ckpt_time = time.time()
         self.history: list[dict] = []
 
@@ -259,6 +262,7 @@ class Trainer:
             "optimizer": self.opt.state_dict(),
             "step": self.step,
             "iteration": self.iteration,
+            "games_played": self.games_played,
             "config": asdict(self.cfg),
             "model_config": asdict(self.model.cfg),
             "rng": self.rng.bit_generator.state,
@@ -312,6 +316,7 @@ class Trainer:
         self.opt.load_state_dict(blob["optimizer"])
         self.step = blob["step"]
         self.iteration = blob["iteration"]
+        self.games_played = blob.get("games_played", 0)
         self.rng.bit_generator.state = blob["rng"]
         torch.set_rng_state(blob["torch_rng"].cpu())
 
