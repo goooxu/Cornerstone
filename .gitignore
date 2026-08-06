@@ -20,8 +20,12 @@ compile_commands.json
 runs/
 
 # 开发机地址等本机配置，禁止进入 git 历史
-.devhost
+.devhost*
 .env
+
+# 守护脚本的运行时状态
+watchdog.pid
+watchdog.pause
 
 # NFS 上「已删除但仍被打开」的文件会留下这种残影，不是项目文件
 .nfs*
