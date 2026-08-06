@@ -56,13 +56,19 @@ docs/         设计与实验记录
 ```bash
 D="bash scripts/devbox.sh exec"
 
-$D python3 tools/train.py --smoke          # 小配置端到端跑通，几分钟出结果
-$D bash scripts/train.sh start bf16        # 长跑训练（后台常驻）
-$D bash scripts/train.sh status bf16       # 看进度
-$D bash scripts/train.sh stop bf16         # 停止；下次 start 自动从 checkpoint 续训
+$D python3 tools/train.py --smoke              # 小配置端到端自检，几分钟出结果
 
-$D python3 tools/run_arena.py --games 400 --threads 128   # 基线阶梯 Elo
-$D python3 tools/compare_runs.py bf16 fp8                 # FP8 vs BF16 对照
+# 首对模型：FP8 与 BF16 的受控对照，各占两张卡
+$D bash scripts/ab_experiment.sh start
+$D bash scripts/ab_experiment.sh status
+$D bash scripts/ab_experiment.sh compare 20000   # 在对齐步数处头对头
+
+# 单独跑一条
+$D bash scripts/train.sh start <exp> [参数...]   # 重跑同一条命令即续训
+$D bash scripts/train.sh stop <exp>
+
+$D python3 tools/run_arena.py --games 400 --threads 128   # 规则基线阶梯 Elo
+$D python3 tools/model_report.py                          # BF16/FP8 的结构差异
 $D bash scripts/monitor.sh 15                             # CPU/GPU 利用率
 
 $D bash scripts/web.sh start               # 试玩服务，浏览器开 <开发机>:8080
