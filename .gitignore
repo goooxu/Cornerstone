@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# 构建产物
+build/
+dist/
+*.so
+*.o
+*.a
+compile_commands.json
+
+# 容器 HOME（pip / triton 缓存）
+.container-home/
+
+# 训练产出（模型与中间数据不进 repo）
+runs/
+
+# 开发机地址等本机配置，禁止进入 git 历史
+.devhost
+.env

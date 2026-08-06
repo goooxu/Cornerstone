@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cornerstone"
+version = "0.1.0"
+description = "从零自博弈的 Blokus Duo 模型（FP8 主权重）"
+requires-python = ">=3.10"
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+web = ["fastapi", "uvicorn[standard]"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["cornerstone*"]
+
+[tool.setuptools.package-data]
+cornerstone = ["*.so"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --color=no"
