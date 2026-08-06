@@ -51,8 +51,21 @@ docs/         设计与实验记录
 
 模型 checkpoint、replay buffer、日志都写在 repo 之外的 `runs/`，不进 git。
 
+## 训练与试玩
+
+```bash
+bash scripts/devbox.sh exec python3 tools/train.py --smoke        # 小配置端到端跑通
+bash scripts/devbox.sh exec python3 tools/train.py --exp bf16     # 正式训练（重跑即续训）
+bash scripts/devbox.sh exec python3 tools/run_arena.py --games 400 --threads 128
+bash scripts/devbox.sh exec bash scripts/web.sh start             # 试玩服务，:8080
+```
+
 ## 文档
 
-- [docs/00-总览.md](docs/00-总览.md) —— 整体设计与里程碑
+- [docs/00-总览.md](docs/00-总览.md) —— 整体设计、关键决策与里程碑
 - [docs/01-环境与构建.md](docs/01-环境与构建.md) —— 目标平台、容器、构建链路
 - [docs/02-引擎设计.md](docs/02-引擎设计.md) —— 位棋盘、动作空间、着法生成、对称群
+- [docs/03-基线与评测.md](docs/03-基线与评测.md) —— 规则基线阶梯、arena、Elo 拟合
+- [docs/04-网络与自博弈训练.md](docs/04-网络与自博弈训练.md) —— CornerNet、Gumbel-AZ、replay
+- [docs/05-web试玩工具.md](docs/05-web试玩工具.md) —— 试玩工具的接口与前端
+- [docs/06-FP8主权重.md](docs/06-FP8主权重.md) —— MXFP8 主权重、随机舍入、踩过的坑

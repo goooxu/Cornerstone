@@ -1,0 +1,270 @@
+"""训练循环。
+
+M3 阶段是同步的：自博弈一批 -> 塞进 replay -> 训若干步 -> 周期性评测。
+M5 会把自博弈和训练拆成独立进程各占各的 GPU；但先把「能学起来」这件事坐实，
+异步化是性能问题，不是正确性问题。
+
+开发机单次会话有时长上限，所以 checkpoint 按「每 N 步」和「每 T 秒」双触发落盘，
+replay 热数据写本地盘、快照回写工作目录，`resume()` 能从任意一次落盘处接着跑。
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import time
+from dataclasses import asdict, dataclass, field
+
+import numpy as np
+import torch
+
+from . import _engine as E
+from .evaluate import evaluate_vs_baseline
+from .losses import total_loss
+from .model import CornerNet, ModelConfig
+from .replay import ReplayBuffer
+from .selfplay import SelfPlayDriver
+
+
+@dataclass
+class TrainConfig:
+    exp: str = "bf16"
+    run_dir: str = ""          # 空则用 <repo>/../runs/<exp>
+    hot_dir: str = ""          # 空则用 /tmp/cornerstone/<exp>
+
+    # 模型
+    dim: int = 256
+    blocks: int = 16
+    attn_every: int = 4
+    fp8: bool = False
+    stochastic_rounding: bool = True   # FP8 主权重下关掉它是对照实验用的
+
+    # 自博弈
+    parallel_games: int = 512
+    simulations: int = 64
+    max_considered: int = 16
+    temperature_plies: int = 12
+    games_per_iter: int = 512
+
+    # 训练
+    batch_size: int = 512
+    steps_per_iter: int = 250
+    lr: float = 2e-3
+    min_lr_ratio: float = 0.1
+    warmup_steps: int = 500
+    total_steps: int = 200_000
+    weight_decay: float = 1e-2
+    grad_clip: float = 1.0
+    w_value: float = 1.0
+    w_score: float = 0.25
+    augment: bool = True
+    loader_threads: int = 32
+
+    # replay
+    replay_capacity: int = 3_000_000
+    min_positions: int = 20_000     # 攒够这么多局面才开始训练
+
+    # checkpoint / 评测
+    ckpt_every_steps: int = 2000
+    ckpt_every_seconds: float = 600.0
+    keep_last: int = 3
+    snapshot_every_iters: int = 20
+    eval_every_iters: int = 10
+    eval_games: int = 200
+    eval_opponent: str = "greedy-area"
+    eval_simulations: int = 64
+
+    seed: int = 1
+    device: str = "cuda"
+
+    def resolve(self, repo_root: str) -> "TrainConfig":
+        if not self.run_dir:
+            self.run_dir = os.path.join(os.path.dirname(repo_root), "runs", self.exp)
+        if not self.hot_dir:
+            self.hot_dir = os.path.join("/tmp", "cornerstone", self.exp)
+        return self
+
+
+class Trainer:
+    def __init__(self, cfg: TrainConfig):
+        self.cfg = cfg
+        torch.manual_seed(cfg.seed)
+        self.rng = np.random.default_rng(cfg.seed)
+        self.device = torch.device(cfg.device)
+
+        self.model = CornerNet(ModelConfig(
+            dim=cfg.dim, blocks=cfg.blocks, attn_every=cfg.attn_every, fp8=cfg.fp8
+        )).to(self.device)
+
+        self.opt = self._make_optimizer()
+        self.buffer = ReplayBuffer(cfg.replay_capacity)
+        self.step = 0
+        self.iteration = 0
+        self.last_ckpt_time = time.time()
+        self.history: list[dict] = []
+
+        os.makedirs(self.ckpt_dir, exist_ok=True)
+        os.makedirs(self.log_dir, exist_ok=True)
+        os.makedirs(self.snapshot_dir, exist_ok=True)
+        os.makedirs(cfg.hot_dir, exist_ok=True)
+
+    # ---- 路径 ----
+    @property
+    def ckpt_dir(self) -> str:
+        return os.path.join(self.cfg.run_dir, "ckpt")
+
+    @property
+    def log_dir(self) -> str:
+        return os.path.join(self.cfg.run_dir, "logs")
+
+    @property
+    def snapshot_dir(self) -> str:
+        return os.path.join(self.cfg.run_dir, "replay_snapshot")
+
+    def _make_optimizer(self) -> torch.optim.Optimizer:
+        # Norm / bias / 位置嵌入不做权重衰减
+        decay, no_decay = [], []
+        for name, p in self.model.named_parameters():
+            if not p.requires_grad:
+                continue
+            (no_decay if p.ndim <= 1 or name.endswith("pos") else decay).append(p)
+        groups = [{"params": decay, "weight_decay": self.cfg.weight_decay},
+                  {"params": no_decay, "weight_decay": 0.0}]
+        if self.cfg.fp8:
+            # 主权重就是 FP8，没有高精度副本，更新必须走随机舍入
+            from .fp8 import Fp8AdamW
+            return Fp8AdamW(groups, lr=self.cfg.lr, betas=(0.9, 0.95), eps=1e-8,
+                            stochastic_rounding=self.cfg.stochastic_rounding)
+        return torch.optim.AdamW(groups, lr=self.cfg.lr, betas=(0.9, 0.95), eps=1e-8)
+
+    def lr_at(self, step: int) -> float:
+        c = self.cfg
+        if step < c.warmup_steps:
+            return c.lr * (step + 1) / c.warmup_steps
+        t = min(1.0, (step - c.warmup_steps) / max(1, c.total_steps - c.warmup_steps))
+        cos = 0.5 * (1 + math.cos(math.pi * t))
+        return c.lr * (c.min_lr_ratio + (1 - c.min_lr_ratio) * cos)
+
+    # ---- 自博弈 ----
+    def make_driver(self) -> SelfPlayDriver:
+        c = self.cfg
+        mcts = E.MctsConfig(
+            simulations=c.simulations,
+            max_considered=c.max_considered,
+            temperature_plies=c.temperature_plies,
+        )
+        return SelfPlayDriver(self.model, self.device, num_games=c.parallel_games,
+                              mcts=mcts, seed=int(self.rng.integers(1 << 30)))
+
+    # ---- 训练 ----
+    def train_steps(self, n: int) -> dict:
+        c = self.cfg
+        self.model.train()
+        agg: dict[str, float] = {}
+        t0 = time.perf_counter()
+        for _ in range(n):
+            batch_np = self.buffer.sample(c.batch_size, self.rng,
+                                          threads=c.loader_threads, augment=c.augment)
+            batch = {k: torch.from_numpy(v).to(self.device, non_blocking=True)
+                     for k, v in batch_np.items()}
+
+            lr = self.lr_at(self.step)
+            for gp in self.opt.param_groups:
+                gp["lr"] = lr
+
+            with torch.autocast("cuda", dtype=torch.bfloat16,
+                                enabled=self.device.type == "cuda"):
+                out = self.model(batch["planes"], batch["scalars"])
+                # 损失在 fp32 下算：策略是 17836 类的 log_softmax，BF16 精度不够
+                out = (out[0].float(), out[1].float(), out[2].float())
+                loss, parts = total_loss(out, batch, c.w_value, c.w_score)
+
+            self.opt.zero_grad(set_to_none=True)
+            loss.backward()
+            gnorm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), c.grad_clip)
+            self.opt.step()
+            self.step += 1
+
+            parts["grad_norm"] = gnorm.detach()
+            for k, v in parts.items():
+                agg[k] = agg.get(k, 0.0) + float(v)
+
+        out = {k: v / n for k, v in agg.items()}
+        out["lr"] = self.lr_at(self.step)
+        out["train_steps_per_s"] = n / (time.perf_counter() - t0)
+        return out
+
+    # ---- checkpoint ----
+    def save_checkpoint(self, tag: str | None = None) -> str:
+        name = tag or f"step{self.step:08d}"
+        path = os.path.join(self.ckpt_dir, f"{name}.pt")
+        tmp = path + ".tmp"
+        torch.save({
+            "model": self.model.state_dict(),
+            "optimizer": self.opt.state_dict(),
+            "step": self.step,
+            "iteration": self.iteration,
+            "config": asdict(self.cfg),
+            "model_config": asdict(self.model.cfg),
+            "rng": self.rng.bit_generator.state,
+            "torch_rng": torch.get_rng_state(),
+        }, tmp)
+        os.replace(tmp, path)     # 原子替换，避免半截文件被当成有效 checkpoint
+        self.last_ckpt_time = time.time()
+        self._prune_checkpoints()
+        with open(os.path.join(self.ckpt_dir, "latest"), "w") as f:
+            f.write(os.path.basename(path))
+        return path
+
+    def _prune_checkpoints(self) -> None:
+        keep = self.cfg.keep_last
+        files = sorted(f for f in os.listdir(self.ckpt_dir)
+                       if f.startswith("step") and f.endswith(".pt"))
+        for f in files[:-keep] if len(files) > keep else []:
+            try:
+                os.remove(os.path.join(self.ckpt_dir, f))
+            except OSError:
+                pass
+
+    def maybe_checkpoint(self) -> str | None:
+        c = self.cfg
+        due = (self.step > 0 and self.step % c.ckpt_every_steps == 0) or \
+              (time.time() - self.last_ckpt_time >= c.ckpt_every_seconds)
+        return self.save_checkpoint() if due else None
+
+    def load_checkpoint(self, path: str) -> None:
+        blob = torch.load(path, map_location=self.device, weights_only=False)
+        self.model.load_state_dict(blob["model"])
+        self.opt.load_state_dict(blob["optimizer"])
+        self.step = blob["step"]
+        self.iteration = blob["iteration"]
+        self.rng.bit_generator.state = blob["rng"]
+        torch.set_rng_state(blob["torch_rng"].cpu())
+
+    def resume(self) -> bool:
+        latest = os.path.join(self.ckpt_dir, "latest")
+        if not os.path.exists(latest):
+            return False
+        with open(latest) as f:
+            name = f.read().strip()
+        path = os.path.join(self.ckpt_dir, name)
+        if not os.path.exists(path):
+            return False
+        self.load_checkpoint(path)
+        snap = os.path.join(self.snapshot_dir, "replay.npz")
+        if os.path.exists(snap):
+            self.buffer.load_shard(snap)
+        return True
+
+    def save_snapshot(self) -> None:
+        # 热数据在本地盘，快照写工作目录 —— 换机器后靠它恢复
+        self.buffer.save_shard(os.path.join(self.snapshot_dir, "replay.npz"))
+
+    # ---- 日志 ----
+    def log(self, record: dict) -> None:
+        record = {"step": self.step, "iteration": self.iteration,
+                  "wall": time.time(), **record}
+        self.history.append(record)
+        with open(os.path.join(self.log_dir, "metrics.jsonl"), "a") as f:
+            f.write(json.dumps(record, ensure_ascii=False, default=float) + "\n")

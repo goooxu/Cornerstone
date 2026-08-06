@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cornerstone — Blokus Duo 试玩</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>cornerstone</h1>
+  <span class="sub">Blokus Duo · 从零自博弈</span>
+  <span class="spacer"></span>
+  <span id="ai-name" class="badge">加载中…</span>
+</header>
+
+<main>
+  <section class="board-col">
+    <div class="board-wrap">
+      <canvas id="board" width="700" height="700"></canvas>
+    </div>
+    <div id="status" class="status">正在开局…</div>
+    <div class="scores">
+      <div class="score p0"><span class="dot"></span><span class="label">先手</span><b id="score0">0</b></div>
+      <div class="score p1"><span class="dot"></span><span class="label">后手</span><b id="score1">0</b></div>
+      <div class="score"><span class="label">手数</span><b id="ply">0</b></div>
+    </div>
+  </section>
+
+  <aside class="side-col">
+    <div class="card">
+      <div class="row">
+        <label>执子
+          <select id="side-select">
+            <option value="0">先手（起点 5,5）</option>
+            <option value="1">后手（起点 10,10）</option>
+          </select>
+        </label>
+        <label>难度 <select id="difficulty"></select></label>
+      </div>
+      <div class="row buttons">
+        <button id="btn-new" class="primary">新对局</button>
+        <button id="btn-undo">悔棋</button>
+        <button id="btn-ai">让 AI 走</button>
+      </div>
+      <div class="row buttons">
+        <label class="check"><input type="checkbox" id="auto-ai" checked> AI 自动应手</label>
+        <label class="check"><input type="checkbox" id="show-heat"> 策略热力图</label>
+      </div>
+      <div class="row buttons">
+        <button id="btn-analyse">分析当前局面</button>
+        <button id="btn-export">导出对局</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>棋子 <small id="tray-hint">点选一枚，再选形态</small></h2>
+      <div id="tray" class="tray"></div>
+      <div id="orients" class="orients"></div>
+    </div>
+
+    <div class="card" id="analysis-card">
+      <h2>AI 判断</h2>
+      <div class="winbar"><div id="winfill"></div><span id="wintext">—</span></div>
+      <ol id="topmoves" class="topmoves"><li class="empty">点「分析当前局面」或让 AI 走一步</li></ol>
+    </div>
+  </aside>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

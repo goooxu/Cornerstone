@@ -4,6 +4,8 @@
 
 #include "cornerstone/agents.hpp"
 #include "cornerstone/board.hpp"
+#include "cornerstone/dataset.hpp"
+#include "cornerstone/mcts.hpp"
 #include "cornerstone/pieces.hpp"
 #include "cornerstone/playout.hpp"
 #include "cornerstone/reference.hpp"
@@ -193,33 +195,191 @@ PYBIND11_MODULE(_engine, m) {
           py::arg("board"), "朴素参考实现，仅用于测试交叉比对");
 
     // ---- 规则基线智能体 ----
+    // 必须先于 EvalConfig 注册 —— EvalConfig 的默认参数里带一个 AgentConfig 实例，
+    // pybind11 在 def() 时就要把它转成 Python 对象
     py::enum_<AgentKind>(m, "AgentKind")
         .value("Random", AgentKind::Random)
         .value("GreedyArea", AgentKind::GreedyArea)
         .value("GreedyMobility", AgentKind::GreedyMobility)
         .value("FlatMCTS", AgentKind::FlatMCTS);
 
-    py::class_<AgentConfig>(m, "AgentConfig")
-        .def(py::init([](AgentKind kind, int rollouts, double w_size, double w_own_anchors,
-                         double w_opp_anchors, double temperature) {
-                 AgentConfig c;
-                 c.kind = kind;
-                 c.rollouts = rollouts;
-                 c.w_size = w_size;
-                 c.w_own_anchors = w_own_anchors;
-                 c.w_opp_anchors = w_opp_anchors;
-                 c.temperature = temperature;
+    {
+        const AgentConfig d;   // 默认权重来自 tools/tune_mobility.py 的扫描结果
+        py::class_<AgentConfig>(m, "AgentConfig")
+            .def(py::init([](AgentKind kind, int rollouts, double w_size, double w_own_anchors,
+                             double w_opp_anchors, double temperature) {
+                     AgentConfig c;
+                     c.kind = kind;
+                     c.rollouts = rollouts;
+                     c.w_size = w_size;
+                     c.w_own_anchors = w_own_anchors;
+                     c.w_opp_anchors = w_opp_anchors;
+                     c.temperature = temperature;
+                     return c;
+                 }),
+                 py::arg("kind") = AgentKind::Random, py::arg("rollouts") = d.rollouts,
+                 py::arg("w_size") = d.w_size, py::arg("w_own_anchors") = d.w_own_anchors,
+                 py::arg("w_opp_anchors") = d.w_opp_anchors,
+                 py::arg("temperature") = d.temperature)
+            .def_readwrite("kind", &AgentConfig::kind)
+            .def_readwrite("rollouts", &AgentConfig::rollouts)
+            .def_readwrite("w_size", &AgentConfig::w_size)
+            .def_readwrite("w_own_anchors", &AgentConfig::w_own_anchors)
+            .def_readwrite("w_opp_anchors", &AgentConfig::w_opp_anchors)
+            .def_readwrite("temperature", &AgentConfig::temperature);
+    }
+
+    // ---- Gumbel AlphaZero 自博弈 ----
+    m.attr("MAX_TOPK") = MAX_TOPK;
+
+    py::class_<MctsConfig>(m, "MctsConfig")
+        .def(py::init([](int simulations, int max_considered, double c_visit, double c_scale,
+                         int temperature_plies, int top_k, double value_from_score) {
+                 MctsConfig c;
+                 c.simulations = simulations;
+                 c.max_considered = max_considered;
+                 c.c_visit = c_visit;
+                 c.c_scale = c_scale;
+                 c.temperature_plies = temperature_plies;
+                 c.top_k = top_k;
+                 c.value_from_score = value_from_score;
                  return c;
              }),
-             py::arg("kind") = AgentKind::Random, py::arg("rollouts") = 1000,
-             py::arg("w_size") = 1.0, py::arg("w_own_anchors") = 1.0,
-             py::arg("w_opp_anchors") = 1.0, py::arg("temperature") = 0.0)
-        .def_readwrite("kind", &AgentConfig::kind)
-        .def_readwrite("rollouts", &AgentConfig::rollouts)
-        .def_readwrite("w_size", &AgentConfig::w_size)
-        .def_readwrite("w_own_anchors", &AgentConfig::w_own_anchors)
-        .def_readwrite("w_opp_anchors", &AgentConfig::w_opp_anchors)
-        .def_readwrite("temperature", &AgentConfig::temperature);
+             py::arg("simulations") = 128, py::arg("max_considered") = 16,
+             py::arg("c_visit") = 50.0, py::arg("c_scale") = 1.0,
+             py::arg("temperature_plies") = 12, py::arg("top_k") = MAX_TOPK,
+             py::arg("value_from_score") = 0.0)
+        .def_readwrite("simulations", &MctsConfig::simulations)
+        .def_readwrite("max_considered", &MctsConfig::max_considered)
+        .def_readwrite("c_visit", &MctsConfig::c_visit)
+        .def_readwrite("c_scale", &MctsConfig::c_scale)
+        .def_readwrite("temperature_plies", &MctsConfig::temperature_plies)
+        .def_readwrite("top_k", &MctsConfig::top_k)
+        .def_readwrite("value_from_score", &MctsConfig::value_from_score);
+
+    py::class_<EvalConfig>(m, "EvalConfig")
+        .def(py::init([](bool enabled, const AgentConfig& opponent, int opening_plies) {
+                 EvalConfig c;
+                 c.enabled = enabled;
+                 c.opponent = opponent;
+                 c.opening_plies = opening_plies;
+                 return c;
+             }),
+             py::arg("enabled") = false, py::arg("opponent") = AgentConfig{},
+             py::arg("opening_plies") = 4)
+        .def_readwrite("enabled", &EvalConfig::enabled)
+        .def_readwrite("opponent", &EvalConfig::opponent)
+        .def_readwrite("opening_plies", &EvalConfig::opening_plies);
+
+    py::class_<SelfPlayEngine>(m, "SelfPlayEngine")
+        .def(py::init<int, const MctsConfig&, uint64_t, const EvalConfig&>(),
+             py::arg("num_games"), py::arg("config"), py::arg("seed") = 0,
+             py::arg("eval") = EvalConfig{})
+        .def_property_readonly("num_games", &SelfPlayEngine::num_games)
+        .def_property_readonly("max_batch", &SelfPlayEngine::max_batch)
+        .def_property_readonly("finished_games", &SelfPlayEngine::finished_games)
+        // 缓冲区由调用方预分配复用，避免每轮都申请几 MB 的 numpy 数组
+        .def("prepare",
+             [](SelfPlayEngine& e, py::array_t<float, py::array::c_style> planes,
+                py::array_t<float, py::array::c_style> scalars) {
+                 const py::ssize_t cap = e.max_batch();
+                 if (planes.size() < cap * NUM_PLANES * PLANE_SIZE)
+                     throw py::value_error("planes 缓冲区太小");
+                 if (scalars.size() < cap * NUM_SCALARS)
+                     throw py::value_error("scalars 缓冲区太小");
+                 float* p = planes.mutable_data();
+                 float* s = scalars.mutable_data();
+                 py::gil_scoped_release release;
+                 return e.prepare(p, s);
+             },
+             py::arg("planes"), py::arg("scalars"))
+        .def("feed",
+             [](SelfPlayEngine& e, py::array_t<float, py::array::c_style | py::array::forcecast> logits,
+                py::array_t<float, py::array::c_style | py::array::forcecast> wdl) {
+                 if (logits.ndim() != 2 || logits.shape(1) != NUM_ACTIONS)
+                     throw py::value_error("logits 形状应为 [n, NUM_ACTIONS]");
+                 if (wdl.ndim() != 2 || wdl.shape(1) != 3)
+                     throw py::value_error("wdl 形状应为 [n, 3]");
+                 if (logits.shape(0) != wdl.shape(0))
+                     throw py::value_error("logits 与 wdl 的批大小不一致");
+                 const float* lg = logits.data();
+                 const float* wd = wdl.data();
+                 py::gil_scoped_release release;
+                 e.feed(lg, wd);
+             },
+             py::arg("logits"), py::arg("wdl"))
+        .def("set_position",
+             [](SelfPlayEngine& e, const std::vector<int32_t>& actions) {
+                 e.set_position(actions);
+             },
+             py::arg("actions"),
+             "把所有局重置到给定着法序列对应的局面（Web 试玩的单局面搜索用）")
+        .def("root_info",
+             [](const SelfPlayEngine& e, int game) {
+                 const auto info = e.root_info(game);
+                 py::dict d;
+                 d["ready"] = info.ready;
+                 d["value"] = info.value;
+                 d["actions"] = to_i32(info.actions);
+                 d["visits"] = to_i32(info.visits);
+                 py::array_t<float> probs(py::ssize_t(info.probs.size()));
+                 py::array_t<float> priors(py::ssize_t(info.priors.size()));
+                 if (!info.probs.empty()) {
+                     std::memcpy(probs.mutable_data(), info.probs.data(),
+                                 info.probs.size() * sizeof(float));
+                     std::memcpy(priors.mutable_data(), info.priors.data(),
+                                 info.priors.size() * sizeof(float));
+                 }
+                 d["probs"] = probs;
+                 d["priors"] = priors;
+                 return d;
+             },
+             py::arg("game") = 0)
+        .def("advance", [](SelfPlayEngine& e) {
+            std::vector<GameRecord> games;
+            {
+                py::gil_scoped_release release;
+                games = e.advance();
+            }
+            py::list out;
+            for (const GameRecord& g : games) {
+                const py::ssize_t t = py::ssize_t(g.moves.size());
+                py::array_t<int32_t> actions(t), n_legal(t), top_actions({t, py::ssize_t(MAX_TOPK)});
+                py::array_t<int8_t> players(t);
+                py::array_t<uint8_t> n_top(t);
+                py::array_t<float> rest(t), root_values(t), top_probs({t, py::ssize_t(MAX_TOPK)});
+
+                for (py::ssize_t i = 0; i < t; ++i) {
+                    const MoveTarget& mt = g.moves[size_t(i)];
+                    actions.mutable_data()[i] = mt.action;
+                    players.mutable_data()[i] = mt.player;
+                    n_legal.mutable_data()[i] = mt.n_legal;
+                    n_top.mutable_data()[i] = mt.n_top;
+                    rest.mutable_data()[i] = mt.rest_prob;
+                    root_values.mutable_data()[i] = mt.root_value;
+                    std::memcpy(top_actions.mutable_data() + i * MAX_TOPK, mt.top_action,
+                                sizeof(int32_t) * MAX_TOPK);
+                    std::memcpy(top_probs.mutable_data() + i * MAX_TOPK, mt.top_prob,
+                                sizeof(float) * MAX_TOPK);
+                }
+                py::dict d;
+                d["result0"] = int(g.result0);
+                d["score0"] = int(g.score0);
+                d["score1"] = int(g.score1);
+                d["net_player"] = int(g.net_player);
+                d["selfplay"] = g.selfplay;
+                d["actions"] = actions;
+                d["players"] = players;
+                d["n_legal"] = n_legal;
+                d["n_top"] = n_top;
+                d["rest_prob"] = rest;
+                d["root_values"] = root_values;
+                d["top_actions"] = top_actions;
+                d["top_probs"] = top_probs;
+                out.append(d);
+            }
+            return out;
+        });
 
     m.def("select_move",
           [](const Board& b, const AgentConfig& cfg, uint64_t seed) {
@@ -251,6 +411,47 @@ PYBIND11_MODULE(_engine, m) {
           },
           py::arg("a"), py::arg("b"), py::arg("games"), py::arg("seed") = 0,
           py::arg("threads") = 1, py::arg("opening_plies") = 0);
+
+    m.def("build_batch",
+          [](py::array_t<int32_t, py::array::c_style> actions,
+             py::array_t<int32_t, py::array::c_style> game_offsets,
+             py::array_t<int32_t, py::array::c_style> want_ply,
+             py::array_t<int32_t, py::array::c_style> want_offsets,
+             py::object syms_obj,
+             py::array_t<float, py::array::c_style> planes,
+             py::array_t<float, py::array::c_style> scalars,
+             py::array_t<uint8_t, py::array::c_style> legal, int threads) {
+              const int n_games = int(game_offsets.size()) - 1;
+              if (n_games < 0) throw py::value_error("game_offsets 至少要有 1 个元素");
+              if (want_offsets.size() != game_offsets.size())
+                  throw py::value_error("want_offsets 与 game_offsets 长度必须相同");
+              const py::ssize_t n = want_ply.size();
+              if (planes.size() < n * NUM_PLANES * PLANE_SIZE) throw py::value_error("planes 太小");
+              if (scalars.size() < n * NUM_SCALARS) throw py::value_error("scalars 太小");
+              if (legal.size() < n * NUM_ACTIONS) throw py::value_error("legal 太小");
+
+              const int8_t* syms = nullptr;
+              py::array_t<int8_t, py::array::c_style> syms_arr;
+              if (!syms_obj.is_none()) {
+                  syms_arr = syms_obj.cast<py::array_t<int8_t, py::array::c_style>>();
+                  if (syms_arr.size() != n) throw py::value_error("syms 长度必须等于样本数");
+                  syms = syms_arr.data();
+              }
+
+              const int32_t* a = actions.data();
+              const int32_t* go = game_offsets.data();
+              const int32_t* wp = want_ply.data();
+              const int32_t* wo = want_offsets.data();
+              float* p = planes.mutable_data();
+              float* s = scalars.mutable_data();
+              uint8_t* l = legal.mutable_data();
+
+              py::gil_scoped_release release;
+              build_batch(a, go, n_games, wp, wo, syms, p, s, l, threads);
+          },
+          py::arg("actions"), py::arg("game_offsets"), py::arg("want_ply"),
+          py::arg("want_offsets"), py::arg("syms"), py::arg("planes"), py::arg("scalars"),
+          py::arg("legal"), py::arg("threads") = 1);
 
     m.def("decode_action", &decode_action, py::arg("action"));
     m.def("encode_action", [](int ori, int anchor_cell) { return encode_action(ori, anchor_cell); },

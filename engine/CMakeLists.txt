@@ -44,6 +44,8 @@ pybind11_add_module(_engine
   src/board.cpp
   src/playout.cpp
   src/agents.cpp
+  src/mcts.cpp
+  src/dataset.cpp
   src/reference.cpp
   src/bindings.cpp)
 

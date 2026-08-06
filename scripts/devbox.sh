@@ -61,6 +61,8 @@ cmd_up() {
     -e PYTHONDONTWRITEBYTECODE=1 \
     -e TRITON_CACHE_DIR="$CHOME/.triton" \
     -e PYTHONPATH="$REPO" \
+    -e USER=cornerstone \
+    -e LOGNAME=cornerstone \
     "${mounts[@]}" \
     -w "$REPO" \
     "$IMAGE" sleep infinity >/dev/null
