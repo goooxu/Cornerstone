@@ -88,8 +88,12 @@ def main() -> int:
         print(f"已从 checkpoint 恢复：step={trainer.step} iter={trainer.iteration} "
               f"replay={len(trainer.buffer)} 局面")
 
-    trainer.verify_fp8_compute()
+    trainer.verify_fp8_compute("启动")
     driver = trainer.make_driver()
+    # 再查一次：构建自博弈驱动会创建副本、同步权重、做预热，
+    # 这些路径都可能把 FP8 的状态搞坏。启动时那条找不到源头的
+    # "quantized weights without quantized compute" 警告就出现在这一段。
+    trainer.verify_fp8_compute("建驱动后")
     t_start = time.time()
 
     while True:
@@ -133,6 +137,8 @@ def main() -> int:
         trainer.iteration += 1
 
         if cfg.eval_every_iters and trainer.iteration % cfg.eval_every_iters == 0 and not _STOP:
+            # 顺带定期复查 FP8 —— 静默降级不会自己暴露，只能反复测
+            row["fp8_active"] = trainer.verify_fp8_compute(f"iter {trainer.iteration}")
             res = evaluate_vs_baseline(
                 trainer.model, trainer.device, opponent=cfg.eval_opponent,
                 games=cfg.eval_games, simulations=cfg.eval_simulations,

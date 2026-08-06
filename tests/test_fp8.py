@@ -15,6 +15,7 @@ if not torch.cuda.is_available():
     pytest.skip("FP8 需要 GPU", allow_module_level=True)
 
 from cornerstone import fp8 as F  # noqa: E402
+from cornerstone.model import ACTIONS as ACTIONS_  # noqa: E402
 
 _avail = F.is_available()
 if not (_avail[0] if isinstance(_avail, tuple) else _avail):
@@ -220,6 +221,39 @@ def test_mxfp8_requires_dims_divisible_by_32():
     assert F.pad_to_mxfp8(1000) == 1000        # 1000*196 = 196000 = 6125*32
     for b in (8, 16, 24, 512, 1000):
         assert (b * 196) % 32 == 0
+
+
+@pytest.mark.skipif(torch.cuda.device_count() < 2, reason="需要至少两张卡")
+def test_fp8_model_works_when_current_device_differs():
+    """FP8 模型放在非默认卡上、且调用时当前设备不匹配 —— 必须照常工作。
+
+    这是踩过两次的坑。TE 按**当前设备**取 cuBLAS 句柄，不匹配时表现有两种：
+      - 静默退回非量化计算，只发一条 UserWarning（FP8 名存实亡）
+      - 直接 CUDA illegal memory access，且报错点常飘到别的算子上
+
+    第一次以为是「同进程只能用一张卡」而加了单卡护栏（误判）；
+    第二次是训练步没设设备，A/B 实验一开跑就崩。
+    护栏现在放在 CornerNet.forward 里，这条测试就是守它的。
+    """
+    import warnings
+
+    from cornerstone.model import CornerNet, ModelConfig
+
+    with torch.cuda.device("cuda:1"):
+        m = CornerNet(ModelConfig(dim=128, blocks=4, fp8=True)).to("cuda:1").eval()
+    p = torch.randn(32, 9, 14, 14, device="cuda:1")
+    s = torch.randn(32, 44, device="cuda:1")
+
+    torch.cuda.set_device(0)                     # 故意让当前设备对不上
+    assert torch.cuda.current_device() == 0
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+            pol, wdl, _ = m(p, s)
+        torch.cuda.synchronize("cuda:1")
+    assert torch.isfinite(pol).all() and pol.shape == (32, ACTIONS_)
+    assert not [w for w in caught if "quantized compute" in str(w.message)], \
+        "退回了非量化计算 —— FP8 名存实亡"
 
 
 def test_fp8_adamw_handles_mixed_quantized_and_plain_params():

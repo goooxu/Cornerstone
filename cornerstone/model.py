@@ -192,11 +192,34 @@ class CornerNet(nn.Module):
         from .fp8 import fp8_autocast
         return fp8_autocast()
 
+    def _device_scope(self):
+        """FP8 下把当前 CUDA 设备设成本模型所在的卡。
+
+        TransformerEngine 按**当前设备**取 cuBLAS 句柄/上下文。当前设备与张量设备
+        不一致时，它的表现是**两种**，都很难查：
+          - 有时静默退回非量化计算，只发一条 UserWarning（FP8 就名存实亡了）
+          - 有时直接 `CUDA error: an illegal memory access was encountered`，
+            而且报错点常飘到别的算子上
+
+        所以护栏放在 forward 里，而不是逐个调用点去打补丁 ——
+        训练步、自博弈、评测、Web 推理、checkpoint 读写有五六条路径，
+        漏掉任何一条都会以上面两种形态之一炸出来。
+        `torch.cuda.device` 是线程局部的，多卡多线程各设各的互不干扰。
+        """
+        if not self.cfg.fp8:
+            return contextlib.nullcontext()
+        dev = self.pos.device
+        return torch.cuda.device(dev) if dev.type == "cuda" else contextlib.nullcontext()
+
     def forward(self, planes: torch.Tensor, scalars: torch.Tensor):
         """返回 (policy_logits[B, 17836], wdl_logits[B, 3], score_diff[B])。
 
         policy_logits 未做合法性 mask —— mask 由调用方施加（训练和推理的 mask 来源不同）。
         """
+        with self._device_scope():
+            return self._forward(planes, scalars)
+
+    def _forward(self, planes: torch.Tensor, scalars: torch.Tensor):
         b0 = planes.shape[0]
         if self.cfg.fp8:
             # MXFP8 要求 GEMM 的两维都是 32 的倍数，token 维是 B*196 且 196%32==4，

@@ -160,12 +160,16 @@ class Trainer:
         cos = 0.5 * (1 + math.cos(math.pi * t))
         return c.lr * (c.min_lr_ratio + (1 - c.min_lr_ratio) * cos)
 
-    def verify_fp8_compute(self) -> bool:
+    def verify_fp8_compute(self, tag: str = "") -> bool:
         """跑一次前向，确认 FP8 层**确实在用 FP8 计算**，并把结论写进日志。
 
         TE 在「权重是量化的、但计算没走量化」时只发一条 UserWarning，
         淹在日志里很容易被忽略 —— 而这种情况下模型看着在训练、
-        实际上 FP8 名存实亡。与其等着从警告里推断，不如每次启动主动测一次。
+        实际上 FP8 名存实亡。
+
+        而且那条警告只发一次、还找不到确切来源（多条路径都可能触发）。
+        与其去追一次性的告警，不如把「FP8 是否真的在算」变成一个**可反复测量**
+        的性质：启动时、建完驱动后、以及每个评测周期各查一次。
         """
         if not self.cfg.fp8:
             return True
@@ -181,8 +185,9 @@ class Trainer:
             hits = [str(w.message) for w in caught
                     if "quantized compute" in str(w.message)]
         ok = not hits
-        print(f"[自检] FP8 计算{'已启用' if ok else '未启用 —— 权重是量化的但 GEMM 没走 FP8！'}",
-              flush=True)
+        where = f"（{tag}）" if tag else ""
+        print(f"[自检]{where} FP8 计算"
+              f"{'已启用' if ok else '未启用 —— 权重是量化的但 GEMM 没走 FP8！'}", flush=True)
         return ok
 
     # ---- 自博弈 ----
