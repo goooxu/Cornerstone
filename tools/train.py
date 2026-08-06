@@ -79,6 +79,7 @@ def main() -> int:
             print("到达总步数上限")
             break
 
+        driver.sync_weights()      # 把上一轮训好的权重推给各卡的副本
         recs, sp = driver.run(cfg.games_per_iter)
         trainer.buffer.add_records(recs)
 

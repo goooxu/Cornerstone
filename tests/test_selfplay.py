@@ -163,6 +163,44 @@ def test_eval_records_only_net_moves_and_are_not_replayable():
         ReplayBuffer(1000).add_records(recs)
 
 
+def test_engine_threads_do_not_change_results():
+    """各局的树互相独立，所以把树搜索摊到多线程之后，结果必须和单线程逐位一致。
+
+    这条不测的话，多线程带来的数据竞争会表现为「训练变差了」，而不是崩溃 ——
+    极难定位。
+    """
+    def run(threads):
+        eng = E.SelfPlayEngine(24, E.MctsConfig(simulations=24, max_considered=8), 77,
+                               E.EvalConfig(), threads)
+        rng = make_rng(5)
+        noise = rng.standard_normal(cs.NUM_ACTIONS).astype(np.float32)
+        return drive(eng, 12, logit_fn=lambda planes, n: np.tile(noise, (n, 1)))
+
+    a, b = run(1), run(8)
+    assert len(a) == len(b)
+    for x, y in zip(a, b):
+        assert np.array_equal(x["actions"], y["actions"]), "多线程改变了对局走向"
+        assert np.array_equal(x["top_actions"], y["top_actions"])
+        assert np.allclose(x["top_probs"], y["top_probs"], atol=0, rtol=0)
+        assert (x["result0"], x["score0"], x["score1"]) == (y["result0"], y["score0"], y["score1"])
+
+
+def test_engine_threads_preserve_batch_ordering():
+    """prepare() 收集到的批必须按局号排序，否则 feed() 里 logits 与局对不上。"""
+    for threads in (1, 4, 16):
+        eng = E.SelfPlayEngine(32, E.MctsConfig(simulations=8), 3, E.EvalConfig(), threads)
+        planes = np.zeros((32, cs.NUM_PLANES, 14, 14), np.float32)
+        scal = np.zeros((32, cs.NUM_SCALARS), np.float32)
+        n = eng.prepare(planes, scal)
+        assert n == 32, "首轮每局都应该有一个待评估的根"
+        # 特征里第 0 个平面是己方占用，开局全空；用标量里的占格数区分不了，
+        # 这里改为验证多线程与单线程写出的特征完全一致
+        if threads == 1:
+            ref = planes.copy()
+        else:
+            assert np.array_equal(planes, ref), "多线程写出的特征顺序与单线程不一致"
+
+
 def test_engine_rejects_bad_shapes():
     eng = E.SelfPlayEngine(4, E.MctsConfig(simulations=8), 1)
     planes = np.zeros((4, cs.NUM_PLANES, 14, 14), dtype=np.float32)

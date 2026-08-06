@@ -1,9 +1,12 @@
 #include "cornerstone/mcts.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <iterator>
 #include <numeric>
 #include <stdexcept>
+#include <thread>
 
 namespace cornerstone {
 namespace {
@@ -82,12 +85,13 @@ Node make_node(const Board& b) {
 struct SelfPlayEngine::Impl {
     MctsConfig cfg;
     EvalConfig eval;
+    int threads = 1;
     std::vector<GameState> games;
     std::vector<int32_t> batch;     // 本次 prepare 收集到的局下标
-    int64_t finished = 0;
+    std::atomic<int64_t> finished{0};
 
-    Impl(int num_games, const MctsConfig& c, uint64_t seed, const EvalConfig& ev)
-        : cfg(c), eval(ev) {
+    Impl(int num_games, const MctsConfig& c, uint64_t seed, const EvalConfig& ev, int th)
+        : cfg(c), eval(ev), threads(std::max(1, th)) {
         if (num_games <= 0) throw std::invalid_argument("num_games 必须为正");
         if (cfg.top_k < 1 || cfg.top_k > MAX_TOPK) throw std::invalid_argument("top_k 越界");
         games.resize(size_t(num_games));
@@ -307,31 +311,97 @@ struct SelfPlayEngine::Impl {
 
     // ---- 对外接口 ----
 
+    // 把 [0, games.size()) 按线程数切段并行执行；threads<=1 时直接串行调用
+    template <typename F>
+    void parallel_games(F&& fn) {
+        const int t = std::min<int>(threads, int(games.size()));
+        if (t <= 1) {
+            fn(size_t(0), games.size(), 0);
+            return;
+        }
+        std::vector<std::thread> pool;
+        pool.reserve(size_t(t));
+        for (int i = 0; i < t; ++i) {
+            const size_t lo = games.size() * size_t(i) / size_t(t);
+            const size_t hi = games.size() * size_t(i + 1) / size_t(t);
+            pool.emplace_back([&fn, lo, hi, i] { fn(lo, hi, i); });
+        }
+        for (auto& th : pool) th.join();
+    }
+
     int prepare(float* planes, float* scalars) {
-        batch.clear();
-        std::vector<double> scratch;
-        for (size_t gi = 0; gi < games.size(); ++gi) {
-            GameState& g = games[gi];
-            if (g.nodes[0].terminal) continue;             // 根终局，等 advance 收尾
-            while (g.sims_done < cfg.simulations) {
-                if (descend(g, scratch)) {
-                    batch.push_back(int32_t(gi));
-                    break;
+        const int t = std::max(1, std::min<int>(threads, int(games.size())));
+        std::vector<std::vector<int32_t>> local(static_cast<size_t>(t));
+
+        parallel_games([&](size_t lo, size_t hi, int tid) {
+            std::vector<double> scratch;              // 每线程一份，不能共享
+            auto& out = local[size_t(tid)];
+            for (size_t gi = lo; gi < hi; ++gi) {
+                GameState& g = games[gi];
+                if (g.nodes[0].terminal) continue;    // 根终局，等 advance 收尾
+                while (g.sims_done < cfg.simulations) {
+                    if (descend(g, scratch)) {
+                        out.push_back(int32_t(gi));
+                        break;
+                    }
+                    ++g.sims_done;
                 }
-                ++g.sims_done;
             }
+        });
+
+        // 按局号顺序合并，保证批内顺序与线程划分无关（结果可复现）
+        batch.clear();
+        for (auto& v : local) batch.insert(batch.end(), v.begin(), v.end());
+
+        // 写特征也并行：一个局面 9*196 个 float，几百上千个局面时不算白给
+        const size_t n = batch.size();
+        const int ft = std::max(1, std::min<int>(threads, int(n)));
+        if (ft <= 1) {
+            for (size_t k = 0; k < n; ++k) write_features(k, planes, scalars);
+        } else {
+            std::vector<std::thread> pool;
+            pool.reserve(size_t(ft));
+            for (int i = 0; i < ft; ++i) {
+                const size_t lo = n * size_t(i) / size_t(ft);
+                const size_t hi = n * size_t(i + 1) / size_t(ft);
+                pool.emplace_back([this, lo, hi, planes, scalars] {
+                    for (size_t k = lo; k < hi; ++k) write_features(k, planes, scalars);
+                });
+            }
+            for (auto& th : pool) th.join();
         }
-        for (size_t k = 0; k < batch.size(); ++k) {
-            const GameState& g = games[size_t(batch[k])];
-            g.nodes[size_t(g.pending)].board.features(
-                planes + k * NUM_PLANES * PLANE_SIZE, scalars + k * NUM_SCALARS);
-        }
-        return int(batch.size());
+        return int(n);
+    }
+
+    void write_features(size_t k, float* planes, float* scalars) const {
+        const GameState& g = games[size_t(batch[k])];
+        g.nodes[size_t(g.pending)].board.features(
+            planes + k * NUM_PLANES * PLANE_SIZE, scalars + k * NUM_SCALARS);
     }
 
     void feed(const float* logits, const float* wdl) {
+        // 每个 batch 项对应不同的局，互不相干，可以直接并行。
+        // 这里最贵的是 legal_moves()（一次完整的着法生成）。
+        const size_t n = batch.size();
+        const int t = std::max(1, std::min<int>(threads, int(n)));
+        if (t <= 1) {
+            feed_range(0, n, logits, wdl);
+        } else {
+            std::vector<std::thread> pool;
+            pool.reserve(size_t(t));
+            for (int i = 0; i < t; ++i) {
+                const size_t lo = n * size_t(i) / size_t(t);
+                const size_t hi = n * size_t(i + 1) / size_t(t);
+                pool.emplace_back([this, lo, hi, logits, wdl] { feed_range(lo, hi, logits, wdl); });
+            }
+            for (auto& th : pool) th.join();
+        }
+        batch.clear();
+    }
+
+    void feed_range(size_t from, size_t to, const float* logits, const float* wdl) {
         std::vector<int32_t> moves;
-        for (size_t k = 0; k < batch.size(); ++k) {
+        for (size_t k = from; k < to; ++k) {
             GameState& g = games[size_t(batch[k])];
             const int ni = g.pending;
             const float* lg = logits + k * NUM_ACTIONS;
@@ -369,7 +439,6 @@ struct SelfPlayEngine::Impl {
                 ++g.sims_done;
             }
         }
-        batch.clear();
     }
 
     // 完整的改进策略（长度为该局面的合法着法数）
@@ -405,11 +474,24 @@ struct SelfPlayEngine::Impl {
     }
 
     std::vector<GameRecord> advance() {
+        const int t = std::max(1, std::min<int>(threads, int(games.size())));
+        std::vector<std::vector<GameRecord>> local(static_cast<size_t>(t));
+        parallel_games([&](size_t lo, size_t hi, int tid) {
+            advance_range(lo, hi, local[size_t(tid)]);
+        });
         std::vector<GameRecord> done;
+        for (auto& v : local)
+            done.insert(done.end(), std::make_move_iterator(v.begin()),
+                        std::make_move_iterator(v.end()));
+        return done;
+    }
+
+    void advance_range(size_t lo, size_t hi, std::vector<GameRecord>& done) {
         std::vector<double> pi;
         std::vector<int32_t> order;
 
-        for (GameState& g : games) {
+        for (size_t gi = lo; gi < hi; ++gi) {
+            GameState& g = games[gi];
             Node& root = g.nodes[0];
             if (!root.expanded || root.actions.empty()) {
                 // 根还没评估过（首次调用 advance 前必须先 prepare/feed），或者已终局
@@ -476,7 +558,6 @@ struct SelfPlayEngine::Impl {
                 reset_tree(g);
             }
         }
-        return done;
     }
 
     void finish(GameState& g, std::vector<GameRecord>& done) {
@@ -524,8 +605,8 @@ SelfPlayEngine::RootInfo SelfPlayEngine::root_info(int game) const {
 }
 
 SelfPlayEngine::SelfPlayEngine(int num_games, const MctsConfig& cfg, uint64_t seed,
-                               const EvalConfig& eval)
-    : impl_(std::make_unique<Impl>(num_games, cfg, seed, eval)) {}
+                               const EvalConfig& eval, int threads)
+    : impl_(std::make_unique<Impl>(num_games, cfg, seed, eval, threads)) {}
 SelfPlayEngine::~SelfPlayEngine() = default;
 
 int SelfPlayEngine::num_games() const { return int(impl_->games.size()); }
@@ -533,6 +614,6 @@ int SelfPlayEngine::max_batch() const { return int(impl_->games.size()); }
 int SelfPlayEngine::prepare(float* planes, float* scalars) { return impl_->prepare(planes, scalars); }
 void SelfPlayEngine::feed(const float* logits, const float* wdl) { impl_->feed(logits, wdl); }
 std::vector<GameRecord> SelfPlayEngine::advance() { return impl_->advance(); }
-int64_t SelfPlayEngine::finished_games() const { return impl_->finished; }
+int64_t SelfPlayEngine::finished_games() const { return impl_->finished.load(); }
 
 }  // namespace cornerstone

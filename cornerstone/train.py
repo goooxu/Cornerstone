@@ -41,15 +41,18 @@ class TrainConfig:
     stochastic_rounding: bool = True   # FP8 主权重下关掉它是对照实验用的
 
     # 自博弈
-    parallel_games: int = 512
+    parallel_games: int = 8192    # 多卡时按卡均分（4 卡 -> 每卡 2048，实测该点最优）
+    compile_model: bool = True    # torch.compile 实测 2.4-2.5x，首次编译约 60s
+    engine_threads: int = 128     # C++ 侧树搜索的总线程数，多卡时按卡均分
+    selfplay_devices: str = ""    # 逗号分隔，空则用全部可见 GPU
     simulations: int = 64
     max_considered: int = 16
     temperature_plies: int = 12
-    games_per_iter: int = 512
+    games_per_iter: int = 2048
 
     # 训练
-    batch_size: int = 512
-    steps_per_iter: int = 250
+    batch_size: int = 1024
+    steps_per_iter: int = 400
     lr: float = 2e-3
     min_lr_ratio: float = 0.1
     warmup_steps: int = 500
@@ -147,15 +150,28 @@ class Trainer:
         return c.lr * (c.min_lr_ratio + (1 - c.min_lr_ratio) * cos)
 
     # ---- 自博弈 ----
-    def make_driver(self) -> SelfPlayDriver:
+    def make_driver(self):
+        """单卡返回 SelfPlayDriver，多卡返回 MultiGpuSelfPlay，两者接口一致。
+
+        循环是同步的（自博弈与训练轮流跑），所以自博弈阶段把**全部** GPU 都用上，
+        训练阶段再回到主卡 —— 没有哪张卡会闲着。
+        """
+        from .multigpu import MultiGpuSelfPlay, visible_devices
         c = self.cfg
         mcts = E.MctsConfig(
             simulations=c.simulations,
             max_considered=c.max_considered,
             temperature_plies=c.temperature_plies,
         )
-        return SelfPlayDriver(self.model, self.device, num_games=c.parallel_games,
-                              mcts=mcts, seed=int(self.rng.integers(1 << 30)))
+        seed = int(self.rng.integers(1 << 30))
+        devices = visible_devices(c.selfplay_devices)
+        if len(devices) <= 1:
+            return SelfPlayDriver(self.model, self.device, num_games=c.parallel_games,
+                                  mcts=mcts, seed=seed, compile_model=c.compile_model,
+                                  engine_threads=c.engine_threads)
+        return MultiGpuSelfPlay(self.model, devices, num_games=c.parallel_games,
+                                mcts=mcts, seed=seed, compile_model=c.compile_model,
+                                engine_threads=max(1, c.engine_threads // len(devices)))
 
     # ---- 训练 ----
     def train_steps(self, n: int) -> dict:

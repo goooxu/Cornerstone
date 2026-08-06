@@ -62,6 +62,7 @@ def evaluate_vs_baseline(
     seed: int = 0,
     dtype: torch.dtype = torch.bfloat16,
     max_seconds: float | None = None,
+    compile_model: bool = False,
 ) -> EvalResult:
     if opponent not in BASELINES:
         raise KeyError(f"未知基线 {opponent}，可选 {list(BASELINES)}")
@@ -73,7 +74,8 @@ def evaluate_vs_baseline(
     )
     ev = E.EvalConfig(enabled=True, opponent=BASELINES[opponent], opening_plies=opening_plies)
     driver = SelfPlayDriver(model, device, num_games=min(parallel_games, games),
-                            mcts=mcts, seed=seed, eval_cfg=ev, dtype=dtype)
+                            mcts=mcts, seed=seed, eval_cfg=ev, dtype=dtype,
+                            compile_model=compile_model)
 
     recs, _ = driver.run(games, max_seconds=max_seconds)
     if not recs:

@@ -80,8 +80,11 @@ struct EvalConfig {
 
 class SelfPlayEngine {
 public:
+    // threads > 1 时把各局的树搜索分摊到多个线程。各局的树完全独立，
+    // 是天然可并行的；单线程时 CPU 只用得上一个核，而着法生成与树操作
+    // 恰恰是 CPU 侧的主要开销。
     SelfPlayEngine(int num_games, const MctsConfig& cfg, uint64_t seed,
-                   const EvalConfig& eval = EvalConfig{});
+                   const EvalConfig& eval = EvalConfig{}, int threads = 1);
     ~SelfPlayEngine();
 
     SelfPlayEngine(const SelfPlayEngine&) = delete;

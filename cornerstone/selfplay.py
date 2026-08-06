@@ -53,17 +53,30 @@ class SelfPlayDriver:
         seed: int = 0,
         eval_cfg: E.EvalConfig | None = None,
         dtype: torch.dtype = torch.bfloat16,
+        compile_model: bool = False,
+        fixed_batch: bool = True,
+        engine_threads: int = 1,
     ):
         self.model = model
         self.device = torch.device(device)
         self.dtype = dtype
         self.mcts = mcts or E.MctsConfig()
+        # 各局的树完全独立，engine_threads>1 时把树搜索摊到多核上。
+        # 单线程时 144 核里只用得上一个 —— 而着法生成与树操作正是 CPU 侧的主要开销。
         self.engine = E.SelfPlayEngine(num_games, self.mcts, seed,
-                                       eval_cfg or E.EvalConfig())
+                                       eval_cfg or E.EvalConfig(),
+                                       max(1, min(engine_threads, num_games)))
 
-        # 主机侧缓冲复用，避免每轮申请几十 MB
-        self.planes = np.empty((num_games, PLANES, BOARD, BOARD), dtype=np.float32)
-        self.scalars = np.empty((num_games, SCALARS), dtype=np.float32)
+        # 每次都按固定批跑。prepare() 返回的 n 是变的，若照 n 切片喂进去，
+        # torch.compile 会为每个出现过的 n 重新编译一次（单次编译约 60s）。
+        # 实测批均已占并行局数的九成以上，补齐这点浪费远小于重编译的代价；
+        # 顺带也满足了 MXFP8 对 batch 是 8 的倍数的要求。
+        self.fixed_batch = fixed_batch
+        # 用 zeros 而不是 empty：补齐部分的输出虽然被丢弃，但 empty 可能是 NaN，
+        # 一旦 NaN 通过 RMSNorm 之类的规约算子传染到整批就查不出来了
+        self.planes = np.zeros((num_games, PLANES, BOARD, BOARD), dtype=np.float32)
+        self.scalars = np.zeros((num_games, SCALARS), dtype=np.float32)
+        self.fwd = torch.compile(model, dynamic=False) if compile_model else model
         pin = self.device.type == "cuda"
         self.planes_t = torch.from_numpy(self.planes)
         self.scalars_t = torch.from_numpy(self.scalars)
@@ -76,15 +89,29 @@ class SelfPlayDriver:
     def _evaluate(self, n: int) -> None:
         # 走 autocast 而不是手工转 dtype：权重保持 fp32 主副本，
         # 与训练路径完全一致，否则推理和训练看到的是两个不同的模型
-        p = self.planes_t[:n].to(self.device, non_blocking=True)
-        s = self.scalars_t[:n].to(self.device, non_blocking=True)
+        m = self.planes.shape[0] if self.fixed_batch else n
+        p = self.planes_t[:m].to(self.device, non_blocking=True)
+        s = self.scalars_t[:m].to(self.device, non_blocking=True)
         with torch.autocast(self.device.type, dtype=self.dtype,
                             enabled=self.device.type == "cuda"):
-            pol, wdl, _ = self.model(p, s)
-        self.logit_host[:n].copy_(pol.float(), non_blocking=True)
-        self.wdl_host[:n].copy_(wdl.float().softmax(dim=-1), non_blocking=True)
+            pol, wdl, _ = self.fwd(p, s)
+        self.logit_host[:n].copy_(pol[:n].float(), non_blocking=True)
+        self.wdl_host[:n].copy_(wdl[:n].float().softmax(dim=-1), non_blocking=True)
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
+
+    @torch.no_grad()
+    def warmup(self) -> None:
+        """跑一次前向把 torch.compile 的编译触发掉。
+
+        必须在起线程**之前**串行做完：Dynamo 编译期有全局状态，
+        多个线程同时编译同一个模型类会直接报错。
+        """
+        self._evaluate(1)
+
+    def sync_weights(self) -> None:
+        """单卡时驱动直接持有训练用的那个模型对象，无需同步。
+        接口和 MultiGpuSelfPlay 保持一致，调用方不用分支。"""
 
     def run(self, target_games: int, max_seconds: float | None = None,
             on_games=None) -> tuple[list[dict], SelfPlayStats]:

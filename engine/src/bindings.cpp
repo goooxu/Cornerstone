@@ -272,9 +272,9 @@ PYBIND11_MODULE(_engine, m) {
         .def_readwrite("opening_plies", &EvalConfig::opening_plies);
 
     py::class_<SelfPlayEngine>(m, "SelfPlayEngine")
-        .def(py::init<int, const MctsConfig&, uint64_t, const EvalConfig&>(),
+        .def(py::init<int, const MctsConfig&, uint64_t, const EvalConfig&, int>(),
              py::arg("num_games"), py::arg("config"), py::arg("seed") = 0,
-             py::arg("eval") = EvalConfig{})
+             py::arg("eval") = EvalConfig{}, py::arg("threads") = 1)
         .def_property_readonly("num_games", &SelfPlayEngine::num_games)
         .def_property_readonly("max_batch", &SelfPlayEngine::max_batch)
         .def_property_readonly("finished_games", &SelfPlayEngine::finished_games)
