@@ -70,8 +70,10 @@ class TrainConfig:
     max_epochs_per_iter: float = 4.0  # 单轮最多把 replay 过几遍，防止小 buffer 上过拟合
 
     # checkpoint / 评测
-    ckpt_every_steps: int = 2000
-    ckpt_every_seconds: float = 600.0
+    # 开发机每 8 小时过期一次（容器被回收，训练进程随之消失且来不及优雅收尾），
+    # 所以丢失量由这两个阈值决定。取 400 = 一轮的步数，即每轮都落盘。
+    ckpt_every_steps: int = 400
+    ckpt_every_seconds: float = 240.0
     keep_last: int = 3
     milestone_every_steps: int = 10_000   # 里程碑 checkpoint 永久保留
     snapshot_every_iters: int = 20
@@ -116,6 +118,7 @@ class Trainer:
         # 那是进程内计数器，续训时会被快照重新播种，看起来像「从头训了」。
         self.games_played = 0
         self.last_ckpt_time = time.time()
+        self.last_ckpt_step = 0
         self.history: list[dict] = []
 
         os.makedirs(self.ckpt_dir, exist_ok=True)
@@ -294,6 +297,7 @@ class Trainer:
         }, tmp)
         os.replace(tmp, path)     # 原子替换，避免半截文件被当成有效 checkpoint
         self.last_ckpt_time = time.time()
+        self.last_ckpt_step = self.step
         self._prune_checkpoints()
         with open(os.path.join(self.ckpt_dir, "latest"), "w") as f:
             f.write(os.path.basename(path))
@@ -339,8 +343,15 @@ class Trainer:
                 pass
 
     def maybe_checkpoint(self) -> str | None:
+        """按「距上次落盘的步数 / 秒数」触发，**不要**用 step 对间隔取模。
+
+        取模那种写法（`step % every == 0`）看着等价，实际永远不会成立：
+        早期按数据量限流会让步数错位成 19832 这种数，再也回不到整数倍上，
+        于是只剩时间触发在起作用。开发机每 8 小时过期一次，
+        丢多少进度完全取决于这个触发器，不能让它悄悄失效。
+        """
         c = self.cfg
-        due = (self.step > 0 and self.step % c.ckpt_every_steps == 0) or \
+        due = (self.step - self.last_ckpt_step >= c.ckpt_every_steps) or \
               (time.time() - self.last_ckpt_time >= c.ckpt_every_seconds)
         return self.save_checkpoint() if due else None
 
@@ -354,6 +365,7 @@ class Trainer:
                 {k: v.to(self.device) for k, v in blob["model"].items()})
         self.opt.load_state_dict(blob["optimizer"])
         self.step = blob["step"]
+        self.last_ckpt_step = self.step
         self.iteration = blob["iteration"]
         self.games_played = blob.get("games_played", 0)
         self.rng.bit_generator.state = blob["rng"]
