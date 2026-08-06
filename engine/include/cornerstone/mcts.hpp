@@ -70,11 +70,19 @@ struct GameRecord {
     bool selfplay = true;
 };
 
-// 评测模式：网络方用 Gumbel-AZ 搜索，对手用规则基线直接选点。
-// 复用同一套树代码和批量推理通路 —— 唯一的差别是轮到对手时不建树。
+// 评测模式。两种对手：
+//
+//  1. 规则基线（net_opponent = false）：网络方用 Gumbel-AZ 搜索，
+//     轮到对手时不建树，直接用 AgentConfig 选点。
+//
+//  2. 另一个网络（net_opponent = true）：两方都建树搜索。
+//     此时 prepare() 会额外输出每个待评估局面该由哪个网络来算 ——
+//     标记是**按局**的（谁在搜索就用谁的网络），不是按局面深度。
+//     网络强过全部规则基线之后，这是唯一还能继续量 Elo 的办法。
 struct EvalConfig {
     bool enabled = false;
     AgentConfig opponent;
+    bool net_opponent = false;
     int opening_plies = 4;    // 开局随机手数，打散重复对局
 };
 
@@ -95,8 +103,10 @@ public:
     int max_batch() const;
 
     // 把待评估叶子的特征写进 planes / scalars（容量需 >= max_batch()）。
+    // which_net 非空时，写入每个局面该用哪个网络（0 = 主网络，1 = 对手网络），
+    // 只在 net_opponent 模式下有意义。
     // 返回实际数量；返回 0 表示本手的模拟已经做完，该调 advance()。
-    int prepare(float* planes, float* scalars);
+    int prepare(float* planes, float* scalars, int8_t* which_net = nullptr);
 
     // 喂入上一次 prepare 收集到的那批局面的网络输出。
     //   logits: [n, NUM_ACTIONS]（未经 mask，引擎内部会按合法着法 mask 并归一化）

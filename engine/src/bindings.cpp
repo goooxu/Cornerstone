@@ -258,17 +258,20 @@ PYBIND11_MODULE(_engine, m) {
         .def_readwrite("value_from_score", &MctsConfig::value_from_score);
 
     py::class_<EvalConfig>(m, "EvalConfig")
-        .def(py::init([](bool enabled, const AgentConfig& opponent, int opening_plies) {
+        .def(py::init([](bool enabled, const AgentConfig& opponent, bool net_opponent,
+                         int opening_plies) {
                  EvalConfig c;
                  c.enabled = enabled;
                  c.opponent = opponent;
+                 c.net_opponent = net_opponent;
                  c.opening_plies = opening_plies;
                  return c;
              }),
              py::arg("enabled") = false, py::arg("opponent") = AgentConfig{},
-             py::arg("opening_plies") = 4)
+             py::arg("net_opponent") = false, py::arg("opening_plies") = 4)
         .def_readwrite("enabled", &EvalConfig::enabled)
         .def_readwrite("opponent", &EvalConfig::opponent)
+        .def_readwrite("net_opponent", &EvalConfig::net_opponent)
         .def_readwrite("opening_plies", &EvalConfig::opening_plies);
 
     py::class_<SelfPlayEngine>(m, "SelfPlayEngine")
@@ -281,18 +284,25 @@ PYBIND11_MODULE(_engine, m) {
         // 缓冲区由调用方预分配复用，避免每轮都申请几 MB 的 numpy 数组
         .def("prepare",
              [](SelfPlayEngine& e, py::array_t<float, py::array::c_style> planes,
-                py::array_t<float, py::array::c_style> scalars) {
+                py::array_t<float, py::array::c_style> scalars, py::object which_obj) {
                  const py::ssize_t cap = e.max_batch();
                  if (planes.size() < cap * NUM_PLANES * PLANE_SIZE)
                      throw py::value_error("planes 缓冲区太小");
                  if (scalars.size() < cap * NUM_SCALARS)
                      throw py::value_error("scalars 缓冲区太小");
+                 int8_t* w = nullptr;
+                 py::array_t<int8_t, py::array::c_style> which;
+                 if (!which_obj.is_none()) {
+                     which = which_obj.cast<py::array_t<int8_t, py::array::c_style>>();
+                     if (which.size() < cap) throw py::value_error("which_net 缓冲区太小");
+                     w = which.mutable_data();
+                 }
                  float* p = planes.mutable_data();
                  float* s = scalars.mutable_data();
                  py::gil_scoped_release release;
-                 return e.prepare(p, s);
+                 return e.prepare(p, s, w);
              },
-             py::arg("planes"), py::arg("scalars"))
+             py::arg("planes"), py::arg("scalars"), py::arg("which_net") = py::none())
         .def("feed",
              [](SelfPlayEngine& e, py::array_t<float, py::array::c_style | py::array::forcecast> logits,
                 py::array_t<float, py::array::c_style | py::array::forcecast> wdl) {

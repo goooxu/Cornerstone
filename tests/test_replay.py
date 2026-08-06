@@ -171,6 +171,45 @@ def test_save_shard_is_atomic(games, tmp_path):
     assert other.load_shard(path) == len(buf.games)
 
 
+def test_load_shard_reads_each_array_once(games, tmp_path, monkeypatch):
+    """载入快照时每个数组只能整体取一次。
+
+    NpzFile 是惰性的：**每次 z["k"] 都会重新解压整个数组**。
+    如果写成在循环里 `z["actions"][a:b]`，10 万局 x 9 个数组就是上百万次全量解压，
+    表现为进程直接挂死。小规模测试完全看不出来，一上真实规模就废 ——
+    实测 3M 局面的快照因此卡到无法使用，修好后只要 2.7 秒。
+    """
+    buf = ReplayBuffer(capacity_positions=100_000)
+    buf.add_records(games)
+    path = str(tmp_path / "shard.npz")
+    buf.save_shard(path)
+
+    real_load = np.load
+    counter = {"n": 0}
+
+    class CountingNpz:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getitem__(self, k):
+            counter["n"] += 1
+            return self._inner[k]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return self._inner.__exit__(*a) if hasattr(self._inner, "__exit__") else False
+
+    monkeypatch.setattr(np, "load", lambda *a, **kw: CountingNpz(real_load(*a, **kw)))
+    other = ReplayBuffer(capacity_positions=100_000)
+    other.load_shard(path)
+
+    # 11 个数组，允许一点余量；绝不能随局数增长
+    assert counter["n"] <= 15, (
+        f"解压了 {counter['n']} 次，说明在循环里索引了 NpzFile（{len(games)} 局）")
+
+
 def test_save_and_load_roundtrip(games, tmp_path):
     buf = ReplayBuffer(capacity_positions=100_000)
     buf.add_records(games)

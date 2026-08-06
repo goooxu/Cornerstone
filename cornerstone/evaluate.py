@@ -118,3 +118,88 @@ def evaluate_ladder(model, device, opponents=("random", "greedy-area", "greedy-m
                     games: int = 200, **kw) -> list[EvalResult]:
     return [evaluate_vs_baseline(model, device, opponent=o, games=games, **kw)
             for o in opponents]
+
+
+@torch.no_grad()
+def evaluate_vs_network(
+    model_a,
+    model_b,
+    device,
+    games: int = 200,
+    simulations: int = 64,
+    parallel_games: int = 128,
+    opening_plies: int = 4,
+    seed: int = 0,
+    dtype: torch.dtype = torch.bfloat16,
+    engine_threads: int = 16,
+    label: str = "对手网络",
+) -> EvalResult:
+    """网络 vs 网络。
+
+    网络强过全部规则基线之后（对 greedy-area 打到 200:0 就是这种情况），
+    规则阶梯量不出强度了 —— 得分率钉在 1.0，换算出来的 Elo 只是钳位产生的假数。
+    这时唯一还能继续量的办法是和自己的历史 checkpoint 打。
+
+    两方各自建树、各用各的网络。`prepare()` 会告诉我们每个待评估局面归谁算，
+    按标记分组前向再合并即可。
+    """
+    import numpy as np
+
+    from . import _engine as E
+    from .model import ACTIONS, BOARD, PLANES, SCALARS
+
+    parallel = max(2, min(parallel_games, games))
+    mcts = E.MctsConfig(simulations=simulations, max_considered=16, temperature_plies=0)
+    ev = E.EvalConfig(enabled=True, net_opponent=True, opening_plies=opening_plies)
+    eng = E.SelfPlayEngine(parallel, mcts, seed, ev, max(1, engine_threads))
+
+    planes = np.zeros((parallel, PLANES, BOARD, BOARD), dtype=np.float32)
+    scalars = np.zeros((parallel, SCALARS), dtype=np.float32)
+    which = np.zeros(parallel, dtype=np.int8)
+    logits = np.zeros((parallel, ACTIONS), dtype=np.float32)
+    wdl = np.zeros((parallel, 3), dtype=np.float32)
+
+    models = (model_a.eval(), model_b.eval())
+    recs: list[dict] = []
+    while len(recs) < games:
+        n = eng.prepare(planes, scalars, which)
+        if n == 0:
+            recs.extend(eng.advance())
+            continue
+        for tag, model in enumerate(models):
+            idx = np.flatnonzero(which[:n] == tag)
+            if idx.size == 0:
+                continue
+            p = torch.from_numpy(planes[idx]).to(device)
+            s = torch.from_numpy(scalars[idx]).to(device)
+            with torch.autocast(torch.device(device).type, dtype=dtype,
+                                enabled=torch.device(device).type == "cuda"):
+                pol, w, _ = model(p, s)
+            logits[idx] = pol.float().cpu().numpy()
+            wdl[idx] = w.float().softmax(dim=-1).cpu().numpy()
+        eng.feed(logits[:n], wdl[:n])
+
+    wins = draws = losses = plies = sq_a = sq_b = w_first = w_second = 0
+    for r in recs:
+        p = r["net_player"]
+        res = r["result0"] if p == 0 else -r["result0"]
+        if res > 0:
+            wins += 1
+            w_first += (p == 0)
+            w_second += (p == 1)
+        elif res < 0:
+            losses += 1
+        else:
+            draws += 1
+        plies += len(r["actions"])
+        sq_a += r["score0"] if p == 0 else r["score1"]
+        sq_b += r["score1"] if p == 0 else r["score0"]
+
+    n = len(recs)
+    rate = (wins + 0.5 * draws) / n
+    return EvalResult(
+        opponent=label, games=n, wins=wins, draws=draws, losses=losses,
+        score_rate=rate, elo_diff=elo_from_score_rate(rate), elo_abs=None,
+        mean_plies=plies / n, mean_squares_net=sq_a / n, mean_squares_opp=sq_b / n,
+        wins_as_first=w_first, wins_as_second=w_second,
+    )

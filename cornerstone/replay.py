@@ -194,18 +194,25 @@ class ReplayBuffer:
         os.replace(tmp, path)
 
     def load_shard(self, path: str) -> int:
-        z = np.load(path)
-        lens = z["lens"]
+        with np.load(path) as z:
+            # 必须先把每个数组整体取出来一次。NpzFile 是惰性的：**每次 z["k"] 都会
+            # 重新解压整个数组**。写成在循环里 z["actions"][a:b] 的话，
+            # 11 万局 x 9 个数组 = 上百万次全量解压，表现为进程直接挂死。
+            # 小规模（几千局）完全看不出来，一上真实规模就废。
+            arr = {k: z[k] for k in ("lens", "actions", "players", "n_legal", "n_top",
+                                     "rest_prob", "top_actions", "top_probs",
+                                     "result0", "score0", "score1")}
+        lens = arr["lens"]
         off = np.zeros(len(lens) + 1, dtype=np.int64)
         np.cumsum(lens, out=off[1:])
         for i in range(len(lens)):
             a, b = off[i], off[i + 1]
             self.games.append(Game(
-                actions=z["actions"][a:b], players=z["players"][a:b],
-                n_legal=z["n_legal"][a:b], n_top=z["n_top"][a:b],
-                rest_prob=z["rest_prob"][a:b], top_actions=z["top_actions"][a:b],
-                top_probs=z["top_probs"][a:b], result0=int(z["result0"][i]),
-                score0=int(z["score0"][i]), score1=int(z["score1"][i]),
+                actions=arr["actions"][a:b], players=arr["players"][a:b],
+                n_legal=arr["n_legal"][a:b], n_top=arr["n_top"][a:b],
+                rest_prob=arr["rest_prob"][a:b], top_actions=arr["top_actions"][a:b],
+                top_probs=arr["top_probs"][a:b], result0=int(arr["result0"][i]),
+                score0=int(arr["score0"][i]), score1=int(arr["score1"][i]),
             ))
             self.n_positions += int(lens[i])
             self.total_games_seen += 1

@@ -129,7 +129,7 @@ struct SelfPlayEngine::Impl {
     }
 
     void play_opponent_until_net_turn(GameState& g) {
-        if (!eval.enabled) return;
+        if (!eval.enabled || eval.net_opponent) return;   // 网络对手也要建树，交给正常流程
         while (!g.board.terminal() && g.board.current_player() != g.net_player) {
             const int m = select_move(g.board, eval.opponent, g.rng);
             if (m < 0) break;
@@ -329,7 +329,7 @@ struct SelfPlayEngine::Impl {
         for (auto& th : pool) th.join();
     }
 
-    int prepare(float* planes, float* scalars) {
+    int prepare(float* planes, float* scalars, int8_t* which_net) {
         const int t = std::max(1, std::min<int>(threads, int(games.size())));
         std::vector<std::vector<int32_t>> local(static_cast<size_t>(t));
 
@@ -356,6 +356,14 @@ struct SelfPlayEngine::Impl {
         // 写特征也并行：一个局面 9*196 个 float，几百上千个局面时不算白给
         const size_t n = batch.size();
         const int ft = std::max(1, std::min<int>(threads, int(n)));
+        if (which_net) {
+            // 标记按局：谁在搜索就用谁的网络。同一棵树里所有叶子都归搜索方，
+            // 不能按叶子局面的行棋方来分。
+            for (size_t k = 0; k < n; ++k) {
+                const GameState& g = games[size_t(batch[k])];
+                which_net[k] = int8_t(g.nodes[0].player == g.net_player ? 0 : 1);
+            }
+        }
         if (ft <= 1) {
             for (size_t k = 0; k < n; ++k) write_features(k, planes, scalars);
         } else {
@@ -611,7 +619,9 @@ SelfPlayEngine::~SelfPlayEngine() = default;
 
 int SelfPlayEngine::num_games() const { return int(impl_->games.size()); }
 int SelfPlayEngine::max_batch() const { return int(impl_->games.size()); }
-int SelfPlayEngine::prepare(float* planes, float* scalars) { return impl_->prepare(planes, scalars); }
+int SelfPlayEngine::prepare(float* planes, float* scalars, int8_t* which_net) {
+    return impl_->prepare(planes, scalars, which_net);
+}
 void SelfPlayEngine::feed(const float* logits, const float* wdl) { impl_->feed(logits, wdl); }
 std::vector<GameRecord> SelfPlayEngine::advance() { return impl_->advance(); }
 int64_t SelfPlayEngine::finished_games() const { return impl_->finished.load(); }

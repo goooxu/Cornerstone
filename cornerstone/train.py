@@ -73,6 +73,7 @@ class TrainConfig:
     ckpt_every_steps: int = 2000
     ckpt_every_seconds: float = 600.0
     keep_last: int = 3
+    milestone_every_steps: int = 10_000   # 里程碑 checkpoint 永久保留
     snapshot_every_iters: int = 20
     eval_every_iters: int = 10
     eval_games: int = 200
@@ -247,8 +248,14 @@ class Trainer:
         name = tag or f"step{self.step:08d}"
         path = os.path.join(self.ckpt_dir, f"{name}.pt")
         tmp = path + ".tmp"
+        # 量化参数反量化后再存：MXFP8 张量跨设备/跨进程加载会失败，
+        # 而 FP8 只是训练期主权重的格式，不必也不该是序列化格式
+        model_sd = self.model.state_dict()
+        if self.cfg.fp8:
+            from .fp8 import dequantized_state_dict
+            model_sd = dequantized_state_dict(self.model)
         torch.save({
-            "model": self.model.state_dict(),
+            "model": model_sd,
             "optimizer": self.opt.state_dict(),
             "step": self.step,
             "iteration": self.iteration,
@@ -265,10 +272,24 @@ class Trainer:
         return path
 
     def _prune_checkpoints(self) -> None:
+        """保留最近 K 份 + 里程碑份。
+
+        只保留最近 K 份是不够的：网络强过全部规则基线之后，量 Elo 的唯一办法
+        是和自己的历史版本对下（见 tools/compare_nets.py）。历史被删光就没法回溯了。
+        """
         keep = self.cfg.keep_last
+        every = max(1, self.cfg.milestone_every_steps)
         files = sorted(f for f in os.listdir(self.ckpt_dir)
                        if f.startswith("step") and f.endswith(".pt"))
-        for f in files[:-keep] if len(files) > keep else []:
+        if len(files) <= keep:
+            return
+        for f in files[:-keep]:
+            try:
+                step = int(f[4:-3])
+            except ValueError:
+                continue
+            if step % every == 0:
+                continue                      # 里程碑，留着
             try:
                 os.remove(os.path.join(self.ckpt_dir, f))
             except OSError:
@@ -281,8 +302,13 @@ class Trainer:
         return self.save_checkpoint() if due else None
 
     def load_checkpoint(self, path: str) -> None:
-        blob = torch.load(path, map_location=self.device, weights_only=False)
-        self.model.load_state_dict(blob["model"])
+        blob = torch.load(path, map_location="cpu", weights_only=False)
+        if self.cfg.fp8:
+            from .fp8 import load_state_dict_into
+            load_state_dict_into(self.model, blob["model"])
+        else:
+            self.model.load_state_dict(
+                {k: v.to(self.device) for k, v in blob["model"].items()})
         self.opt.load_state_dict(blob["optimizer"])
         self.step = blob["step"]
         self.iteration = blob["iteration"]

@@ -140,6 +140,50 @@ def read_weight(param: torch.Tensor) -> torch.Tensor:
     return param.dequantize().float() if is_quantized(param) else param.data.float()
 
 
+def dequantized_state_dict(model: torch.nn.Module) -> dict:
+    """导出 checkpoint 用的 state_dict，量化参数一律反量化成 fp32。
+
+    直接存 MXFP8 张量会带来一串麻烦：它由「数据 + 块缩放」多块组成、还分行列两套布局，
+    跨设备/跨进程加载时 `load_state_dict` 会静默失败或直接报
+    `cublas_gemm: failed to launch on the GPU`。
+
+    FP8 是**训练期主权重的格式**，不是序列化格式。反量化是精确的（读出来就是那些值），
+    加载时再量化回去即可 —— checkpoint 因此也能被非 FP8 的模型直接读。
+    """
+    out = {}
+    for k, v in model.state_dict().items():
+        out[k] = v.dequantize().float() if is_quantized(v) else v
+    return out
+
+
+def load_state_dict_into(model: torch.nn.Module, sd: dict) -> None:
+    """把（可能是反量化的）state_dict 装回模型，量化参数走重量化路径。"""
+    params = dict(model.named_parameters())
+    buffers = dict(model.named_buffers())
+    missing = []
+    with torch.no_grad():
+        for k, v in sd.items():
+            # TE 的模块会往 state_dict 里塞 `*._extra_state`（FP8 的 amax 历史等元数据），
+            # 它既不是 parameter 也不是 buffer。我们是按「反量化权重 + 重量化」装载的，
+            # 这些元数据会在下一次前向时重新建立，直接跳过即可。
+            if k.endswith("_extra_state"):
+                continue
+            if is_quantized(v):
+                v = v.dequantize()
+            if k in params:
+                p = params[k]
+                if is_quantized(p):
+                    write_weight_(p, v.to(p.device).float(), stochastic=False)
+                else:
+                    p.data.copy_(v.to(p.device))
+            elif k in buffers:
+                buffers[k].data.copy_(v.to(buffers[k].device))
+            else:
+                missing.append(k)
+    if missing:
+        raise KeyError(f"checkpoint 里有模型上不存在的键: {missing[:5]}")
+
+
 class Fp8AdamW(torch.optim.Optimizer):
     """直接在 FP8 主权重上更新的 AdamW。
 

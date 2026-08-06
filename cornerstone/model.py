@@ -223,6 +223,31 @@ class CornerNet(nn.Module):
         return sum(p.numel() for p in self.parameters())
 
 
+def load_checkpoint(path: str, device="cuda") -> tuple["CornerNet", object]:
+    """从 checkpoint 建模型。FP8 与非 FP8 的 checkpoint 都能读。
+
+    统一走这里，别在各处自己 torch.load + load_state_dict —— FP8 模型的参数是
+    MXFP8 张量，必须在目标设备的上下文里构造、并走重量化路径装载，
+    否则会得到 `cublas_gemm: failed to launch on the GPU` 这种离根因很远的错。
+    """
+    blob = torch.load(path, map_location="cpu", weights_only=False)
+    mc = blob.get("model_config") or {}
+    cfg = ModelConfig(**{k: v for k, v in mc.items()
+                         if k in ModelConfig.__dataclass_fields__})
+    dev = torch.device(device)
+    ctx = torch.cuda.device(dev) if dev.type == "cuda" else contextlib.nullcontext()
+    with ctx:
+        model = CornerNet(cfg)
+        if cfg.fp8:
+            from .fp8 import load_state_dict_into
+            model = model.to(dev)
+            load_state_dict_into(model, blob["model"])
+        else:
+            model.load_state_dict(blob["model"])
+            model = model.to(dev)
+    return model.eval(), blob.get("step", "?")
+
+
 def mask_logits(logits: torch.Tensor, legal: torch.Tensor) -> torch.Tensor:
     """把非法着法的 logit 压到 -inf。legal 是 0/1 或 bool 张量，形状 [B, 17836]。"""
     return logits.masked_fill(~legal.bool(), float("-inf"))

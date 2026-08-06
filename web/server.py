@@ -51,20 +51,14 @@ class Brain:
 
     def _load(self, path: str, device: str) -> None:
         import torch
-        from cornerstone.model import CornerNet, ModelConfig
+        from cornerstone.model import load_checkpoint
 
-        blob = torch.load(path, map_location="cpu", weights_only=False)
-        mc = blob.get("model_config") or {}
-        cfg = ModelConfig(**{k: v for k, v in mc.items()
-                             if k in ModelConfig.__dataclass_fields__})
-        model = CornerNet(cfg)
-        model.load_state_dict(blob["model"])
         if device == "cuda" and not torch.cuda.is_available():
             device = "cpu"
-        self.model = model.to(device).eval()
+        model, step = load_checkpoint(path, device)
+        self.model = model
         self.device = torch.device(device)
         self.torch = torch
-        step = blob.get("step", "?")
         self.name = f"CornerNet {model.num_params()/1e6:.1f}M (step {step})"
 
     @property
