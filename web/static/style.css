@@ -88,6 +88,12 @@ canvas { display: block; border-radius: 6px; cursor: pointer; }
 .withbtn button { flex: 0 0 auto; padding: 7px 10px; }
 select:disabled { opacity: .45; cursor: not-allowed; }
 .hint { color: var(--muted); font-size: 12px; margin-top: -4px; margin-bottom: 10px; }
+.hint.center { text-align: center; margin: 4px 0 0; min-height: 16px; }
+
+/* 座位色点，和棋盘上双方的颜色对应 */
+.seat { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+.seat.p0 { background: #2dd4bf; }
+.seat.p1 { background: #fb923c; }
 
 select, button {
   background: var(--panel-2); color: var(--text);

@@ -248,12 +248,26 @@ class BrainPool:
 
 @dataclass
 class Session:
+    """一局对局。
+
+    两个座位各自绑一个后端，`None` 表示这个座位由人来下。
+    「人机」和「AI 对战」因此不是两种模式，而是同一套东西的两种填法 ——
+    少一个模式开关，就少一堆「模式与实际配置不一致」的状态。
+    """
+
     board: cs.Board = field(default_factory=cs.Board)
     history: list[int] = field(default_factory=list)
-    human_player: int = 0
+    players: list[str | None] = field(default_factory=lambda: [None, DEFAULT_BACKEND])
     difficulty: str = "普通"
-    backend: str = DEFAULT_BACKEND
     created: float = field(default_factory=time.time)
+
+    @property
+    def human_player(self) -> int:
+        """人坐哪个座位；两个座位都是 AI 时返回 -1。"""
+        for i, p in enumerate(self.players):
+            if p is None:
+                return i
+        return -1
 
     def replay(self, actions: list[int]) -> None:
         self.board = cs.Board()
@@ -287,9 +301,11 @@ def state_of(s: Session, analysis: dict | None = None) -> dict:
         "remaining": [[bool(b.piece_remaining(p, i)) for i in range(cs.NUM_PIECES)]
                       for p in (0, 1)],
         "anchors": [b.anchor_cells(p) for p in (0, 1)],
-        "result": b.result_for(s.human_player) if b.terminal else None,
+        # result 相对人类；AI 对战时没有「人类」，就相对先手报，
+        # 前端据 human_player == -1 换一种说法渲染
+        "result": b.result_for(max(s.human_player, 0)) if b.terminal else None,
         "difficulty": s.difficulty,
-        "backend": s.backend,
+        "players": list(s.players),
     }
     if analysis is not None:
         out["analysis"] = analysis
@@ -344,6 +360,9 @@ except ImportError:                      # 只在没装 fastapi 的环境里导�
 # 注解都成了字符串，FastAPI 要靠函数的 __globals__ 去解析。
 # 定义在 build_app 内部的话解析不到，参数会被当成 query 而不是 body（422）。
 class NewGame(BaseModel):
+    # players[i] = 该座位的后端 ID，None 表示人来下。
+    # 不给就退回 human_player + backend 这组旧参数。
+    players: list[str | None] | None = None
     human_player: int = 0
     difficulty: str = "普通"
     backend: str | None = None
@@ -360,7 +379,7 @@ class SidReq(BaseModel):
 
 class BackendReq(BaseModel):
     sid: str
-    backend: str | None = None
+    players: list[str | None] | None = None
     difficulty: str | None = None
 
 
@@ -377,18 +396,48 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
             raise HTTPException(404, "会话不存在或已过期，请开新局")
         return s
 
-    def brain_for(s: Session):
-        """取会话对应的后端。加载失败要给出**能看懂**的 400，而不是 500。
+    def load_brain(backend: str):
+        """加载后端。失败要给出**能看懂**的 400，而不是 500。
 
         checkpoint 会被训练侧轮换删除，界面上列出来的那一刻还在、
         点下去可能就没了 —— 这不是 bug，是正常状态，得让用户知道换一个就行。
         """
         try:
-            return pool.get(s.backend)
+            return pool.get(backend)
         except ValueError as e:
             raise HTTPException(400, str(e))
         except Exception as e:                      # torch.load 失败等
-            raise HTTPException(400, f"后端 {s.backend} 加载失败：{e}")
+            raise HTTPException(400, f"后端 {backend} 加载失败：{e}")
+
+    def brain_to_move(s: Session):
+        """当前该走棋的那个座位的后端。轮到人类则 400。"""
+        backend = s.players[s.board.current_player]
+        if backend is None:
+            raise HTTPException(400, "现在轮到人类走，不该让 AI 落子")
+        return load_brain(backend)
+
+    def analysis_brain(s: Session):
+        """用哪个后端来分析局面。
+
+        人机对局时人类回合也要能分析 —— 那正是「让 AI 点评我的局面」，
+        所以轮到人类时借对手那个网络来看。
+        """
+        backend = s.players[s.board.current_player]
+        if backend is None:
+            backend = s.players[1 - s.board.current_player]
+        return load_brain(backend) if backend is not None else None
+
+    def validate_players(players: list[str | None]) -> list[str | None]:
+        if len(players) != 2:
+            raise HTTPException(400, "players 必须是两项")
+        for p in players:
+            if p is None:
+                continue
+            try:
+                resolve_backend(p)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+        return list(players)
 
     def sims_for(s: Session) -> int:
         return DIFFICULTIES.get(s.difficulty, DIFFICULTIES["普通"])
@@ -427,34 +476,42 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
 
     @app.post("/api/backend")
     def set_backend(req: BackendReq):
-        """中途换对手。棋盘不动 —— 换个引擎接着下这一局正是试玩要干的事。"""
+        """中途换座位上的对手。棋盘不动 —— 换个引擎接着下正是试玩要干的事。"""
         s = get(req.sid)
-        if req.backend is not None:
-            try:
-                resolve_backend(req.backend)
-            except ValueError as e:
-                raise HTTPException(400, str(e))
-            s.backend = req.backend
+        if req.players is not None:
+            s.players = validate_players(req.players)
         if req.difficulty is not None:
             s.difficulty = req.difficulty
-        b = brain_for(s)
-        return {"state": state_of(s), "label": b.label, "has_net": b.has_net}
+        return {"state": state_of(s), "labels": seat_labels(s)}
+
+    def seat_labels(s: Session) -> list[str]:
+        out = []
+        for p in s.players:
+            if p is None:
+                out.append("人类")
+            else:
+                try:
+                    out.append(pool.get(p).label)
+                except Exception:
+                    out.append(p)          # 只是显示用，加载不了也别让整个请求挂掉
+        return out
 
     @app.post("/api/new")
     def new_game(req: NewGame):
         if len(SESSIONS) >= MAX_SESSIONS:      # 简单的容量保护，删最旧的
             oldest = min(SESSIONS, key=lambda k: SESSIONS[k].created)
             SESSIONS.pop(oldest, None)
-        backend = req.backend or default_backend
-        try:
-            resolve_backend(backend)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
+        if req.players is not None:
+            players = validate_players(req.players)
+        else:                                  # 旧参数形式：human_player + backend
+            human = int(req.human_player) & 1
+            backend = req.backend or default_backend
+            players = [None, None]
+            players[1 - human] = validate_players([backend, None])[0]
         sid = uuid.uuid4().hex[:16]
-        s = Session(human_player=int(req.human_player) & 1, difficulty=req.difficulty,
-                    backend=backend)
+        s = Session(players=players, difficulty=req.difficulty)
         SESSIONS[sid] = s
-        return {"sid": sid, "state": state_of(s)}
+        return {"sid": sid, "state": state_of(s), "labels": seat_labels(s)}
 
     @app.get("/api/state")
     def state(sid: str):
@@ -476,18 +533,21 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
         s = get(req.sid)
         if s.board.terminal:
             raise HTTPException(400, "本局已经结束")
-        b = brain_for(s)
+        mover = s.board.current_player
+        b = brain_to_move(s)
         t0 = time.perf_counter()
         action, info = b.choose(s.board, s.history, sims_for(s))
         if not s.board.is_legal(int(action)):
             # 后端选出非法着法说明局面与搜索树对不上，继续走会把棋盘弄脏
-            raise HTTPException(500, f"后端 {s.backend} 给出了非法着法 {action}")
+            raise HTTPException(500, f"后端 {s.players[mover]} 给出了非法着法 {action}")
         s.board.play(int(action))
         s.history.append(int(action))
         out = state_of(s, analysis_payload(info, s.board))
         out["ai_move"] = int(action)
+        out["ai_player"] = mover
         out["ai_seconds"] = round(time.perf_counter() - t0, 3)
         out["ai_label"] = b.label
+        out["labels"] = seat_labels(s)
         return out
 
     @app.get("/api/analysis")
@@ -495,24 +555,32 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
         s = get(sid)
         if s.board.terminal:
             return {"analysis": None}
-        b = brain_for(s)
+        b = analysis_brain(s)
+        if b is None:
+            return {"analysis": None, "has_net": False, "label": "人类"}
         return {"analysis": analysis_payload(b.analyse(s.history, sims_for(s)), s.board),
                 "has_net": b.has_net, "label": b.label}
 
     @app.post("/api/undo")
     def undo(req: SidReq):
         s = get(req.sid)
-        # 退回到轮到人类且至少撤掉一手为止
         hist = list(s.history)
-        while hist:
-            hist.pop()
-            probe = cs.Board()
-            for a in hist:
-                probe.play(a)
-            if probe.terminal:
-                continue
-            if probe.current_player == s.human_player:
-                break
+        if s.human_player < 0:
+            # AI 对战没有「轮到人类」这回事。照原逻辑找下去会一路 pop 到空棋盘，
+            # 看起来像「悔棋把整局都撤了」。这里就退一手。
+            if hist:
+                hist.pop()
+        else:
+            # 退回到轮到人类且至少撤掉一手为止
+            while hist:
+                hist.pop()
+                probe = cs.Board()
+                for a in hist:
+                    probe.play(a)
+                if probe.terminal:
+                    continue
+                if probe.current_player == s.human_player:
+                    break
         s.replay(hist)
         return state_of(s)
 

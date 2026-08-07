@@ -17,6 +17,7 @@ const S = {
   analysis: null,
   busy: false,
   backends: [],
+  autoplay: false,      // AI 对战连打中
 };
 
 const COLORS = ['#2dd4bf', '#fb923c'];
@@ -229,12 +230,22 @@ function applyState(st, analysis) {
 
   const status = $('status');
   status.className = 'status';
+  const noHuman = st.human_player < 0;
   if (st.terminal) {
     const [a, b] = st.scores;
-    const verdict = st.result > 0 ? '你赢了' : st.result < 0 ? '你输了' : '和局';
-    status.textContent = `终局：占格 ${a} : ${b} —— ${verdict}`;
-    if (st.result > 0) status.classList.add('win');
-    if (st.result < 0) status.classList.add('lose');
+    if (noHuman) {
+      // 胜负规则：占格多者胜，相同为和局
+      const verdict = a > b ? '先手胜' : a < b ? '后手胜' : '和局';
+      status.textContent = `终局：占格 ${a} : ${b} —— ${verdict}`;
+    } else {
+      const verdict = st.result > 0 ? '你赢了' : st.result < 0 ? '你输了' : '和局';
+      status.textContent = `终局：占格 ${a} : ${b} —— ${verdict}`;
+      if (st.result > 0) status.classList.add('win');
+      if (st.result < 0) status.classList.add('lose');
+    }
+  } else if (noHuman) {
+    const who = st.current_player === 0 ? '先手' : '后手';
+    status.textContent = `AI 对战 · 轮到${who}（第 ${st.ply} 手）`;
   } else if (st.current_player === st.human_player) {
     const first = st.ply < 2 ? '（首手必须盖住你的起点）' : '';
     status.textContent = `轮到你走，共 ${st.legal_actions.length} 种合法着法 ${first}`;
@@ -293,89 +304,151 @@ async function guard(fn) {
   finally { S.busy = false; }
 }
 
-// ------------------------------------------------------------ 对手（后端）选择
+// ------------------------------------------------------------ 座位与后端选择
+
+// 两个座位各选一个后端，'' 表示人来下。于是「人机」和「AI 对战」不是两种模式，
+// 只是两种填法 —— 少一个模式开关，就少一类「模式和实际配置对不上」的 bug。
+const HUMAN = '';
+
+function seatSel(i) { return $('seat' + i); }
+function seatValues() { return [seatSel(0).value, seatSel(1).value]; }
+
+// 传给后端时空串要变回 null
+function seatPlayers() { return seatValues().map(v => (v === HUMAN ? null : v)); }
 
 // 选项分组重建。保留当前选中项 —— 刷新的目的是让新 checkpoint 出现，
 // 不是把用户正在用的那个换掉。
 async function loadBackends(keep) {
   const r = await api('/api/backends');
   S.backends = r.backends;
-  const sel = $('backend');
-  const want = keep || sel.value || r.default;
-  sel.innerHTML = '';
+
   const groups = new Map();
   for (const b of r.backends) {
     if (!groups.has(b.group)) groups.set(b.group, []);
     groups.get(b.group).push(b);
   }
-  for (const [name, items] of groups) {
-    const og = document.createElement('optgroup');
-    og.label = name;
-    for (const b of items) {
-      const o = document.createElement('option');
-      o.value = b.id; o.textContent = b.label;
-      og.appendChild(o);
+
+  for (let i = 0; i < 2; i++) {
+    const sel = seatSel(i);
+    const want = (keep && keep[i] !== undefined) ? keep[i] : sel.value;
+    sel.innerHTML = '';
+    const human = document.createElement('option');
+    human.value = HUMAN; human.textContent = '我来下';
+    sel.appendChild(human);
+    for (const [name, items] of groups) {
+      const og = document.createElement('optgroup');
+      og.label = name;
+      for (const b of items) {
+        const o = document.createElement('option');
+        o.value = b.id; o.textContent = b.label;
+        og.appendChild(o);
+      }
+      sel.appendChild(og);
     }
-    sel.appendChild(og);
+    // 原先选中的 checkpoint 可能已被训练侧轮换删掉；option 不存在时
+    // 赋值会得到空串，正好落到「我来下」，不会卡在一个不存在的后端上
+    sel.value = want === undefined ? '' : want;
   }
-  // 选中项可能已被训练侧轮换删掉，那就退回默认
-  sel.value = want;
-  if (!sel.value) sel.value = r.default;
-  return sel.value;
 }
 
 function backendInfo(id) {
   return S.backends.find(b => b.id === id) || null;
 }
 
-// 难度就是搜索的模拟数，对规则基线没有意义 —— 直接禁用，别让人以为调了有用
-function syncBackendUi() {
-  const info = backendInfo($('backend').value);
-  const isRule = info && info.kind === 'rule';
-  $('difficulty').disabled = !!isRule;
-  $('btn-analyse').disabled = !!isRule;
-  $('backend-hint').textContent = isRule
-    ? '规则基线：不搜索，难度与分析不适用'
-    : '难度 = 每步的 MCTS 模拟数';
+function seatLabel(v) {
+  if (v === HUMAN) return '人类';
+  const info = backendInfo(v);
+  return info ? info.label : v;
 }
 
-async function changeBackend() {
+// 难度就是搜索的模拟数，只对网络后端有意义。
+// 两个座位都没有网络时（人 vs 规则、规则 vs 规则）就没什么可调的。
+function syncBackendUi() {
+  const vals = seatValues();
+  const anyNet = vals.some(v => v !== HUMAN && (backendInfo(v) || {}).kind === 'net');
+  const bothAi = vals.every(v => v !== HUMAN);
+  $('difficulty').disabled = !anyNet;
+  $('btn-analyse').disabled = !anyNet;
+  $('btn-autoplay').disabled = !bothAi;
+  $('ai-name').textContent = seatLabel(vals[0]) + '  vs  ' + seatLabel(vals[1]);
+  $('backend-hint').textContent = bothAi
+    ? 'AI 对战：点「自动对战」连着走到终局'
+    : (anyNet ? '难度 = 每步的 MCTS 模拟数' : '规则基线不搜索，难度与分析不适用');
+}
+
+// 换座位不重置棋盘：同一个局面换个引擎接着下，正是试玩要干的事
+async function changeSeats() {
   await guard(async () => {
     syncBackendUi();
     if (!S.sid) return;
     const r = await post('/api/backend', {
       sid: S.sid,
-      backend: $('backend').value,
+      players: seatPlayers(),
       difficulty: $('difficulty').value,
     });
-    $('ai-name').textContent = 'AI：' + r.label;
     S.analysis = null;
     applyState(r.state, null);
-    // 换完正好轮到 AI（比如刚换完就该它走），交给自动应手逻辑
-    if (!r.state.terminal && r.state.current_player !== r.state.human_player
-        && $('auto-ai').checked) {
-      while (!S.state.terminal && S.state.current_player !== S.state.human_player) await aiMove();
-    }
+    await maybeAutoRespond();
   });
+}
+
+// 轮到 AI 且开着自动应手就替它走。AI 对战时不在这里连打 ——
+// 那是「自动对战」按钮的事，否则一按新对局就会失控地跑到终局。
+async function maybeAutoRespond() {
+  if (!$('auto-ai').checked) return;
+  if (S.state.human_player < 0) return;
+  while (!S.state.terminal && S.state.current_player !== S.state.human_player) {
+    await aiMove();
+  }
 }
 
 async function newGame() {
   await guard(async () => {
+    S.autoplay = false;
     S.analysis = null; S.piece = null; S.ori = null;
     const r = await post('/api/new', {
-      human_player: parseInt($('side-select').value, 10),
+      players: seatPlayers(),
       difficulty: $('difficulty').value,
-      backend: $('backend').value,
     });
     S.sid = r.sid;
     applyState(r.state, null);
-    if (r.state.current_player !== r.state.human_player) await aiMove();
+    await maybeAutoRespond();
   });
+}
+
+// ---------------------------------------------------------------- AI 对战
+
+function setAutoplayUi(on) {
+  $('btn-autoplay').textContent = on ? '■ 停止' : '▶ 自动对战';
+  $('btn-autoplay').classList.toggle('primary', on);
+}
+
+// 逐步走而不是让后端一次跑完：每步都刷新棋盘，随时能停。
+// 极难档一步要十几秒，一次性跑完整局的话页面会干等几分钟。
+async function autoplay() {
+  if (S.autoplay) { S.autoplay = false; setAutoplayUi(false); return; }
+  if (S.state && S.state.human_player >= 0) return;   // 有人在座，不能自动
+  S.autoplay = true;
+  setAutoplayUi(true);
+  try {
+    while (S.autoplay && S.state && !S.state.terminal) {
+      await aiMove();
+    }
+  } catch (e) {
+    $('status').textContent = '出错：' + e.message;
+  } finally {
+    S.autoplay = false;
+    setAutoplayUi(false);
+  }
 }
 
 async function aiMove() {
   const r = await post('/api/ai', { sid: S.sid });
-  if (r.ai_label) $('ai-name').textContent = 'AI：' + r.ai_label;
+  if (r.labels) $('ai-name').textContent = r.labels[0] + '  vs  ' + r.labels[1];
+  if (r.ai_seconds !== undefined) {
+    const who = r.ai_player === 0 ? '先手' : '后手';
+    $('lastmove').textContent = `上一手：${who} · ${r.ai_label} · ${r.ai_seconds}s`;
+  }
   applyState(r, r.analysis || null);
 }
 
@@ -410,11 +483,19 @@ CV.addEventListener('click', (ev) => {
 
 $('btn-new').onclick = newGame;
 $('btn-ai').onclick = () => guard(aiMove);
-$('backend').onchange = changeBackend;
-$('difficulty').onchange = changeBackend;
+$('seat0').onchange = changeSeats;
+$('seat1').onchange = changeSeats;
+$('difficulty').onchange = changeSeats;
+$('btn-autoplay').onclick = autoplay;
+$('btn-swap').onclick = () => guard(async () => {
+  const [a, b] = seatValues();
+  await loadBackends([b, a]);
+  syncBackendUi();
+  // 换边改的是「谁执先」，那是开局属性，必须重开一局
+  $('status').textContent = '已换边，点「新对局」生效';
+});
 $('btn-refresh').onclick = () => guard(async () => {
-  const cur = $('backend').value;
-  await loadBackends(cur);
+  await loadBackends(seatValues());
   syncBackendUi();
   // 训练在跑，"最新" 指向的 step 会变，重扫之后标签才是新的
   $('status').textContent = '已重新扫描：' + S.backends.length + ' 个可选对手';
@@ -465,8 +546,10 @@ document.addEventListener('keydown', (ev) => {
     if (d === '普通') o.selected = true;
     sel.appendChild(o);
   }
-  await loadBackends(S.meta.default_backend);
+  // 默认人执先、AI 执后，和改版前一致
+  await loadBackends([HUMAN, S.meta.default_backend]);
   syncBackendUi();
+  setAutoplayUi(false);
   renderTray();
   await newGame();
 })();

@@ -199,6 +199,26 @@ def test_pool_reuses_rule_brains(runs):
     assert a.analyse([], 64) is None, "规则基线没有分析面板"
 
 
+# ----------------------------------------------------------------- 座位
+
+def test_human_player_index():
+    assert server.Session(players=[None, "rule:greedy-area"]).human_player == 0
+    assert server.Session(players=["rule:greedy-area", None]).human_player == 1
+
+
+def test_human_player_is_minus_one_when_both_ai():
+    """AI 对战没有「人类座位」。返回 -1 而不是 0 —— 返回 0 的话
+    前端会认为先手是人，点击就能替它落子，而 result 也会算错方向。"""
+    s = server.Session(players=["rule:greedy-area", "rule:corner-min"])
+    assert s.human_player == -1
+
+
+def test_default_session_is_human_vs_ai():
+    s = server.Session()
+    assert s.players[0] is None and s.players[1] == server.DEFAULT_BACKEND
+    assert s.human_player == 0
+
+
 def test_pool_latest_tracks_new_checkpoint(runs, monkeypatch):
     """选了「最新」之后，训练又落了一份 —— 池子要跟着换，而不是抱着旧的。"""
     d = runs("r", [10], latest="step00000010.pt")
@@ -213,3 +233,122 @@ def test_pool_latest_tracks_new_checkpoint(runs, monkeypatch):
 
     assert first is not second
     assert os.path.basename(second.path) == "step00000020.pt"
+
+
+# ------------------------------------------------------- 端到端（只用规则基线）
+#
+# 规则基线不碰 GPU、每步微秒级，所以能在单测里真打完整局。
+# 网络后端的那条路由逻辑完全一样，差别只在 BrainPool 给回哪种 Brain。
+
+pytest.importorskip("fastapi")
+TestClient = pytest.importorskip("fastapi.testclient").TestClient
+
+
+@pytest.fixture
+def client():
+    pool = server.BrainPool("cpu")
+    app = server.build_app(pool, "rule:greedy-mobility")
+    server.SESSIONS.clear()
+    with TestClient(app) as c:
+        yield c
+
+
+def test_ai_vs_ai_plays_a_full_game(client):
+    r = client.post("/api/new", json={
+        "players": ["rule:greedy-area", "rule:corner-min"], "difficulty": "普通"})
+    assert r.status_code == 200, r.text
+    sid = r.json()["sid"]
+    st = r.json()["state"]
+    assert st["human_player"] == -1
+    assert r.json()["labels"] == ["规则基线 greedy-area", "规则基线 corner-min"]
+
+    plies = 0
+    while not st["terminal"]:
+        rr = client.post("/api/ai", json={"sid": sid})
+        assert rr.status_code == 200, rr.text
+        st = rr.json()
+        plies += 1
+        assert plies <= 42, "一局不可能超过 42 手"
+
+    a, b = st["scores"]
+    assert a + b <= 178                       # 双方各 89 格
+    assert plies == len(st["history"])
+    assert st["result"] == (0 if a == b else (1 if a > b else -1)), "result 应相对先手"
+
+
+def test_ai_move_rejected_on_human_turn(client):
+    r = client.post("/api/new", json={"players": [None, "rule:greedy-area"]})
+    sid = r.json()["sid"]
+    rr = client.post("/api/ai", json={"sid": sid})     # 先手是人，还没走
+    assert rr.status_code == 400
+    assert "人类" in rr.json()["detail"]
+
+
+def test_undo_in_ai_vs_ai_pops_one_ply(client):
+    """人机模式下悔棋要退到「轮到人类」；AI 对战没有人类，
+    照那个条件找下去会一路 pop 到空棋盘 —— 看起来像整局被撤了。"""
+    r = client.post("/api/new", json={"players": ["rule:greedy-area", "rule:corner-min"]})
+    sid = r.json()["sid"]
+    for _ in range(4):
+        client.post("/api/ai", json={"sid": sid})
+    before = len(client.get(f"/api/state?sid={sid}").json()["history"])
+    assert before == 4
+
+    after = len(client.post("/api/undo", json={"sid": sid}).json()["history"])
+    assert after == before - 1, "AI 对战悔棋应只退一手"
+
+
+def test_undo_in_human_game_returns_to_human(client):
+    r = client.post("/api/new", json={"players": [None, "rule:greedy-area"]})
+    sid = r.json()["sid"]
+    st = r.json()["state"]
+    client.post("/api/move", json={"sid": sid, "action": st["legal_actions"][0]})
+    client.post("/api/ai", json={"sid": sid})
+    st = client.post("/api/undo", json={"sid": sid}).json()
+    assert st["current_player"] == st["human_player"]
+    assert st["history"] == []
+
+
+def test_switch_seats_midgame_keeps_board(client):
+    r = client.post("/api/new", json={"players": ["rule:greedy-area", "rule:corner-min"]})
+    sid = r.json()["sid"]
+    for _ in range(3):
+        st = client.post("/api/ai", json={"sid": sid}).json()
+    hist, scores = list(st["history"]), list(st["scores"])
+
+    rr = client.post("/api/backend", json={
+        "sid": sid, "players": ["rule:greedy-mobility", "rule:corner-min"]})
+    assert rr.status_code == 200
+    st2 = rr.json()["state"]
+    assert st2["history"] == hist and st2["scores"] == scores, "换座位不该动棋盘"
+    assert st2["players"][0] == "rule:greedy-mobility"
+
+
+def test_bad_players_rejected(client):
+    for bad in ([], ["rule:x"], ["rule:x", "rule:y"], [None, "net:没这个跑/latest"]):
+        r = client.post("/api/new", json={"players": bad})
+        assert r.status_code == 400, f"{bad} 应被拒绝，实得 {r.status_code}"
+
+
+def test_human_vs_human_is_allowed(client):
+    """两个座位都是人 —— 同屏两人对下。引擎不关心，不该报错。"""
+    r = client.post("/api/new", json={"players": [None, None]})
+    assert r.status_code == 200
+    assert r.json()["state"]["human_player"] == 0
+    assert r.json()["labels"] == ["人类", "人类"]
+
+
+def test_analysis_without_any_net_is_none(client):
+    r = client.post("/api/new", json={"players": ["rule:greedy-area", "rule:corner-min"]})
+    sid = r.json()["sid"]
+    got = client.get(f"/api/analysis?sid={sid}").json()
+    assert got["analysis"] is None and got["has_net"] is False
+
+
+def test_legacy_new_game_params_still_work(client):
+    """旧的 human_player + backend 形式要继续可用。"""
+    r = client.post("/api/new", json={"human_player": 1, "backend": "rule:greedy-area"})
+    assert r.status_code == 200
+    st = r.json()["state"]
+    assert st["human_player"] == 1
+    assert st["players"] == ["rule:greedy-area", None]
