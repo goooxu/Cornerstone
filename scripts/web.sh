@@ -33,10 +33,22 @@ latest_checkpoint() {
   echo "$best"
 }
 
+# 和 train.sh 一样核对 /proc/<pid>/cmdline，不能只靠 kill -0。
+# 这里比 train.sh 更容易踩：开发机每 8 小时过期，容器重建后 PID 从个位数重新开始
+# （实测训练进程拿到过 553、688 这种号），而 web.pid 是留在 NFS 上的旧号码。
+# 只用 kill -0 的话，一个不相干的低号进程就会让 status 误报「运行中」、
+# start 拒绝启动，而 stop 会去杀那个无辜的进程。
 alive() {
   [ -f "$PIDFILE" ] || return 1
   local pid; pid="$(cat "$PIDFILE")"
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  local cmd
+  cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" || return 1
+  case "$cmd" in
+    *web/server.py*) return 0 ;;
+    *) return 1 ;;                        # PID 被复用了，当作没在跑
+  esac
 }
 
 cmd_start() {
