@@ -84,7 +84,8 @@ canvas { display: block; border-radius: 6px; cursor: pointer; }
 .row label.wide { flex: 1 1 100%; align-items: stretch; flex-direction: column; gap: 4px; }
 .withbtn { display: flex; gap: 6px; align-items: center; }
 .withbtn select { flex: 1 1 auto; min-width: 0; }
-.withbtn button { flex: 0 0 auto; padding: 7px 10px; }
+/* 模拟数是个数字，给固定宽度，不跟着 checkpoint 名字一起被撑开 */
+.withbtn select.sims { flex: 0 0 auto; width: 5.2em; text-align: right; }
 select:disabled { opacity: .45; cursor: not-allowed; }
 .hint { color: var(--muted); font-size: 12px; margin-top: -4px; margin-bottom: 10px; }
 .hint.center { text-align: center; margin: 4px 0 0; min-height: 16px; }
@@ -103,22 +104,35 @@ button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 button.primary { background: var(--accent); color: #10121a; border-color: var(--accent); font-weight: 600; }
 
-.tray { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+/* 朝向圈要能画到托盘格子外面去，所以这一路都不能裁剪 */
+.tray { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; overflow: visible; }
 .tray .piece {
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px;
   padding: 4px; display: flex; flex-direction: column; align-items: center; gap: 2px;
-  cursor: pointer;
+  position: relative;                 /* 朝向圈以它为定位原点 */
+  cursor: default;                    /* 棋子本身不可点，别给可点的暗示 */
 }
-.tray .piece.used { opacity: .22; cursor: not-allowed; }
+.tray .piece.used { opacity: .22; }
 .tray .piece.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .tray .piece span { font-size: 10px; color: var(--muted); }
+/* 悬停时把这一格提到最上层，否则圈会被右边和下面的棋子盖住 */
+.tray .piece:hover { z-index: 40; border-color: var(--accent); }
 
-.orients { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; min-height: 4px; }
-.orients .ori {
+/* 朝向圈。默认不显示，也不吃鼠标事件；只有里面的按钮吃 ——
+   这样圈本身不会挡住旁边棋子的悬停，而鼠标停在按钮上时
+   .piece:hover 仍然成立（按钮是 .piece 的后代），圈不会闪掉。 */
+.ring { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+.tray .piece:hover .ring { opacity: 1; }
+.ring .ori-btn {
+  position: absolute; transform: translate(-50%, -50%);
   background: var(--panel-2); border: 1px solid var(--line);
   border-radius: 6px; padding: 3px; cursor: pointer;
+  pointer-events: auto;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 14px #000a;
 }
-.orients .ori.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.ring .ori-btn:hover { border-color: var(--accent); background: var(--panel); }
+.ring .ori-btn.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 
 .winbar {
   position: relative; height: 26px; border-radius: 7px; overflow: hidden;

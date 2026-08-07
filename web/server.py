@@ -38,9 +38,14 @@ from cornerstone import _engine as E           # noqa: E402
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 RUNS_DIR = os.path.join(os.path.dirname(REPO), "runs")
 
-# 难度只对网络后端有意义 —— 它就是搜索的模拟数。
-# 规则基线是确定性的启发式，没有可调的「想多久」，选了它这一项就不起作用。
-DIFFICULTIES = {"简单": 16, "普通": 64, "困难": 256, "极难": 800}
+# 界面上直接选模拟数，不再套「简单/普通/困难」这层名字 ——
+# 两个座位可以各选各的，用来比「同一个网络多搜一倍值多少棋力」这种事，
+# 名字反而挡着看不清实际预算。
+SIM_CHOICES = [16, 32, 64, 128, 256, 512, 800]
+DEFAULT_SIMS = 64
+# 上限不是审美问题：单局面搜索的批大小恒为 1，模拟数直接线性折算成等待时间，
+# 放开了就能让一个请求把服务占住好几分钟。
+MAX_SIMS = 2000
 
 # 界面上可选的规则基线。给这三个是因为它们各代表一种打法：
 # 只看棋子大小 / 只堵对方 / 调好权重的综合版。强弱和设计依据见 docs/03。
@@ -258,7 +263,8 @@ class Session:
     board: cs.Board = field(default_factory=cs.Board)
     history: list[int] = field(default_factory=list)
     players: list[str | None] = field(default_factory=lambda: [None, DEFAULT_BACKEND])
-    difficulty: str = "普通"
+    # 每个座位各自的模拟数。规则基线不搜索，这一项对它无效。
+    sims: list[int] = field(default_factory=lambda: [DEFAULT_SIMS, DEFAULT_SIMS])
     created: float = field(default_factory=time.time)
 
     @property
@@ -304,7 +310,7 @@ def state_of(s: Session, analysis: dict | None = None) -> dict:
         # result 相对人类；AI 对战时没有「人类」，就相对先手报，
         # 前端据 human_player == -1 换一种说法渲染
         "result": b.result_for(max(s.human_player, 0)) if b.terminal else None,
-        "difficulty": s.difficulty,
+        "sims": list(s.sims),
         "players": list(s.players),
     }
     if analysis is not None:
@@ -352,8 +358,8 @@ class NewGame(BaseModel):
     # players[i] = 该座位的后端 ID，None 表示人来下。
     # 不给就退回 human_player + backend 这组旧参数。
     players: list[str | None] | None = None
+    sims: list[int] | None = None
     human_player: int = 0
-    difficulty: str = "普通"
     backend: str | None = None
 
 
@@ -369,7 +375,7 @@ class SidReq(BaseModel):
 class BackendReq(BaseModel):
     sid: str
     players: list[str | None] | None = None
-    difficulty: str | None = None
+    sims: list[int] | None = None
 
 
 def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
@@ -417,8 +423,22 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
                 raise HTTPException(400, str(e))
         return list(players)
 
-    def sims_for(s: Session) -> int:
-        return DIFFICULTIES.get(s.difficulty, DIFFICULTIES["普通"])
+    def validate_sims(sims: list[int]) -> list[int]:
+        if len(sims) != 2:
+            raise HTTPException(400, "sims 必须是两项")
+        out = []
+        for v in sims:
+            try:
+                n = int(v)
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"模拟数必须是整数：{v!r}")
+            if not 1 <= n <= MAX_SIMS:
+                raise HTTPException(400, f"模拟数要在 1..{MAX_SIMS} 之间，收到 {n}")
+            out.append(n)
+        return out
+
+    def sims_for(s: Session, player: int) -> int:
+        return s.sims[player]
 
     @app.get("/")
     def index():
@@ -443,7 +463,9 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
             "num_cells": cs.NUM_CELLS,
             "start_cells": [list(x) for x in cs.START_CELLS],
             "pieces": pieces,
-            "difficulties": list(DIFFICULTIES),
+            "sim_choices": SIM_CHOICES,
+            "default_sims": DEFAULT_SIMS,
+            "max_sims": MAX_SIMS,
             "default_backend": default_backend,
         }
 
@@ -458,8 +480,8 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
         s = get(req.sid)
         if req.players is not None:
             s.players = validate_players(req.players)
-        if req.difficulty is not None:
-            s.difficulty = req.difficulty
+        if req.sims is not None:
+            s.sims = validate_sims(req.sims)
         return {"state": state_of(s), "labels": seat_labels(s)}
 
     def seat_labels(s: Session) -> list[str]:
@@ -487,7 +509,9 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
             players = [None, None]
             players[1 - human] = validate_players([backend, None])[0]
         sid = uuid.uuid4().hex[:16]
-        s = Session(players=players, difficulty=req.difficulty)
+        sims = validate_sims(req.sims) if req.sims is not None \
+            else [DEFAULT_SIMS, DEFAULT_SIMS]
+        s = Session(players=players, sims=sims)
         SESSIONS[sid] = s
         return {"sid": sid, "state": state_of(s), "labels": seat_labels(s)}
 
@@ -514,7 +538,7 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
         mover = s.board.current_player
         b = brain_to_move(s)
         t0 = time.perf_counter()
-        action, info = b.choose(s.board, s.history, sims_for(s))
+        action, info = b.choose(s.board, s.history, sims_for(s, mover))
         if not s.board.is_legal(int(action)):
             # 后端选出非法着法说明局面与搜索树对不上，继续走会把棋盘弄脏
             raise HTTPException(500, f"后端 {s.players[mover]} 给出了非法着法 {action}")

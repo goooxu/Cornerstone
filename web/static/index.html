@@ -32,20 +32,19 @@
     <div class="card">
       <div class="row">
         <label class="wide"><span class="seat p0"></span>先手（起点 5,5）
-          <select id="seat0"></select>
+          <span class="withbtn">
+            <select id="seat0"></select>
+            <select id="sims0" class="sims" title="每步的 MCTS 模拟数"></select>
+          </span>
         </label>
       </div>
       <div class="row">
         <label class="wide"><span class="seat p1"></span>后手（起点 10,10）
           <span class="withbtn">
             <select id="seat1"></select>
-            <button id="btn-refresh" title="重新扫描 checkpoint（训练中会不断产出新的）">⟳</button>
+            <select id="sims1" class="sims" title="每步的 MCTS 模拟数"></select>
           </span>
         </label>
-      </div>
-      <div class="row">
-        <label>难度 <select id="difficulty"></select></label>
-        <button id="btn-swap" title="两个座位互换">⇅ 换边</button>
       </div>
       <div id="backend-hint" class="hint"></div>
       <div class="row buttons">
@@ -57,9 +56,8 @@
     </div>
 
     <div class="card">
-      <h2>棋子 <small id="tray-hint">点选一枚，再选形态</small></h2>
+      <h2>棋子 <small id="tray-hint">鼠标悬停一枚，四周会展开它的全部形态</small></h2>
       <div id="tray" class="tray"></div>
-      <div id="orients" class="orients"></div>
     </div>
 
     <div class="card" id="analysis-card">

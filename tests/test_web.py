@@ -192,10 +192,10 @@ def test_pool_caches_and_evicts_lru(runs, monkeypatch):
     assert len(_FakeNet.loaded) == 4, "被淘汰的那个应重新加载"
 
 
-def test_difficulty_is_inert_for_rule_baselines():
-    """难度 = MCTS 模拟数，规则基线不搜索，所以这个参数对它完全无效。
+def test_sims_is_inert_for_rule_baselines():
+    """模拟数对规则基线完全无效 —— 它不搜索。
 
-    界面上因此把难度置灰。这条测的是被置灰的那个前提本身 ——
+    界面上因此把该座位的模拟数下拉置灰。这条测的是被置灰的那个前提本身 ——
     哪天 RuleBrain 真开始用 sims 了，就该把置灰去掉。
     """
     import cornerstone as cs
@@ -208,11 +208,11 @@ def test_difficulty_is_inert_for_rule_baselines():
         assert brain.analyse([], sims) is None
 
 
-def test_all_difficulties_map_to_a_simulation_count():
-    # 界面上的每一档都要能换算成模拟数，否则 sims_for 会静默退回「普通」
-    assert set(server.DIFFICULTIES) == {"简单", "普通", "困难", "极难"}
-    assert sorted(server.DIFFICULTIES.values()) == list(server.DIFFICULTIES.values()), \
-        "难度档要按模拟数递增排列"
+def test_sim_choices_are_sane():
+    # 界面直接列这些数字，要递增、要在允许范围内、默认值要在其中
+    assert server.SIM_CHOICES == sorted(server.SIM_CHOICES)
+    assert server.DEFAULT_SIMS in server.SIM_CHOICES
+    assert all(1 <= n <= server.MAX_SIMS for n in server.SIM_CHOICES)
 
 
 def test_pool_reuses_rule_brains(runs):
@@ -279,7 +279,7 @@ def client():
 
 def test_ai_vs_ai_plays_a_full_game(client):
     r = client.post("/api/new", json={
-        "players": ["rule:greedy-area", "rule:corner-min"], "difficulty": "普通"})
+        "players": ["rule:greedy-area", "rule:corner-min"], "sims": [64, 64]})
     assert r.status_code == 200, r.text
     sid = r.json()["sid"]
     st = r.json()["state"]
@@ -346,6 +346,38 @@ def test_switch_seats_midgame_keeps_board(client):
     st2 = rr.json()["state"]
     assert st2["history"] == hist and st2["scores"] == scores, "换座位不该动棋盘"
     assert st2["players"][0] == "rule:greedy-mobility"
+
+
+def test_per_seat_sims_are_independent(client):
+    """两个座位各自的模拟数互不影响 —— 这正是「同一个网络多搜一倍值多少」
+    这类对比要用的东西，混成一个值就测不了了。"""
+    r = client.post("/api/new", json={
+        "players": ["rule:greedy-area", "rule:corner-min"], "sims": [16, 512]})
+    assert r.status_code == 200, r.text
+    assert r.json()["state"]["sims"] == [16, 512]
+
+    sid = r.json()["sid"]
+    rr = client.post("/api/backend", json={"sid": sid, "sims": [800, 32]})
+    assert rr.status_code == 200
+    assert rr.json()["state"]["sims"] == [800, 32]
+
+
+def test_sims_default_when_omitted(client):
+    r = client.post("/api/new", json={"players": [None, "rule:greedy-area"]})
+    assert r.json()["state"]["sims"] == [server.DEFAULT_SIMS, server.DEFAULT_SIMS]
+
+
+def test_bad_sims_rejected(client):
+    """上限不是审美问题：单局面搜索批大小恒为 1，模拟数线性折算成等待时间。
+
+    两道关卡，返回码不同但都是拒绝：类型不对的由 Pydantic 挡在 422，
+    类型对但越界的由 validate_sims 挡在 400。
+    """
+    for bad in ([64], [64, 64, 64], [0, 64], [64, -1],
+                [64, server.MAX_SIMS + 1], ["快一点", 64]):
+        r = client.post("/api/new", json={"players": [None, "rule:greedy-area"],
+                                          "sims": bad})
+        assert r.status_code in (400, 422), f"{bad} 应被拒绝，实得 {r.status_code}"
 
 
 def test_bad_players_rejected(client):

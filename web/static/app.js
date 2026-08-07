@@ -180,6 +180,13 @@ function viewSeat() {
   return S.state.human_player >= 0 ? S.state.human_player : S.state.current_player;
 }
 
+// 棋子本身不可点：点一枚棋子并不足以确定一个着法，还得选朝向。
+// 悬停时把它的**全部朝向摊成一圈**围在四周，一次点击直接定下
+// （棋子 + 朝向），省掉「先点棋子、再去下面的列表里点形态」这两步。
+//
+// 圈是棋子格子的 DOM 子元素，不是浮在外面的独立层 —— 这样鼠标从棋子
+// 移到某个朝向上时不会触发棋子的 mouseleave（mouseleave 只在离开元素
+// **及其后代**时才发），圈就不会在半路消失。纯 CSS :hover 即可，不用 JS 计时器。
 function renderTray() {
   const tray = $('tray');
   tray.innerHTML = '';
@@ -193,26 +200,35 @@ function renderTray() {
     const label = document.createElement('span');
     label.textContent = p.name;
     div.appendChild(label);
-    if (remaining[p.id]) {
-      div.onclick = () => { S.piece = p.id; S.ori = p.orientations[0].id; renderTray(); renderOrients(); draw(); };
-    }
+    if (remaining[p.id]) div.appendChild(orientRing(p, me));
     tray.appendChild(div);
   }
 }
 
-function renderOrients() {
-  const box = $('orients');
-  box.innerHTML = '';
-  if (S.piece === null) return;
-  const me = viewSeat();
-  const p = S.meta.pieces[S.piece];
-  for (const o of p.orientations) {
-    const d = document.createElement('div');
-    d.className = 'ori' + (S.ori === o.id ? ' sel' : '');
-    d.appendChild(miniCanvas(o.cells, 11, COLORS[me]));
-    d.onclick = () => { S.ori = o.id; renderOrients(); draw(); };
-    box.appendChild(d);
-  }
+// 把 k 个朝向均匀摆在一个圆周上，从正上方开始顺时针。
+// 半径随 k 增大，否则 8 个朝向（4 旋转 x 2 镜像的满配）会挤在一起。
+function orientRing(p, me) {
+  const ring = document.createElement('div');
+  ring.className = 'ring';
+  const oris = p.orientations;
+  const k = oris.length;
+  const radius = k <= 2 ? 40 : k <= 4 ? 46 : 56;
+
+  oris.forEach((o, i) => {
+    const ang = -Math.PI / 2 + (i * 2 * Math.PI) / k;
+    const btn = document.createElement('div');
+    btn.className = 'ori-btn' + (S.piece === p.id && S.ori === o.id ? ' sel' : '');
+    btn.style.left = `calc(50% + ${(radius * Math.cos(ang)).toFixed(1)}px)`;
+    btn.style.top = `calc(50% + ${(radius * Math.sin(ang)).toFixed(1)}px)`;
+    btn.appendChild(miniCanvas(o.cells, 9, COLORS[me]));
+    btn.onclick = (ev) => {
+      ev.stopPropagation();
+      S.piece = p.id; S.ori = o.id;
+      renderTray(); draw();
+    };
+    ring.appendChild(btn);
+  });
+  return ring;
 }
 
 // ---------------------------------------------------------------- 状态渲染
@@ -254,7 +270,7 @@ function applyState(st, analysis) {
   // 选中的棋子已经用掉了就取消选中（同样不能用 -1 去索引）
   if (S.piece !== null && !st.remaining[viewSeat()][S.piece]) { S.piece = null; S.ori = null; }
 
-  renderTray(); renderOrients(); renderAnalysis(); draw();
+  renderTray(); renderAnalysis(); draw();
   $('btn-ai').disabled = st.terminal || st.current_player === st.human_player;
   $('btn-undo').disabled = st.ply === 0;
 }
@@ -309,7 +325,9 @@ async function guard(fn) {
 const HUMAN = '';
 
 function seatSel(i) { return $('seat' + i); }
+function simsSel(i) { return $('sims' + i); }
 function seatValues() { return [seatSel(0).value, seatSel(1).value]; }
+function seatSims() { return [0, 1].map(i => parseInt(simsSel(i).value, 10)); }
 
 // 传给后端时空串要变回 null
 function seatPlayers() { return seatValues().map(v => (v === HUMAN ? null : v)); }
@@ -359,30 +377,21 @@ function seatLabel(v) {
   return info ? info.label : v;
 }
 
-// 难度就是搜索的模拟数，只对网络后端有意义。
-// 两个座位都没有网络时（人 vs 规则、规则 vs 规则）就没什么可调的。
+// 模拟数是**每个座位各自的**，所以置灰也按座位来：
+// 规则基线不搜索，它旁边那个模拟数下拉就没有意义。
 function syncBackendUi() {
   const vals = seatValues();
   const isNet = vals.map(v => v !== HUMAN && (backendInfo(v) || {}).kind === 'net');
-  const anyNet = isNet[0] || isNet[1];
   const bothAi = vals.every(v => v !== HUMAN);
-  $('difficulty').disabled = !anyNet;
+  for (let i = 0; i < 2; i++) simsSel(i).disabled = !isNet[i];
   $('btn-autoplay').disabled = !bothAi;
   $('ai-name').textContent = seatLabel(vals[0]) + '  vs  ' + seatLabel(vals[1]);
 
-  // 明确写出难度**作用在哪一方**。它只是 MCTS 的模拟数，规则基线不搜索，
-  // 所以两边都是规则基线时它完全不起作用 —— 光把下拉置灰不够，
-  // 不说原因的话只会让人猜「那它到底影响谁」。
-  const seats = [];
-  if (isNet[0]) seats.push('先手');
-  if (isNet[1]) seats.push('后手');
   const parts = [];
-  if (seats.length === 0) {
-    parts.push('难度不起作用：两边都不用网络，规则基线不搜索');
-  } else if (seats.length === 2) {
-    parts.push('难度 = 每步的 MCTS 模拟数，双方同用');
+  if (!isNet[0] && !isNet[1]) {
+    parts.push('两边都不用网络，模拟数不起作用（规则基线不搜索）');
   } else {
-    parts.push(`难度 = 每步的 MCTS 模拟数，只作用于${seats[0]}（另一方是规则基线，不搜索）`);
+    parts.push('右侧数字 = 该座位每步的 MCTS 模拟数，越大越强也越慢');
   }
   if (bothAi) parts.push('点「自动对战」连着走到终局');
   $('backend-hint').textContent = parts.join('；');
@@ -396,7 +405,7 @@ async function changeSeats() {
     const r = await post('/api/backend', {
       sid: S.sid,
       players: seatPlayers(),
-      difficulty: $('difficulty').value,
+      sims: seatSims(),
     });
     S.analysis = null;
     applyState(r.state, null);
@@ -422,7 +431,7 @@ async function newGame() {
     S.analysis = null; S.piece = null; S.ori = null;
     const r = await post('/api/new', {
       players: seatPlayers(),
-      difficulty: $('difficulty').value,
+      sims: seatSims(),
     });
     S.sid = r.sid;
     applyState(r.state, null);
@@ -496,21 +505,9 @@ $('btn-new').onclick = newGame;
 $('btn-ai').onclick = () => guard(aiMove);
 $('seat0').onchange = changeSeats;
 $('seat1').onchange = changeSeats;
-$('difficulty').onchange = changeSeats;
+$('sims0').onchange = changeSeats;
+$('sims1').onchange = changeSeats;
 $('btn-autoplay').onclick = autoplay;
-$('btn-swap').onclick = () => guard(async () => {
-  const [a, b] = seatValues();
-  await loadBackends([b, a]);
-  syncBackendUi();
-  // 换边改的是「谁执先」，那是开局属性，必须重开一局
-  $('status').textContent = '已换边，点「新对局」生效';
-});
-$('btn-refresh').onclick = () => guard(async () => {
-  await loadBackends(seatValues());
-  syncBackendUi();
-  // 训练在跑，"最新" 指向的 step 会变，重扫之后标签才是新的
-  $('status').textContent = '已重新扫描：' + S.backends.length + ' 个可选对手';
-});
 $('btn-undo').onclick = () => guard(async () => {
   S.analysis = null;
   applyState(await post('/api/undo', { sid: S.sid }), null);
@@ -521,11 +518,11 @@ document.addEventListener('keydown', (ev) => {
   const oris = S.meta.pieces[S.piece].orientations;
   const idx = oris.findIndex(o => o.id === S.ori);
   if (ev.key === 'r' || ev.key === 'R') {
-    S.ori = oris[(idx + 1) % oris.length].id; renderOrients(); draw();
+    S.ori = oris[(idx + 1) % oris.length].id; renderTray(); draw();
   } else if (ev.key === 'f' || ev.key === 'F') {
-    S.ori = oris[(idx + Math.ceil(oris.length / 2)) % oris.length].id; renderOrients(); draw();
+    S.ori = oris[(idx + Math.ceil(oris.length / 2)) % oris.length].id; renderTray(); draw();
   } else if (ev.key === 'Escape') {
-    S.piece = null; S.ori = null; renderTray(); renderOrients(); draw();
+    S.piece = null; S.ori = null; renderTray(); draw();
   }
 });
 
@@ -534,12 +531,14 @@ document.addEventListener('keydown', (ev) => {
 (async () => {
   S.meta = await api('/api/meta');
   layout();
-  const sel = $('difficulty');
-  for (const d of S.meta.difficulties) {
-    const o = document.createElement('option');
-    o.value = d; o.textContent = d;
-    if (d === '普通') o.selected = true;
-    sel.appendChild(o);
+  for (let i = 0; i < 2; i++) {
+    const sel = simsSel(i);
+    for (const n of S.meta.sim_choices) {
+      const o = document.createElement('option');
+      o.value = String(n); o.textContent = String(n);
+      if (n === S.meta.default_sims) o.selected = true;
+      sel.appendChild(o);
+    }
   }
   // 默认人执先、AI 执后，和改版前一致
   await loadBackends([HUMAN, S.meta.default_backend]);
