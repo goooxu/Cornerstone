@@ -137,8 +137,12 @@ def main() -> int:
         trainer.iteration += 1
 
         if cfg.eval_every_iters and trainer.iteration % cfg.eval_every_iters == 0 and not _STOP:
-            # 顺带定期复查 FP8 —— 静默降级不会自己暴露，只能反复测
-            row["fp8_active"] = trainer.verify_fp8_compute(f"iter {trainer.iteration}")
+            # 顺带定期复查 FP8 —— 静默降级不会自己暴露，只能反复测。
+            # 没开 FP8 的跑返回 None，这时**不写这个字段**：
+            # 记成 false 会读作「FP8 掉了」，记成 true 更糟（对照组看着像实验组）
+            fp8_ok = trainer.verify_fp8_compute(f"iter {trainer.iteration}")
+            if fp8_ok is not None:
+                row["fp8_active"] = fp8_ok
             res = evaluate_vs_baseline(
                 trainer.model, trainer.device, opponent=cfg.eval_opponent,
                 games=cfg.eval_games, simulations=cfg.eval_simulations,

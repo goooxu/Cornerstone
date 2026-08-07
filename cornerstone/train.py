@@ -163,7 +163,7 @@ class Trainer:
         cos = 0.5 * (1 + math.cos(math.pi * t))
         return c.lr * (c.min_lr_ratio + (1 - c.min_lr_ratio) * cos)
 
-    def verify_fp8_compute(self, tag: str = "") -> bool:
+    def verify_fp8_compute(self, tag: str = "") -> bool | None:
         """跑一次前向，确认 FP8 层**确实在用 FP8 计算**，并把结论写进日志。
 
         TE 在「权重是量化的、但计算没走量化」时只发一条 UserWarning，
@@ -173,9 +173,14 @@ class Trainer:
         而且那条警告只发一次、还找不到确切来源（多条路径都可能触发）。
         与其去追一次性的告警，不如把「FP8 是否真的在算」变成一个**可反复测量**
         的性质：启动时、建完驱动后、以及每个评测周期各查一次。
+
+        返回 None 表示**这条跑本来就没开 FP8**，与「开了且正常」(True) 必须区分开：
+        BF16 对照组以前在这里返回 True，写进 metrics 就成了 `fp8_active: true` ——
+        照着日志看会得出「对照组也在跑 FP8」的结论，而这恰好是整个 A/B
+        唯一要区分的那个变量。调用方据此决定要不要记这个字段。
         """
         if not self.cfg.fp8:
-            return True
+            return None
         import warnings
         hits: list[str] = []
         with warnings.catch_warnings(record=True) as caught:
