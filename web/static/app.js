@@ -16,6 +16,7 @@ const S = {
   hover: null,          // [r, c]
   analysis: null,
   busy: false,
+  backends: [],
 };
 
 const COLORS = ['#2dd4bf', '#fb923c'];
@@ -292,12 +293,79 @@ async function guard(fn) {
   finally { S.busy = false; }
 }
 
+// ------------------------------------------------------------ 对手（后端）选择
+
+// 选项分组重建。保留当前选中项 —— 刷新的目的是让新 checkpoint 出现，
+// 不是把用户正在用的那个换掉。
+async function loadBackends(keep) {
+  const r = await api('/api/backends');
+  S.backends = r.backends;
+  const sel = $('backend');
+  const want = keep || sel.value || r.default;
+  sel.innerHTML = '';
+  const groups = new Map();
+  for (const b of r.backends) {
+    if (!groups.has(b.group)) groups.set(b.group, []);
+    groups.get(b.group).push(b);
+  }
+  for (const [name, items] of groups) {
+    const og = document.createElement('optgroup');
+    og.label = name;
+    for (const b of items) {
+      const o = document.createElement('option');
+      o.value = b.id; o.textContent = b.label;
+      og.appendChild(o);
+    }
+    sel.appendChild(og);
+  }
+  // 选中项可能已被训练侧轮换删掉，那就退回默认
+  sel.value = want;
+  if (!sel.value) sel.value = r.default;
+  return sel.value;
+}
+
+function backendInfo(id) {
+  return S.backends.find(b => b.id === id) || null;
+}
+
+// 难度就是搜索的模拟数，对规则基线没有意义 —— 直接禁用，别让人以为调了有用
+function syncBackendUi() {
+  const info = backendInfo($('backend').value);
+  const isRule = info && info.kind === 'rule';
+  $('difficulty').disabled = !!isRule;
+  $('btn-analyse').disabled = !!isRule;
+  $('backend-hint').textContent = isRule
+    ? '规则基线：不搜索，难度与分析不适用'
+    : '难度 = 每步的 MCTS 模拟数';
+}
+
+async function changeBackend() {
+  await guard(async () => {
+    syncBackendUi();
+    if (!S.sid) return;
+    const r = await post('/api/backend', {
+      sid: S.sid,
+      backend: $('backend').value,
+      difficulty: $('difficulty').value,
+    });
+    $('ai-name').textContent = 'AI：' + r.label;
+    S.analysis = null;
+    applyState(r.state, null);
+    // 换完正好轮到 AI（比如刚换完就该它走），交给自动应手逻辑
+    if (!r.state.terminal && r.state.current_player !== r.state.human_player
+        && $('auto-ai').checked) {
+      while (!S.state.terminal && S.state.current_player !== S.state.human_player) await aiMove();
+    }
+  });
+}
+
 async function newGame() {
   await guard(async () => {
     S.analysis = null; S.piece = null; S.ori = null;
     const r = await post('/api/new', {
       human_player: parseInt($('side-select').value, 10),
       difficulty: $('difficulty').value,
+      backend: $('backend').value,
     });
     S.sid = r.sid;
     applyState(r.state, null);
@@ -307,6 +375,7 @@ async function newGame() {
 
 async function aiMove() {
   const r = await post('/api/ai', { sid: S.sid });
+  if (r.ai_label) $('ai-name').textContent = 'AI：' + r.ai_label;
   applyState(r, r.analysis || null);
 }
 
@@ -341,6 +410,15 @@ CV.addEventListener('click', (ev) => {
 
 $('btn-new').onclick = newGame;
 $('btn-ai').onclick = () => guard(aiMove);
+$('backend').onchange = changeBackend;
+$('difficulty').onchange = changeBackend;
+$('btn-refresh').onclick = () => guard(async () => {
+  const cur = $('backend').value;
+  await loadBackends(cur);
+  syncBackendUi();
+  // 训练在跑，"最新" 指向的 step 会变，重扫之后标签才是新的
+  $('status').textContent = '已重新扫描：' + S.backends.length + ' 个可选对手';
+});
 $('btn-undo').onclick = () => guard(async () => {
   S.analysis = null;
   applyState(await post('/api/undo', { sid: S.sid }), null);
@@ -380,7 +458,6 @@ document.addEventListener('keydown', (ev) => {
 (async () => {
   S.meta = await api('/api/meta');
   layout();
-  $('ai-name').textContent = 'AI：' + S.meta.ai;
   const sel = $('difficulty');
   for (const d of S.meta.difficulties) {
     const o = document.createElement('option');
@@ -388,6 +465,8 @@ document.addEventListener('keydown', (ev) => {
     if (d === '普通') o.selected = true;
     sel.appendChild(o);
   }
+  await loadBackends(S.meta.default_backend);
+  syncBackendUi();
   renderTray();
   await newGame();
 })();

@@ -80,6 +80,15 @@ canvas { display: block; border-radius: 6px; cursor: pointer; }
 .row.buttons { gap: 8px; }
 .check { cursor: pointer; }
 
+/* 对手下拉：checkpoint 名字很长，让它占满整行并允许收缩，
+   否则长选项会把整块面板撑宽 */
+.row label.wide { flex: 1 1 100%; align-items: stretch; flex-direction: column; gap: 4px; }
+.withbtn { display: flex; gap: 6px; align-items: center; }
+.withbtn select { flex: 1 1 auto; min-width: 0; }
+.withbtn button { flex: 0 0 auto; padding: 7px 10px; }
+select:disabled { opacity: .45; cursor: not-allowed; }
+.hint { color: var(--muted); font-size: 12px; margin-top: -4px; margin-bottom: 10px; }
+
 select, button {
   background: var(--panel-2); color: var(--text);
   border: 1px solid var(--line); border-radius: 7px;

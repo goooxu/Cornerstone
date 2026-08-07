@@ -22,15 +22,20 @@ PORT="${CORNERSTONE_WEB_PORT:-8080}"
 
 mkdir -p "$RUNS"
 
-latest_checkpoint() {
-  local best=""
+# 不给参数时的默认对手：挑**最近还在写**的那条跑，用它的 net:<跑>/latest。
+# 用 latest 而不是当时那个具体文件，是因为训练还在继续 ——
+# 钉死一个文件的话，服务开着开着模型就旧了，而界面上看不出来。
+default_backend() {
+  local best="" bestrun=""
   for f in "$RUNS"/*/ckpt/latest; do
     [ -e "$f" ] || continue
     local ck; ck="$(dirname "$f")/$(cat "$f")"
     [ -e "$ck" ] || continue
-    if [ -z "$best" ] || [ "$ck" -nt "$best" ]; then best="$ck"; fi
+    if [ -z "$best" ] || [ "$ck" -nt "$best" ]; then
+      best="$ck"; bestrun="$(basename "$(dirname "$(dirname "$ck")")")"
+    fi
   done
-  echo "$best"
+  [ -n "$bestrun" ] && echo "net:$bestrun/latest"
 }
 
 # 和 train.sh 一样核对 /proc/<pid>/cmdline，不能只靠 kill -0。
@@ -53,14 +58,22 @@ alive() {
 
 cmd_start() {
   if alive; then echo "已在运行 (pid $(cat "$PIDFILE"))"; return 0; fi
-  local ck="${1:-$(latest_checkpoint)}"
+  local ck="${1:-$(default_backend)}"
   local args=(--port "$PORT")
-  if [ -n "$ck" ] && [ -e "$ck" ]; then
-    args+=(--checkpoint "$ck")
-    echo "使用 checkpoint: $ck"
-  else
-    echo "没找到 checkpoint，AI 用规则基线"
-  fi
+  # 参数可以是后端 ID（rule:xxx / net:跑/文件）也可以是 checkpoint 路径。
+  # 界面上无论如何都能切，这里定的只是默认值。
+  case "$ck" in
+    rule:*|net:*)
+      args+=(--backend "$ck"); echo "默认后端: $ck" ;;
+    "")
+      echo "没找到 checkpoint，默认用规则基线（界面上可切换）" ;;
+    *)
+      if [ -e "$ck" ]; then
+        args+=(--checkpoint "$ck"); echo "默认 checkpoint: $ck"
+      else
+        echo "给的 checkpoint 不存在：$ck —— 退回规则基线（界面上可切换）" >&2
+      fi ;;
+  esac
 
   cd "$REPO"
   nohup python3 -u web/server.py "${args[@]}" >"$LOGFILE" 2>&1 &

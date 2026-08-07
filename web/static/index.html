@@ -30,6 +30,14 @@
   <aside class="side-col">
     <div class="card">
       <div class="row">
+        <label class="wide">对手
+          <span class="withbtn">
+            <select id="backend"></select>
+            <button id="btn-refresh" title="重新扫描 checkpoint（训练中会不断产出新的）">⟳</button>
+          </span>
+        </label>
+      </div>
+      <div class="row">
         <label>执子
           <select id="side-select">
             <option value="0">先手（起点 5,5）</option>
@@ -38,6 +46,7 @@
         </label>
         <label>难度 <select id="difficulty"></select></label>
       </div>
+      <div id="backend-hint" class="hint"></div>
       <div class="row buttons">
         <button id="btn-new" class="primary">新对局</button>
         <button id="btn-undo">悔棋</button>
