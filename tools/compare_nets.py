@@ -43,6 +43,12 @@ def main() -> None:
     ap.add_argument("--parallel", type=int, default=128)
     ap.add_argument("--engine-threads", type=int, default=16)
     ap.add_argument("--device", default="cuda")
+    # 输出里直接印名字，而不是让人去记「第一个位置参数叫 A」。
+    # 不加这个就出过事：调用方按 (B, A) 的顺序传参、又在自己那边
+    # 打印「A=BF16」，和本脚本印的 A 正好相反 —— 两行都在同一屏输出里，
+    # 结论看着是「BF16 领先」，实际是反的。见 --name-a / --name-b 的用处。
+    ap.add_argument("--name-a", default=None, help="第一个 checkpoint 的显示名")
+    ap.add_argument("--name-b", default=None, help="第二个 checkpoint 的显示名")
     args = ap.parse_args()
 
     if args.curve:
@@ -72,12 +78,17 @@ def main() -> None:
                             simulations=args.simulations, parallel_games=args.parallel,
                             engine_threads=args.engine_threads,
                             label=os.path.basename(args.paths[1]))
-    print(f"A = {os.path.basename(args.paths[0])} (step {sa})")
-    print(f"B = {os.path.basename(args.paths[1])} (step {sb})")
-    print(f"{r.games} 局：A {r.wins}胜 / {r.draws}和 / {r.losses}负")
-    print(f"A 得分率 {r.score_rate:.3f}，Elo 差 {r.elo_diff:+.0f}")
-    print(f"A 先手赢 {r.wins_as_first} 局，后手赢 {r.wins_as_second} 局")
-    print(f"平均手数 {r.mean_plies:.1f}，平均占格 A {r.mean_squares_net:.1f} / B {r.mean_squares_opp:.1f}")
+    na = args.name_a or os.path.basename(args.paths[0])
+    nb = args.name_b or os.path.basename(args.paths[1])
+    print(f"{na} = {os.path.basename(args.paths[0])} (step {sa})")
+    print(f"{nb} = {os.path.basename(args.paths[1])} (step {sb})")
+    print(f"{r.games} 局：{na} {r.wins}胜 / {r.draws}和 / {r.losses}负")
+    print(f"{na} 得分率 {r.score_rate:.3f}，相对 {nb} 的 Elo 差 {r.elo_diff:+.0f}")
+    print(f"{na} 先手赢 {r.wins_as_first} 局，后手赢 {r.wins_as_second} 局")
+    print(f"平均手数 {r.mean_plies:.1f}，平均占格 "
+          f"{na} {r.mean_squares_net:.1f} / {nb} {r.mean_squares_opp:.1f}")
+    winner = na if r.score_rate > 0.5 else (nb if r.score_rate < 0.5 else "平手")
+    print(f"→ 领先方：{winner}")
 
 
 if __name__ == "__main__":

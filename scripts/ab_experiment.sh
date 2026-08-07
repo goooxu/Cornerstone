@@ -105,9 +105,15 @@ case "${1:-}" in
     D=$(( A_STEP > B_STEP ? A_STEP - B_STEP : B_STEP - A_STEP ))
     echo "目标 step $STEP -> 实际 $A_EXP@$A_STEP vs $B_EXP@$B_STEP（相差 $D 步）"
     cd "$REPO"
-    echo "在 step $STEP 处头对头（A=$A_EXP 为 BF16，B=$B_EXP 为 FP8）"
+    # 名字直接透给 compare_nets.py 印在每一行上。
+    # 这里曾经传 "$B" "$A"，同时自己 echo 一行「A=$A_EXP 为 BF16」——
+    # 而 compare_nets.py 把**第一个**位置参数叫 A，也就是 $B（FP8）。
+    # 两行相反的说法出现在同一屏里，得分率 0.600 会被读成「BF16 领先」，
+    # 实际是 FP8 领先。**这是整个对照实验唯一要产出的那个结论**，
+    # 偏偏最容易被一个位置参数的顺序悄悄翻转。现在不靠位置约定了。
     python3 tools/compare_nets.py "$B" "$A" --games 400 --simulations 64 \
-            --parallel 200 --device cuda:0
+            --parallel 200 --device cuda:0 \
+            --name-a "$B_EXP" --name-b "$A_EXP"
     ;;
   *) sed -n '2,8p' "$0"; exit 1 ;;
 esac
