@@ -370,11 +370,20 @@ async function guard(fn) {
 // 两个座位各选一个后端，'' 表示人来下。于是「人机」和「AI 对战」不是两种模式，
 // 只是两种填法 —— 少一个模式开关，就少一类「模式和实际配置对不上」的 bug。
 const HUMAN = '';
+// 模拟数下拉里表示「不适用」的那一项（对手是规则基线时）
+const NA = '';
 
 function seatSel(i) { return $('seat' + i); }
 function simsSel(i) { return $('sims' + i); }
 function seatValues() { return [seatSel(0).value, seatSel(1).value]; }
-function seatSims() { return [0, 1].map(i => parseInt(simsSel(i).value, 10)); }
+function seatSims() {
+  // 「—」是给人看的，后端要一个合法整数。规则基线那侧填什么都无所谓 ——
+  // RuleBrain.choose 收下 sims 但完全不用它。
+  return [0, 1].map(i => {
+    const v = simsSel(i).value;
+    return v === NA ? S.meta.default_sims : parseInt(v, 10);
+  });
+}
 
 // 传给后端时空串要变回 null
 function seatPlayers() { return seatValues().map(v => (v === HUMAN ? null : v)); }
@@ -435,10 +444,16 @@ function seatLabel(v) {
 // 组合起来有说不清的中间态（比如自动对战开着但轮到人）。
 
 // 图标形状表。一个按钮任何时刻只画其中一个。
+//
+// 三个都是「实心 + 圆角」的同一族，视觉重量接近，在 24x24 里都居中：
+// 三角靠 stroke-linejoin=round 把尖角磨圆（纯路径做圆角三角要写贝塞尔，
+// 不值当），方块和竖条直接用 rx。
 const ICONS = {
-  play: '<path d="M7 4l13 8-13 8z" fill="currentColor" stroke="currentColor" stroke-width="1.5"/>',
-  stop: '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="currentColor" stroke-width="1.5"/>',
-  pause: '<path d="M9 5v14M15 5v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  play: '<path d="M8.5 5.5 19 12 8.5 18.5Z" fill="currentColor" stroke="currentColor"'
+      + ' stroke-width="2.6" stroke-linejoin="round"/>',
+  stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2.6" fill="currentColor"/>',
+  pause: '<rect x="7.6" y="5.5" width="3.4" height="13" rx="1.7" fill="currentColor"/>'
+       + '<rect x="13" y="5.5" width="3.4" height="13" rx="1.7" fill="currentColor"/>',
 };
 
 function setIcon(id, name) {
@@ -493,9 +508,18 @@ function syncBackendUi() {
   // 两种置灰的原因要分开记：规则基线本身用不上模拟数（这里），
   // 以及对局进行中全部锁死（syncLock）。混在一起的话，解锁时会把
   // 本该一直灰着的规则基线那一侧一起点亮。
+  // 规则基线那一侧的模拟数显示成「—」而不是留着一个数字。
+  // 置灰但仍显示 64，会让人以为「这局它搜了 64 次」——其实它根本不搜索。
   for (let i = 0; i < 2; i++) {
-    simsSel(i).dataset.ruleDisabled = isNet[i] ? '0' : '1';
-    simsSel(i).disabled = !isNet[i] || S.phase !== 'idle';
+    const sel = simsSel(i);
+    sel.dataset.ruleDisabled = isNet[i] ? '0' : '1';
+    if (isNet[i]) {
+      if (sel.value === NA) sel.value = sel.dataset.last || String(S.meta.default_sims);
+    } else {
+      if (sel.value !== NA) sel.dataset.last = sel.value;
+      sel.value = NA;
+    }
+    sel.disabled = !isNet[i] || S.phase !== 'idle';
   }
   $('ai-name').textContent = seatLabel(vals[0]) + '  vs  ' + seatLabel(vals[1]);
   void bothAi;
@@ -507,7 +531,10 @@ function syncBackendUi() {
 
 // 配置改动只留在本地，等「开始对局」时一次性提交给 /api/new。
 // 不再中途调 /api/backend —— 对局中根本没有改配置的通道，比事后拦更干净。
-function onConfigChange() {
+function onConfigChange(ev) {
+  // 记下这一侧手选的模拟数，切到规则基线再切回来时能恢复
+  const t = ev && ev.target;
+  if (t && t.classList.contains('sims') && t.value !== NA) t.dataset.last = t.value;
   syncBackendUi();
 }
 
@@ -640,12 +667,18 @@ document.addEventListener('keydown', (ev) => {
   layout();
   for (let i = 0; i < 2; i++) {
     const sel = simsSel(i);
+    const na = document.createElement('option');
+    na.value = NA; na.textContent = '—';       // 对手是规则基线时显示这个
+    sel.appendChild(na);
     for (const n of S.meta.sim_choices) {
       const o = document.createElement('option');
-      o.value = String(n); o.textContent = String(n);
+      o.value = String(n);
+      // 1 次模拟等于「只跑一次前向、不展开搜索树」，值得标出来
+      o.textContent = n === 1 ? '1（纯策略）' : String(n);
       if (n === S.meta.default_sims) o.selected = true;
       sel.appendChild(o);
     }
+    sel.dataset.last = String(S.meta.default_sims);
   }
   // 默认人执先、AI 执后，和改版前一致
   await loadBackends([HUMAN, S.meta.default_backend]);

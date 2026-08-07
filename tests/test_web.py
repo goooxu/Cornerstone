@@ -213,6 +213,30 @@ def test_sim_choices_are_sane():
     assert server.SIM_CHOICES == sorted(server.SIM_CHOICES)
     assert server.DEFAULT_SIMS in server.SIM_CHOICES
     assert all(1 <= n <= server.MAX_SIMS for n in server.SIM_CHOICES)
+    # 1 = 纯策略：引擎的循环是 while (sims_done < simulations)，
+    # 1 次刚好展开根节点、跑一次前向就停
+    assert server.SIM_CHOICES[0] == 1
+
+
+def test_zero_sims_rejected_with_an_explanation(client):
+    """0 不能用：根节点永远不会展开，root_info().ready 是 false，
+    choose() 只能抛异常。报错要顺带指出「要不搜索请用 1」。"""
+    r = client.post("/api/new", json={"players": [None, "rule:greedy-area"], "sims": [0, 64]})
+    assert r.status_code == 400
+    assert "1" in r.json()["detail"]
+
+
+def test_disabled_sims_shows_not_applicable():
+    """规则基线那侧的模拟数要显示「—」。
+
+    置灰但仍显示 64，会被读成「这局它搜了 64 次」—— 而它根本不搜索。
+    """
+    js = _code("app.js")
+    assert "const NA = ''" in js
+    assert "sel.value = NA" in js, "对手是规则基线时要把该侧显示成「—」"
+    assert "dataset.last" in js, "切回网络时要恢复用户手选的值"
+    assert re.search(r"v === NA \? S\.meta\.default_sims", js), \
+        "「—」是给人看的，提交给后端仍要是合法整数"
 
 
 def test_pool_reuses_rule_brains(runs):

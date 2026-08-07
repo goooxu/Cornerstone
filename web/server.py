@@ -42,7 +42,11 @@ RUNS_DIR = os.path.join(os.path.dirname(REPO), "runs")
 # 界面上直接选模拟数，不再套「简单/普通/困难」这层名字 ——
 # 两个座位可以各选各的，用来比「同一个网络多搜一倍值多少棋力」这种事，
 # 名字反而挡着看不清实际预算。
-SIM_CHOICES = [16, 32, 64, 128, 256, 512, 800]
+# 1 是有意义的一档：引擎的循环是 `while (sims_done < simulations)`，
+# 1 次刚好把根节点展开、跑一次前向就停 —— 等于「纯策略、不搜索」，
+# 实测 0.04 秒一手。0 则不行：根节点永远不会展开，
+# root_info().ready 是 false，choose() 只能抛异常。
+SIM_CHOICES = [1, 16, 32, 64, 128, 256, 512, 800]
 DEFAULT_SIMS = 64
 # 上限不是审美问题：单局面搜索的批大小恒为 1，模拟数直接线性折算成等待时间，
 # 放开了就能让一个请求把服务占住好几分钟。
@@ -449,7 +453,9 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
             except (TypeError, ValueError):
                 raise HTTPException(400, f"模拟数必须是整数：{v!r}")
             if not 1 <= n <= MAX_SIMS:
-                raise HTTPException(400, f"模拟数要在 1..{MAX_SIMS} 之间，收到 {n}")
+                raise HTTPException(400, f"模拟数要在 1..{MAX_SIMS} 之间，收到 {n}"
+                                    + ("（0 不行：根节点不会展开，搜索给不出着法；要「不搜索」请用 1）"
+                                       if n <= 0 else ""))
             out.append(n)
         return out
 
