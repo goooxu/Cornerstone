@@ -6,6 +6,19 @@
 
 const $ = (id) => document.getElementById(id);
 
+// 把 JS 错误摆到页面上。
+//
+// 这里没有构建步骤、也没有 JS 运行时可做单测，所以一个未捕获的异常
+// 表现出来就是「某个控件忽然没反应」——症状离原因极远，只能靠
+// 打开 F12 才知道发生了什么。实际吃过好几次亏，所以让它自己说话。
+function fatal(msg) {
+  const bar = document.getElementById('js-error');
+  if (bar) { bar.textContent = '前端出错：' + msg; bar.classList.remove('gone'); }
+}
+window.addEventListener('error', (e) => fatal(e.message));
+window.addEventListener('unhandledrejection', (e) => fatal(
+  (e.reason && (e.reason.message || e.reason)) || '未知的 Promise 拒绝'));
+
 const S = {
   meta: null,
   sid: null,
@@ -430,14 +443,17 @@ function syncControls() {
   const playing = S.phase !== 'idle';
   const paused = S.phase === 'paused';
 
-  $('btn-start').classList.toggle('running', playing);
-  $('start-label').textContent = playing ? '结束对局' : '开始对局';
-  $('btn-start').title = playing ? '结束对局' : '开始对局';
+  // 纯图标按钮，状态只体现在图标、颜色和 title 上
+  const start = $('btn-start');
+  start.classList.toggle('running', playing);
+  start.title = playing ? '结束对局' : '开始对局';
+  start.setAttribute('aria-label', start.title);
 
-  $('btn-pause').classList.toggle('gone', !playing);
-  $('btn-pause').classList.toggle('paused', paused);
-  $('pause-label').textContent = paused ? '恢复' : '暂停';
-  $('btn-pause').title = paused ? '恢复对局' : '暂停对局';
+  const pause = $('btn-pause');
+  pause.classList.toggle('gone', !playing);
+  pause.classList.toggle('paused', paused);
+  pause.title = paused ? '恢复对局' : '暂停对局';
+  pause.setAttribute('aria-label', pause.title);
 
   // 配置只在 idle 可改。这里不需要服务端再拦一道 ——
   // 双方与模拟数只在 /api/new 时提交，对局中根本没有改它的通道。
@@ -600,8 +616,16 @@ document.addEventListener('keydown', (ev) => {
   await loadBackends([HUMAN, S.meta.default_backend]);
   syncBackendUi();
   setPhase('idle');
-  // 先建一个会话只为渲染出空棋盘；真正开局要点「开始对局」
-  const r0 = await post('/api/new', { players: seatPlayers(), sims: seatSims() });
-  S.sid = r0.sid;
-  applyState(r0.state, null);
+
+  // 开一个会话只为渲染出空棋盘；真正开局要点「开始对局」。
+  // **这一步失败不能连累配置界面** —— 上面 loadBackends 已经把双方
+  // 选项填好了，就算这里炸了也要让人能选、能点开始。
+  try {
+    const r0 = await post('/api/new', { players: seatPlayers(), sims: seatSims() });
+    S.sid = r0.sid;
+    applyState(r0.state, null);
+  } catch (e) {
+    fatal('初始局面加载失败：' + e.message + '（选好双方后点「开始对局」仍可继续）');
+    syncControls();
+  }
 })();

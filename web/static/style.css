@@ -94,6 +94,13 @@ select:disabled { opacity: .45; cursor: not-allowed; }
 .hint.center { text-align: center; margin: 4px 0 0; min-height: 16px; }
 .hint.lock:not(:empty) { color: var(--accent); margin-top: -6px; }
 
+/* 前端异常的可见出口。默认藏着，出错时才顶到最上面一条横幅。 */
+.js-error {
+  background: var(--bad); color: #17090b; font-weight: 600;
+  padding: 10px 22px; font-size: 15px;
+}
+.js-error.gone { display: none; }
+
 /* 座位色点，和棋盘上双方的颜色对应 */
 .seat { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 5px; }
 .seat.p0 { background: #2dd4bf; }
@@ -108,18 +115,17 @@ button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 button.primary { background: var(--accent); color: #10121a; border-color: var(--accent); font-weight: 600; }
 
-/* 两个按钮都是图标 + 文字，且各有两态。图标本身不够自解释，
-   配上文字才不用猜；两态的文字与图标一起换，状态就只有一个来源。 */
-.row.buttons button {
-  display: inline-flex; align-items: center; gap: 8px;
-  font-size: 16px; font-weight: 600; padding: 10px 18px;
+/* 纯图标按钮。字号放大后按钮也跟着大一档，图标才不至于显得小。 */
+button.icon {
+  width: 54px; height: 46px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
 }
-.row.buttons button svg {
-  width: 18px; height: 18px; flex: 0 0 auto;
+button.icon svg {
+  width: 22px; height: 22px;
   fill: none; stroke: currentColor; stroke-width: 2;
   stroke-linecap: round; stroke-linejoin: round;
 }
-.row.buttons button svg .fill { fill: currentColor; stroke: currentColor; stroke-width: 1.5; }
+button.icon svg .fill { fill: currentColor; stroke: currentColor; stroke-width: 1.5; }
 button.gone { display: none; }
 
 /* 开始 / 结束：默认显示播放三角，running 时换成停止方块并转成醒目色 */

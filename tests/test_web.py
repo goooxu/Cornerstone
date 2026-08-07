@@ -490,7 +490,11 @@ def test_only_the_two_state_buttons_remain():
     ids = re.findall(r'<button[^>]*id="([^"]+)"', html)
     assert ids == ["btn-start", "btn-pause"], f"按钮应只剩两个，实得 {ids}"
     for tag in re.findall(r"<button[^>]*>", html):
-        assert "title=" in tag, f"按钮缺 title：{tag}"
+        assert "title=" in tag and "aria-label" in tag, f"纯图标按钮缺 title/aria-label：{tag}"
+    # 纯图标：按钮里不该再有文字标签
+    for tag in re.findall(r"<button[\s\S]*?</button>", html):
+        txt = re.sub(r"<[^>]+>", "", tag).strip()
+        assert txt == "", f"图标按钮里不该有文字：{txt!r}"
     # 两态的图标都要在
     for ico in ("ico-play", "ico-stop", "ico-pause", "ico-resume"):
         assert ico in html, f"缺图标 {ico}"
@@ -505,6 +509,22 @@ def test_phase_machine_drives_the_ui():
     # 暂停时人和 AI 都不能落子
     assert "S.phase !== 'playing'" in js, "点击落子要先判断对局是否进行中"
     assert re.search(r"while \(S\.phase === 'playing'", js), "AI 驱动循环要能被暂停打断"
+
+
+def test_js_errors_are_surfaced_on_the_page():
+    """前端异常必须在页面上看得见。
+
+    没有构建步骤也没有 JS 运行时可做单测，一个未捕获的异常表现出来
+    就是「某个控件忽然没反应」—— 症状离原因极远，不打开 F12 根本
+    不知道发生了什么。实际吃过好几次亏。
+    """
+    js, html, css = _front("app.js"), _front("index.html"), _front("style.css")
+    assert 'id="js-error"' in html and ".js-error" in css
+    assert "window.addEventListener('error'" in js
+    assert "unhandledrejection" in js
+    # 初始局面加载失败不能连累配置界面
+    assert re.search(r"catch \(e\) \{\s*fatal\('初始局面加载失败", js), \
+        "启动时建会话失败要单独兜住，别让配置界面一起废掉"
 
 
 def test_piece_name_labels_are_gone():
