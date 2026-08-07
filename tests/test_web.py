@@ -9,6 +9,7 @@ import importlib.util
 import os
 import re
 import sys
+import time
 
 import pytest
 
@@ -425,8 +426,10 @@ def test_config_unlocks_after_the_game_ends(client):
 
 def test_frontend_locks_config_while_playing():
     """开局后配置要锁死，且看得出来锁了。"""
-    js = _front("app.js")
-    assert "seatSel(i).disabled = playing" in js
+    js = _code("app.js")
+    assert "seatSel(i).disabled = locked" in js
+    # 单局与多局都要锁配置
+    assert "const locked = playing || matching" in js
     assert "lock-hint" in js
 
 
@@ -534,15 +537,16 @@ def test_every_element_id_used_by_js_exists_in_html():
     assert not missing, f"app.js 引用了 index.html 里不存在的 id：{missing}"
 
 
-def test_only_the_two_state_buttons_remain():
-    """按钮就两个，各有两态：开始/结束、暂停/恢复。
+def test_buttons_are_all_two_state():
+    """按钮各有两态，状态由 phase 一处推出：
+    开始/结束、暂停/恢复、连续对战/停止。
 
     以前是「新对局 / 悔棋 / 走一步 / 自动对战」四个各管一摊，
     组合起来有说不清的中间态（自动对战开着但轮到人该怎么办）。
     """
     html = _front("index.html")
     ids = re.findall(r'<button[^>]*id="([^"]+)"', html)
-    assert ids == ["btn-start", "btn-pause"], f"按钮应只剩两个，实得 {ids}"
+    assert ids == ["btn-start", "btn-pause", "btn-match"], f"实得 {ids}"
     for tag in re.findall(r"<button[^>]*>", html):
         assert "title=" in tag and "aria-label" in tag, f"纯图标按钮缺 title/aria-label：{tag}"
     # 纯图标：按钮里不该再有文字标签
@@ -620,6 +624,103 @@ def test_asset_version_changes_with_content(tmp_path, monkeypatch):
     first = server.asset_version()
     os.utime(tmp_path / "app.js", (12345, 12345))
     assert server.asset_version() != first, "改了文件版本号就该变"
+
+
+# ------------------------------------------------------------------- 连续对战
+
+def test_match_requires_two_ai():
+    """人在座就没法批量跑 —— 批量对局是引擎自己推进的，没有等人落子这回事。"""
+    pool = server.BrainPool("cpu")
+    app = server.build_app(pool, "rule:greedy-mobility")
+    with TestClient(app) as c:
+        r = c.post("/api/match/start", json={
+            "players": [None, "rule:greedy-area"], "sims": [64, 64], "games": 100})
+        assert r.status_code == 400 and "都必须是 AI" in r.json()["detail"]
+
+
+def test_match_rejects_bad_game_counts():
+    pool = server.BrainPool("cpu")
+    app = server.build_app(pool, "rule:greedy-mobility")
+    with TestClient(app) as c:
+        for n in (0, 7, 99, 1000):
+            r = c.post("/api/match/start", json={
+                "players": ["rule:greedy-area", "rule:corner-min"],
+                "sims": [64, 64], "games": n})
+            assert r.status_code == 400, f"{n} 局应被拒"
+
+
+def test_match_game_counts_are_even():
+    """必须是偶数：先后手成对交换，奇数会让分配不平衡。"""
+    assert all(n % 2 == 0 for n in server.MATCH_GAMES)
+    assert server.MATCH_CHUNK % 2 == 0
+
+
+def test_rule_vs_rule_match_runs_and_tallies():
+    """规则基线不碰 GPU，可以在单测里真跑完一场。"""
+    pool = server.BrainPool("cpu")
+    app = server.build_app(pool, "rule:greedy-mobility")
+    with TestClient(app) as c:
+        r = c.post("/api/match/start", json={
+            "players": ["rule:greedy-area", "rule:corner-min"],
+            "sims": [64, 64], "games": 100})
+        assert r.status_code == 200, r.text
+        for _ in range(600):
+            m = c.get("/api/match/status").json()
+            if not m["running"]:
+                break
+            time.sleep(0.1)
+        assert not m["running"], "100 局规则对局不该跑这么久"
+        assert m["error"] == "", m["error"]
+        assert m["played"] == 100
+        assert m["wins_a"] + m["wins_b"] + m["draws"] == 100, "胜负和必须对得上局数"
+        assert 0.0 <= m["score_a"] <= 1.0
+        # docs/03：corner-min 比 greedy-area 强，B 应该占优
+        assert m["wins_b"] > m["wins_a"], f"{m['wins_a']} vs {m['wins_b']}"
+
+
+def test_match_pins_both_sides_at_start(runs, monkeypatch):
+    """整场对战必须用同两个模型，中途不能再解析后端 ID。
+
+    真事：一场 100 局的网络对网络跑到 80 局时炸了 ——
+    `checkpoint 已不存在：step00133030.pt`，训练把它轮换删掉了。
+    而更隐蔽的是 `net:<跑>/latest`：分块之间重新解析的话，一场 400 局会
+    横跨好几个 checkpoint，那个总比分不属于任何一对模型，却看不出来。
+    """
+    d = runs("r", [10], latest="step00000010.pt")
+    monkeypatch.setattr(server, "NetBrain", _FakeNet)
+    _FakeNet.loaded = []
+    pool = server.BrainPool("cpu", max_models=3)
+    runner = server.MatchRunner(pool)
+
+    resolved = []
+    orig = pool.get
+    monkeypatch.setattr(pool, "get", lambda b: (resolved.append(b), orig(b))[1])
+
+    brains = [pool.get("net:r/latest"), pool.get("net:r/latest")]
+    resolved.clear()
+    # 模拟 start() 之后训练又落了新 checkpoint、旧的被删
+    (d / "step00000020.pt").write_bytes(b"x")
+    (d / "latest").write_text("step00000020.pt")
+    (d / "step00000010.pt").unlink()
+
+    # _one_chunk 拿到的是对象，不该再去解析 ID（解析会因文件已删而抛错）
+    import inspect
+    src = inspect.getsource(server.MatchRunner._one_chunk)
+    assert "pool.get" not in src, "_one_chunk 不能再按 ID 解析后端"
+    assert "a, b = players" in src
+    assert not resolved, "定死之后不该再有解析动作"
+    assert brains[0] is brains[1]
+
+
+def test_only_one_match_at_a_time():
+    pool = server.BrainPool("cpu")
+    app = server.build_app(pool, "rule:greedy-mobility")
+    with TestClient(app) as c:
+        body = {"players": ["rule:greedy-area", "rule:corner-min"],
+                "sims": [64, 64], "games": 400}
+        assert c.post("/api/match/start", json=body).status_code == 200
+        assert c.post("/api/match/start", json=body).status_code == 409
+        c.post("/api/match/stop", json={})
 
 
 def test_piece_name_labels_are_gone():

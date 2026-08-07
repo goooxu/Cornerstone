@@ -61,6 +61,20 @@
           <svg id="ico-pause" viewBox="0 0 24 24"></svg>
         </button>
       </div>
+      <div class="row match-row">
+        <label>连续对战
+          <select id="match-games"></select>
+        </label>
+        <button id="btn-match" class="icon" title="连续对战" aria-label="连续对战">
+          <svg id="ico-match" viewBox="0 0 24 24"></svg>
+        </button>
+        <span id="match-hint" class="hint inline"></span>
+      </div>
+    </div>
+
+    <div class="card gone" id="match-card">
+      <h2>连续对战 <small id="match-progress"></small></h2>
+      <div id="match-result"></div>
     </div>
 
     <!-- 棋子面板由 JS 按座位生成：有人在座摆一块，AI 对战摆两块（只读） -->

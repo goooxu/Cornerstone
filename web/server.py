@@ -296,6 +296,155 @@ class BrainPool:
             return brain
 
 
+# ------------------------------------------------------------------- 多局对战
+
+MATCH_GAMES = [100, 200, 400]
+# 分块跑而不是一次性交给评测函数：评测函数本身不报进度也不能中途停，
+# 分块之后既能显示「已打 N 局」，也能按停止键就停。
+# 块要够大才摊得平批量并行的收益，又不能大到一块要跑好几分钟。
+MATCH_CHUNK = 20
+
+
+@dataclass
+class MatchState:
+    """一场多局对战的累计结果。A 恒指先手座位（seat 0）。"""
+
+    total: int = 0
+    played: int = 0
+    wins_a: int = 0
+    wins_b: int = 0
+    draws: int = 0
+    plies: float = 0.0
+    squares_a: float = 0.0
+    squares_b: float = 0.0
+    a_first_wins: int = 0
+    a_second_wins: int = 0
+    label_a: str = ""
+    label_b: str = ""
+    sims: int = 0
+    running: bool = False
+    error: str = ""
+
+    def as_dict(self) -> dict:
+        n = max(1, self.played)
+        score_a = (self.wins_a + 0.5 * self.draws) / n
+        from cornerstone.elo import elo_from_score_rate
+        return {
+            "total": self.total, "played": self.played, "running": self.running,
+            "error": self.error, "label_a": self.label_a, "label_b": self.label_b,
+            "sims": self.sims,
+            "wins_a": self.wins_a, "wins_b": self.wins_b, "draws": self.draws,
+            "score_a": round(score_a, 4) if self.played else None,
+            "elo_diff": round(elo_from_score_rate(score_a), 1) if self.played else None,
+            "mean_plies": round(self.plies / n, 1) if self.played else None,
+            "mean_squares_a": round(self.squares_a / n, 1) if self.played else None,
+            "mean_squares_b": round(self.squares_b / n, 1) if self.played else None,
+            "a_first_wins": self.a_first_wins, "a_second_wins": self.a_second_wins,
+        }
+
+
+class MatchRunner:
+    """后台跑多局对战。同一时刻只允许一场 —— GPU 就一块，排队没有意义。"""
+
+    def __init__(self, pool: BrainPool):
+        self.pool = pool
+        self.lock = threading.Lock()
+        self.state = MatchState()
+        self.stop_flag = False
+        self.thread: threading.Thread | None = None
+
+    def snapshot(self) -> dict:
+        with self.lock:
+            return self.state.as_dict()
+
+    def stop(self) -> None:
+        self.stop_flag = True
+
+    def start(self, players: list[str], sims: list[int], games: int) -> None:
+        # 双方在开始时就**定死**，整场都用这两个对象，中途不再解析后端 ID。
+        #
+        # 两个原因，都不是理论问题：
+        #  1. `net:<跑>/latest` 每次解析都可能变 —— 训练还在跑。分块之间重新解析
+        #     的话，一场 400 局会横跨好几个 checkpoint，那个总比分
+        #     不属于任何一对模型。
+        #  2. checkpoint 会被 _prune_checkpoints 轮换删除。实测就撞上了：
+        #     一场 100 局的网络对网络跑到 80 局时报
+        #     「checkpoint 已不存在：step00133030.pt」。
+        # 抓住对象引用还顺带绕开了 BrainPool 的 LRU 淘汰 —— 模型已在显存里，
+        # 文件没了也不影响这一场打完。
+        brains = [self.pool.get(p) for p in players]
+        with self.lock:
+            if self.state.running:
+                raise ValueError("已有一场多局对战在跑，先停掉它")
+            self.stop_flag = False
+            self.state = MatchState(total=games, running=True, sims=max(sims),
+                                    label_a=brains[0].label, label_b=brains[1].label)
+        self.thread = threading.Thread(
+            target=self._run, args=(brains, list(sims), games), daemon=True)
+        self.thread.start()
+
+    def _run(self, players: list, sims: list[int], games: int) -> None:
+        try:
+            seed = 1
+            while True:
+                with self.lock:
+                    done = self.state.played
+                if self.stop_flag or done >= games:
+                    break
+                # 每块必须是偶数：先后手要成对交换，奇数会让分配不平衡
+                chunk = min(MATCH_CHUNK, games - done)
+                chunk -= chunk % 2
+                if chunk <= 0:
+                    break
+                self._one_chunk(players, sims, chunk, seed)
+                seed += 1
+        except Exception as e:                      # noqa: BLE001
+            with self.lock:
+                self.state.error = f"{type(e).__name__}: {e}"
+        finally:
+            with self.lock:
+                self.state.running = False
+
+    def _one_chunk(self, players: list, sims: list[int], chunk: int, seed: int) -> None:
+        a, b = players            # 已在 start() 里定死的 Brain 对象，不再按 ID 解析
+        if a.has_net and b.has_net:
+            from cornerstone.evaluate import evaluate_vs_network
+            r = evaluate_vs_network(a.model, b.model, a.device, games=chunk,
+                                    simulations=max(sims), parallel_games=min(64, chunk),
+                                    seed=seed, engine_threads=16)
+            self._accumulate(r.wins, r.losses, r.draws, r.mean_plies * chunk,
+                             r.mean_squares_net * chunk, r.mean_squares_opp * chunk,
+                             r.wins_as_first, r.wins_as_second, chunk)
+        elif a.has_net or b.has_net:
+            from cornerstone.evaluate import evaluate_vs_baseline
+            net, rule = (a, b) if a.has_net else (b, a)
+            r = evaluate_vs_baseline(net.model, net.device, opponent=rule.name, games=chunk,
+                                     simulations=max(sims), parallel_games=min(64, chunk),
+                                     seed=seed)
+            if a.has_net:       # 网络就是 A
+                self._accumulate(r.wins, r.losses, r.draws, r.mean_plies * chunk,
+                                 r.mean_squares_net * chunk, r.mean_squares_opp * chunk,
+                                 r.wins_as_first, r.wins_as_second, chunk)
+            else:               # 网络是 B，胜负要翻过来
+                self._accumulate(r.losses, r.wins, r.draws, r.mean_plies * chunk,
+                                 r.mean_squares_opp * chunk, r.mean_squares_net * chunk,
+                                 0, 0, chunk)
+        else:
+            from cornerstone.arena import play_pair
+            r = play_pair(a.name, b.name, a.cfg, b.cfg, chunk, seed, 16, 4)
+            self._accumulate(r.wins_a, r.wins_b, r.draws, r.mean_plies * chunk,
+                             r.mean_squares_a * chunk, r.mean_squares_b * chunk,
+                             r.a_wins_as_first, r.a_wins_as_second, chunk)
+
+    def _accumulate(self, wa, wb, dr, plies, sqa, sqb, af, as_, chunk) -> None:
+        with self.lock:
+            s = self.state
+            s.wins_a += wa; s.wins_b += wb; s.draws += dr
+            s.plies += plies; s.squares_a += sqa; s.squares_b += sqb
+            s.a_first_wins += af; s.a_second_wins += as_
+            s.played += chunk
+
+
 # ----------------------------------------------------------------------- 会话
 
 @dataclass
@@ -419,6 +568,12 @@ class SidReq(BaseModel):
     sid: str
 
 
+class MatchReq(BaseModel):
+    players: list[str | None]
+    sims: list[int]
+    games: int = 100
+
+
 class BackendReq(BaseModel):
     sid: str
     players: list[str | None] | None = None
@@ -431,6 +586,7 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
     from fastapi.staticfiles import StaticFiles
 
     app = FastAPI(title="cornerstone 试玩")
+    matches = MatchRunner(pool)
 
     def get(sid: str) -> Session:
         s = SESSIONS.get(sid)
@@ -544,10 +700,46 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
             "start_cells": [list(x) for x in cs.START_CELLS],
             "pieces": pieces,
             "sim_choices": SIM_CHOICES,
+            "match_games": MATCH_GAMES,
             "default_sims": DEFAULT_SIMS,
             "max_sims": MAX_SIMS,
             "default_backend": default_backend,
         }
+
+    @app.post("/api/match/start")
+    def match_start(req: MatchReq):
+        players = validate_players(req.players)
+        sims = validate_sims(req.sims)
+        if req.games not in MATCH_GAMES:
+            raise HTTPException(400, f"局数只能是 {MATCH_GAMES} 之一")
+        if any(p is None for p in players):
+            raise HTTPException(400, "多局对战两方都必须是 AI")
+
+        # 下面两条限制来自批量对局引擎，不是随手加的，报错要说清楚原因
+        brains = [load_brain(p) for p in players]
+        if any(b.has_net for b in brains) and any(
+                s <= PURE_POLICY for s, b in zip(sims, brains) if b.has_net):
+            raise HTTPException(400,
+                                "多局对战暂不支持「纯策略」：批量对局由引擎自己选着法，"
+                                "走的是改进策略，没有读先验的入口。请选 64/256/800。")
+        if all(b.has_net for b in brains) and sims[0] != sims[1]:
+            raise HTTPException(400,
+                                f"网络对网络时两方要用相同的模拟数（收到 {sims[0]} 和 {sims[1]}）："
+                                "批量对局引擎两方共用一份 MCTS 配置。")
+        try:
+            matches.start(players, sims, req.games)
+        except ValueError as e:
+            raise HTTPException(409, str(e))
+        return matches.snapshot()
+
+    @app.get("/api/match/status")
+    def match_status():
+        return matches.snapshot()
+
+    @app.post("/api/match/stop")
+    def match_stop():
+        matches.stop()
+        return matches.snapshot()
 
     @app.get("/api/backends")
     def backends():
