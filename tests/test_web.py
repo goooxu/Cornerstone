@@ -418,6 +418,45 @@ def test_analysis_payload_has_no_heatmap():
     assert set(got) == {"value", "win_rate", "top_moves"}
 
 
+# ------------------------------------------------- 前端静态检查（没有 JS 运行时）
+#
+# 容器和开发机都没有 node，前端跑不了单测。下面几条用纯文本检查兜住
+# 「一改就整页卡死」的那几类低级错误。
+
+def _front(name: str) -> str:
+    return open(os.path.join(REPO, "web", "static", name), encoding="utf-8").read()
+
+
+def test_every_element_id_used_by_js_exists_in_html():
+    """`$('xxx')` 取不到就是 null，接着取属性即抛异常、整页停摆。
+
+    删控件时最容易漏掉对应的 JS 引用，而症状离原因很远。
+    """
+    js, html = _front("app.js"), _front("index.html")
+    have = set(re.findall(r'id="([^"]+)"', html))
+    # 动态拼的 id（seat0/seat1、sims0/sims1）单独列出
+    want = set(re.findall(r"\$\('([^']+)'\)", js)) | {"seat0", "seat1", "sims0", "sims1"}
+    missing = sorted(want - have)
+    assert not missing, f"app.js 引用了 index.html 里不存在的 id：{missing}"
+
+
+def test_icon_buttons_carry_a_title():
+    """按钮只有图标，没有文字。少了 title 就完全猜不出是干什么的。"""
+    html = _front("index.html")
+    for tag in re.findall(r"<button[^>]*>", html):
+        bid = re.search(r'id="([^"]+)"', tag)
+        assert "title=" in tag, f"按钮 {bid.group(1) if bid else tag} 缺 title"
+        assert "aria-label" in tag, f"按钮 {bid.group(1) if bid else tag} 缺 aria-label"
+
+
+def test_piece_tray_is_hidden_when_nobody_is_seated():
+    """两个座位都是 AI 时棋子面板要收起来 —— 没人落子，选棋子没有意义。"""
+    js = _front("app.js")
+    assert "pieces-card" in js and "noHuman" in js
+    assert re.search(r"\$\('pieces-card'\)\.classList\.toggle\('hidden',\s*noHuman\)", js), \
+        "棋子面板应按 noHuman 收起"
+
+
 # ----------------------------------------------------- 前端的哨兵值误用（静态检查）
 
 def test_frontend_never_indexes_seat_arrays_by_human_player():

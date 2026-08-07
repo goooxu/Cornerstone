@@ -212,7 +212,9 @@ function orientRing(p, me) {
   ring.className = 'ring';
   const oris = p.orientations;
   const k = oris.length;
-  const radius = k <= 2 ? 40 : k <= 4 ? 46 : 56;
+  const radius = k <= 2 ? 42 : k <= 4 ? 52 : 64;
+  // 圆形暗底的大小跟着半径走，由 CSS 用 calc 加上按钮尺寸
+  ring.style.setProperty('--r', radius + 'px');
 
   oris.forEach((o, i) => {
     const ang = -Math.PI / 2 + (i * 2 * Math.PI) / k;
@@ -266,6 +268,11 @@ function applyState(st, analysis) {
   } else {
     status.textContent = 'AI 思考中…';
   }
+
+  // 两个座位都是 AI 时整块棋子面板都收起来 —— 没人要落子，
+  // 选棋子和朝向都没有意义，留着只会占地方并且看着像能点。
+  $('pieces-card').classList.toggle('hidden', noHuman);
+  if (noHuman) { S.piece = null; S.ori = null; }
 
   // 选中的棋子已经用掉了就取消选中（同样不能用 -1 去索引）
   if (S.piece !== null && !st.remaining[viewSeat()][S.piece]) { S.piece = null; S.ori = null; }
@@ -442,8 +449,11 @@ async function newGame() {
 // ---------------------------------------------------------------- AI 对战
 
 function setAutoplayUi(on) {
-  $('btn-autoplay').textContent = on ? '■ 停止' : '▶ 自动对战';
-  $('btn-autoplay').classList.toggle('primary', on);
+  const b = $('btn-autoplay');
+  b.classList.toggle('running', on);      // CSS 据此在播放/停止两个图标间切换
+  b.classList.toggle('primary', on);
+  b.title = on ? '停止自动对战' : '自动对战';
+  b.setAttribute('aria-label', b.title);
 }
 
 // 逐步走而不是让后端一次跑完：每步都刷新棋盘，随时能停。
@@ -514,6 +524,8 @@ $('btn-undo').onclick = () => guard(async () => {
 });
 
 document.addEventListener('keydown', (ev) => {
+  // 没人在座就没有「选棋子」这回事，快捷键一并停掉
+  if (S.state && S.state.human_player < 0) return;
   if (S.piece === null) return;
   const oris = S.meta.pieces[S.piece].orientations;
   const idx = oris.findIndex(o => o.id === S.ori);

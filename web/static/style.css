@@ -69,8 +69,11 @@ canvas { display: block; border-radius: 6px; cursor: pointer; }
 .score.p0 .dot { background: var(--p0); }
 .score.p1 .dot { background: var(--p1); }
 
-.side-col { flex: 1 1 380px; min-width: 340px; max-width: 520px; display: flex; flex-direction: column; gap: 14px; }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+/* 侧栏比原来宽不少：棋子托盘的朝向圈要往格子外面撑，
+   窄栏里圈会盖住半个面板，看着就是一团。 */
+.side-col { flex: 1 1 480px; min-width: 440px; max-width: 680px; display: flex; flex-direction: column; gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.card.hidden { display: none; }
 .card h2 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
 .card h2 small { color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 12px; }
 
@@ -104,11 +107,33 @@ button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 button.primary { background: var(--accent); color: #10121a; border-color: var(--accent); font-weight: 600; }
 
-/* 朝向圈要能画到托盘格子外面去，所以这一路都不能裁剪 */
-.tray { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; overflow: visible; }
+/* 图标按钮。只有图标，所以每个都带 title —— 悬停能看到中文名。 */
+button.icon {
+  width: 46px; height: 40px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+button.icon svg {
+  width: 20px; height: 20px;
+  fill: none; stroke: currentColor; stroke-width: 2;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+/* 实心图形（播放三角、停止方块）用填充而不是描边 */
+button.icon svg .fill { fill: currentColor; stroke: currentColor; stroke-width: 1.5; }
+/* 自动对战是开关：两个图标叠在按钮里，按状态显示其中一个 */
+#btn-autoplay .ico-stop { display: none; }
+#btn-autoplay.running .ico-play { display: none; }
+#btn-autoplay.running .ico-stop { display: inline; }
+
+/* 6 列而不是 7 列，格距也拉开：格子间距越大，朝向圈盖住邻居的比例越小。
+   朝向圈要能画到格子外面去，所以这一路都不能裁剪。 */
+.tray {
+  display: grid; grid-template-columns: repeat(6, 1fr);
+  gap: 14px 12px; overflow: visible; padding: 4px 2px;
+}
 .tray .piece {
-  background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px;
-  padding: 4px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 4px; min-height: 58px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
   position: relative;                 /* 朝向圈以它为定位原点 */
   cursor: default;                    /* 棋子本身不可点，别给可点的暗示 */
 }
@@ -123,13 +148,24 @@ button.primary { background: var(--accent); color: #10121a; border-color: var(--
    .piece:hover 仍然成立（按钮是 .piece 的后代），圈不会闪掉。 */
 .ring { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
 .tray .piece:hover .ring { opacity: 1; }
+
+/* 圈底下垫一层圆形暗底。没有它的话，朝向缩略图会和下面压着的
+   邻居棋子糊在一起，根本分不清哪个是可点的选项。
+   --r 由 JS 按朝向个数设置（个数越多圈越大）。 */
+.ring::before {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: calc(var(--r) * 2 + 52px); height: calc(var(--r) * 2 + 52px);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: #0b0e15f2; border: 1px solid var(--line);
+  box-shadow: 0 10px 30px #000b;
+}
 .ring .ori-btn {
   position: absolute; transform: translate(-50%, -50%);
   background: var(--panel-2); border: 1px solid var(--line);
-  border-radius: 6px; padding: 3px; cursor: pointer;
+  border-radius: 6px; padding: 4px; cursor: pointer;
   pointer-events: auto;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 4px 14px #000a;
 }
 .ring .ori-btn:hover { border-color: var(--accent); background: var(--panel); }
 .ring .ori-btn.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }

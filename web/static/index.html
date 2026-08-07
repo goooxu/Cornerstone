@@ -47,15 +47,25 @@
         </label>
       </div>
       <div id="backend-hint" class="hint"></div>
+      <!-- 图标按钮：title 同时给出中文名，图标本身不够自解释时靠悬停提示补上 -->
       <div class="row buttons">
-        <button id="btn-new" class="primary">新对局</button>
-        <button id="btn-undo">悔棋</button>
-        <button id="btn-ai">让 AI 走一步</button>
-        <button id="btn-autoplay">▶ 自动对战</button>
+        <button id="btn-new" class="icon primary" title="新对局" aria-label="新对局">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <button id="btn-undo" class="icon" title="悔棋" aria-label="悔棋">
+          <svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10H9"/></svg>
+        </button>
+        <button id="btn-ai" class="icon" title="让 AI 走一步" aria-label="让 AI 走一步">
+          <svg viewBox="0 0 24 24"><path d="M6 5l9 7-9 7z" class="fill"/><path d="M18 5v14"/></svg>
+        </button>
+        <button id="btn-autoplay" class="icon" title="自动对战" aria-label="自动对战">
+          <svg viewBox="0 0 24 24" class="ico-play"><path d="M7 4l13 8-13 8z" class="fill"/></svg>
+          <svg viewBox="0 0 24 24" class="ico-stop"><rect x="6" y="6" width="12" height="12" rx="1.5" class="fill"/></svg>
+        </button>
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" id="pieces-card">
       <h2>棋子 <small id="tray-hint">鼠标悬停一枚，四周会展开它的全部形态</small></h2>
       <div id="tray" class="tray"></div>
     </div>
