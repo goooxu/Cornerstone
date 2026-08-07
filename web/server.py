@@ -440,9 +440,28 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
     def sims_for(s: Session, player: int) -> int:
         return s.sims[player]
 
+    # 前端资源一律要求**每次回源校验**。
+    #
+    # 页面和脚本是分开缓存的，改代码时很容易出现「新的 index.html 配旧的
+    # app.js」：旧脚本去绑一个已经不存在的按钮，抛
+    # `Cannot set properties of null`，而这一抛整个模块就停了 ——
+    # 连填充下拉框的启动代码都不会执行，表现却是「某个控件用不了」。
+    # 实际就这么坑过一次，查了很久才发现是缓存。
+    #
+    # no-cache 不是「不缓存」，是「用之前先校验」。StaticFiles 会带
+    # ETag/Last-Modified，没变就是一个 304，代价可以忽略。
+    @app.middleware("http")
+    async def revalidate_static(request, call_next):
+        resp = await call_next(request)
+        p = request.url.path
+        if p == "/" or p.startswith("/static/"):
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
     @app.get("/")
     def index():
-        return FileResponse(os.path.join(STATIC, "index.html"))
+        return FileResponse(os.path.join(STATIC, "index.html"),
+                            headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/meta")
     def meta():

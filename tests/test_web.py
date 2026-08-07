@@ -467,12 +467,23 @@ def _front(name: str) -> str:
     return open(os.path.join(REPO, "web", "static", name), encoding="utf-8").read()
 
 
+def _code(name: str) -> str:
+    """去掉注释后的源码。
+
+    下面几条是文本匹配，注释里举的**反例**会被当成真代码匹配到 ——
+    比如注释里写「不要写成 $('x').onclick = ...」，检查就会指着注释报错。
+    """
+    src = _front(name)
+    src = re.sub(r"/\*[\s\S]*?\*/", "", src)
+    return re.sub(r"^\s*//.*$", "", src, flags=re.M)
+
+
 def test_every_element_id_used_by_js_exists_in_html():
     """`$('xxx')` 取不到就是 null，接着取属性即抛异常、整页停摆。
 
     删控件时最容易漏掉对应的 JS 引用，而症状离原因很远。
     """
-    js, html = _front("app.js"), _front("index.html")
+    js, html = _code("app.js"), _front("index.html")
     have = set(re.findall(r'id="([^"]+)"', html))
     # 动态拼的 id（seat0/seat1、sims0/sims1）单独列出
     want = set(re.findall(r"\$\('([^']+)'\)", js)) | {"seat0", "seat1", "sims0", "sims1"}
@@ -525,6 +536,27 @@ def test_js_errors_are_surfaced_on_the_page():
     # 初始局面加载失败不能连累配置界面
     assert re.search(r"catch \(e\) \{\s*fatal\('初始局面加载失败", js), \
         "启动时建会话失败要单独兜住，别让配置界面一起废掉"
+
+
+def test_bindings_survive_a_missing_element():
+    """一个元素对不上，不能把整个模块带停。
+
+    真事：浏览器拿着旧的 app.js 配新的 index.html，旧脚本去绑一个
+    已经不存在的按钮，抛 `Cannot set properties of null`，
+    于是**后面填充下拉框的启动代码根本不执行** ——
+    表现是「选不了对战双方」，离原因隔了十万八千里。
+    """
+    js = _code("app.js")
+    assert re.search(r"function on\(id, event, handler\)", js), "绑定要走统一的兜底入口"
+    assert not re.search(r"\$\('[\w-]+'\)\.on(?:click|change)\s*=", js), \
+        "不要直接 $('x').onclick = ...，缺元素会把整个模块带停"
+
+
+def test_static_assets_are_revalidated():
+    """页面与脚本分开缓存，版本错配会让旧脚本去绑不存在的元素。"""
+    srv = open(os.path.join(REPO, "web", "server.py"), encoding="utf-8").read()
+    assert 'Cache-Control"] = "no-cache"' in srv or "no-cache" in srv
+    assert "revalidate_static" in srv
 
 
 def test_piece_name_labels_are_gone():

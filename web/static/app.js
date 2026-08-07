@@ -576,12 +576,28 @@ CV.addEventListener('click', (ev) => {
   if (S.legal.has(a)) play(a);
 });
 
-$('btn-start').onclick = () => (S.phase === 'idle' ? startGame() : endGame());
-$('btn-pause').onclick = togglePause;
-$('seat0').onchange = onConfigChange;
-$('seat1').onchange = onConfigChange;
-$('sims0').onchange = onConfigChange;
-$('sims1').onchange = onConfigChange;
+// 绑定一律走这里，不直接 $('x').onclick = ...
+//
+// 直接赋值的话，只要有一个元素对不上（最常见的原因是浏览器拿着旧的
+// app.js 配新的 index.html），就会抛 `Cannot set properties of null`，
+// **而这一抛整个模块就停了** —— 后面填充下拉框的启动代码根本不会执行，
+// 表现却是「某个控件用不了」，离原因非常远。
+// 这里改成：缺了就报出来并跳过，别的绑定照常。
+function on(id, event, handler) {
+  const el = $(id);
+  if (!el) {
+    fatal(`界面元素 ${id} 不存在 —— 多半是页面与脚本版本不一致，强制刷新一下（Ctrl+F5）`);
+    return;
+  }
+  el[event] = handler;
+}
+
+on('btn-start', 'onclick', () => (S.phase === 'idle' ? startGame() : endGame()));
+on('btn-pause', 'onclick', togglePause);
+on('seat0', 'onchange', onConfigChange);
+on('seat1', 'onchange', onConfigChange);
+on('sims0', 'onchange', onConfigChange);
+on('sims1', 'onchange', onConfigChange);
 
 document.addEventListener('keydown', (ev) => {
   // 没人在座就没有「选棋子」这回事，快捷键一并停掉
