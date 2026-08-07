@@ -78,9 +78,25 @@ cmd_start() {
   cd "$REPO"
   nohup python3 -u web/server.py "${args[@]}" >"$LOGFILE" 2>&1 &
   echo $! >"$PIDFILE"
-  sleep 12
-  if alive; then
-    echo "已启动 (pid $(cat "$PIDFILE"))，监听 0.0.0.0:$PORT，日志 $LOGFILE"
+
+  # 等到**端口真的能应答**为止，而不是等固定秒数后看进程还在不在。
+  # 进程起来到 uvicorn 绑好端口之间有一段：要读 checkpoint、建模型、
+  # 第一次跑 CUDA 初始化。原先固定 sleep 12 之后只检查进程存活，
+  # 于是「已启动」经常先于「能用」—— 紧接着发请求就是 connection refused，
+  # 而日志里明明已经打印了「监听 ...」，非常容易误判成服务坏了。
+  local ok=""
+  for _ in $(seq 60); do
+    if ! alive; then break; fi
+    if curl -s -o /dev/null -m 3 "http://127.0.0.1:$PORT/" 2>/dev/null; then ok=1; break; fi
+    sleep 2
+  done
+
+  if [ -n "$ok" ]; then
+    echo "已启动 (pid $(cat "$PIDFILE"))，监听 0.0.0.0:$PORT 且已可服务，日志 $LOGFILE"
+  elif alive; then
+    echo "进程在跑但 120s 内没能应答，日志尾部：" >&2
+    tail -20 "$LOGFILE" >&2
+    return 1
   else
     echo "启动失败，日志尾部：" >&2
     tail -20 "$LOGFILE" >&2

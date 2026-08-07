@@ -192,6 +192,29 @@ def test_pool_caches_and_evicts_lru(runs, monkeypatch):
     assert len(_FakeNet.loaded) == 4, "被淘汰的那个应重新加载"
 
 
+def test_difficulty_is_inert_for_rule_baselines():
+    """难度 = MCTS 模拟数，规则基线不搜索，所以这个参数对它完全无效。
+
+    界面上因此把难度置灰。这条测的是被置灰的那个前提本身 ——
+    哪天 RuleBrain 真开始用 sims 了，就该把置灰去掉。
+    """
+    import cornerstone as cs
+    brain = server.RuleBrain("greedy-mobility")
+    board = cs.Board()
+    for sims in (0, 1, 16, 800, 10**6):
+        action, info = brain.choose(board, [], sims)
+        assert board.is_legal(action)
+        assert info is None
+        assert brain.analyse([], sims) is None
+
+
+def test_all_difficulties_map_to_a_simulation_count():
+    # 界面上的每一档都要能换算成模拟数，否则 sims_for 会静默退回「普通」
+    assert set(server.DIFFICULTIES) == {"简单", "普通", "困难", "极难"}
+    assert sorted(server.DIFFICULTIES.values()) == list(server.DIFFICULTIES.values()), \
+        "难度档要按模拟数递增排列"
+
+
 def test_pool_reuses_rule_brains(runs):
     pool = server.BrainPool("cpu")
     a = pool.get("rule:greedy-mobility")

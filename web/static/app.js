@@ -374,15 +374,30 @@ function seatLabel(v) {
 // 两个座位都没有网络时（人 vs 规则、规则 vs 规则）就没什么可调的。
 function syncBackendUi() {
   const vals = seatValues();
-  const anyNet = vals.some(v => v !== HUMAN && (backendInfo(v) || {}).kind === 'net');
+  const isNet = vals.map(v => v !== HUMAN && (backendInfo(v) || {}).kind === 'net');
+  const anyNet = isNet[0] || isNet[1];
   const bothAi = vals.every(v => v !== HUMAN);
   $('difficulty').disabled = !anyNet;
   $('btn-analyse').disabled = !anyNet;
   $('btn-autoplay').disabled = !bothAi;
   $('ai-name').textContent = seatLabel(vals[0]) + '  vs  ' + seatLabel(vals[1]);
-  $('backend-hint').textContent = bothAi
-    ? 'AI 对战：点「自动对战」连着走到终局'
-    : (anyNet ? '难度 = 每步的 MCTS 模拟数' : '规则基线不搜索，难度与分析不适用');
+
+  // 明确写出难度**作用在哪一方**。它只是 MCTS 的模拟数，规则基线不搜索，
+  // 所以两边都是规则基线时它完全不起作用 —— 光把下拉置灰不够，
+  // 不说原因的话只会让人猜「那它到底影响谁」。
+  const seats = [];
+  if (isNet[0]) seats.push('先手');
+  if (isNet[1]) seats.push('后手');
+  const parts = [];
+  if (seats.length === 0) {
+    parts.push('难度不起作用：两边都不用网络，规则基线不搜索');
+  } else if (seats.length === 2) {
+    parts.push('难度 = 每步的 MCTS 模拟数，双方同用');
+  } else {
+    parts.push(`难度 = 每步的 MCTS 模拟数，只作用于${seats[0]}（另一方是规则基线，不搜索）`);
+  }
+  if (bothAi) parts.push('点「自动对战」连着走到终局');
+  $('backend-hint').textContent = parts.join('；');
 }
 
 // 换座位不重置棋盘：同一个局面换个引擎接着下，正是试玩要干的事
