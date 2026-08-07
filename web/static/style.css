@@ -18,7 +18,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 header {
@@ -29,11 +29,11 @@ header {
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
-header h1 { margin: 0; font-size: 20px; letter-spacing: .5px; }
-header .sub { color: var(--muted); font-size: 13px; }
+header h1 { margin: 0; font-size: 24px; letter-spacing: .5px; }
+header .sub { color: var(--muted); font-size: 15px; }
 header .spacer { flex: 1; }
 .badge {
-  font-size: 12px; color: var(--muted);
+  font-size: 14px; color: var(--muted);
   border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px;
 }
 
@@ -50,7 +50,7 @@ main {
 canvas { display: block; border-radius: 6px; cursor: pointer; }
 
 .status {
-  margin-top: 12px; padding: 10px 14px;
+  margin-top: 12px; padding: 12px 16px; font-size: 15px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
   min-height: 20px;
 }
@@ -63,8 +63,8 @@ canvas { display: block; border-radius: 6px; cursor: pointer; }
   background: var(--panel); border: 1px solid var(--line);
   border-radius: 8px; padding: 8px 12px;
 }
-.score .label { color: var(--muted); font-size: 12px; }
-.score b { margin-left: auto; font-size: 18px; font-variant-numeric: tabular-nums; }
+.score .label { color: var(--muted); font-size: 14px; }
+.score b { margin-left: auto; font-size: 22px; font-variant-numeric: tabular-nums; }
 .score .dot { width: 10px; height: 10px; border-radius: 3px; }
 .score.p0 .dot { background: var(--p0); }
 .score.p1 .dot { background: var(--p1); }
@@ -74,12 +74,12 @@ canvas { display: block; border-radius: 6px; cursor: pointer; }
 .side-col { flex: 1 1 480px; min-width: 440px; max-width: 680px; display: flex; flex-direction: column; gap: 16px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
 .card.hidden { display: none; }
-.card h2 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
-.card h2 small { color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 12px; }
+.card h2 { margin: 0 0 12px; font-size: 17px; font-weight: 600; }
+.card h2 small { color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 14px; }
 
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
 .row:last-child { margin-bottom: 0; }
-.row label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.row label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 15px; }
 .row.buttons { gap: 8px; }
 
 /* 对手下拉：checkpoint 名字很长，让它占满整行并允许收缩，
@@ -88,9 +88,9 @@ canvas { display: block; border-radius: 6px; cursor: pointer; }
 .withbtn { display: flex; gap: 6px; align-items: center; }
 .withbtn select { flex: 1 1 auto; min-width: 0; }
 /* 模拟数是个数字，给固定宽度，不跟着 checkpoint 名字一起被撑开 */
-.withbtn select.sims { flex: 0 0 auto; width: 5.2em; text-align: right; }
+.withbtn select.sims { flex: 0 0 auto; width: 5.6em; text-align: right; }
 select:disabled { opacity: .45; cursor: not-allowed; }
-.hint { color: var(--muted); font-size: 12px; margin-top: -4px; margin-bottom: 10px; }
+.hint { color: var(--muted); font-size: 14px; margin-top: -4px; margin-bottom: 10px; }
 .hint.center { text-align: center; margin: 4px 0 0; min-height: 16px; }
 .hint.lock:not(:empty) { color: var(--accent); margin-top: -6px; }
 
@@ -102,28 +102,39 @@ select:disabled { opacity: .45; cursor: not-allowed; }
 select, button {
   background: var(--panel-2); color: var(--text);
   border: 1px solid var(--line); border-radius: 7px;
-  padding: 7px 12px; font: inherit; cursor: pointer;
+  padding: 9px 14px; font: inherit; cursor: pointer;
 }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 button.primary { background: var(--accent); color: #10121a; border-color: var(--accent); font-weight: 600; }
 
-/* 图标按钮。只有图标，所以每个都带 title —— 悬停能看到中文名。 */
-button.icon {
-  width: 46px; height: 40px; padding: 0;
-  display: inline-flex; align-items: center; justify-content: center;
+/* 两个按钮都是图标 + 文字，且各有两态。图标本身不够自解释，
+   配上文字才不用猜；两态的文字与图标一起换，状态就只有一个来源。 */
+.row.buttons button {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 16px; font-weight: 600; padding: 10px 18px;
 }
-button.icon svg {
-  width: 20px; height: 20px;
+.row.buttons button svg {
+  width: 18px; height: 18px; flex: 0 0 auto;
   fill: none; stroke: currentColor; stroke-width: 2;
   stroke-linecap: round; stroke-linejoin: round;
 }
-/* 实心图形（播放三角、停止方块）用填充而不是描边 */
-button.icon svg .fill { fill: currentColor; stroke: currentColor; stroke-width: 1.5; }
-/* 自动对战是开关：两个图标叠在按钮里，按状态显示其中一个 */
-#btn-autoplay .ico-stop { display: none; }
-#btn-autoplay.running .ico-play { display: none; }
-#btn-autoplay.running .ico-stop { display: inline; }
+.row.buttons button svg .fill { fill: currentColor; stroke: currentColor; stroke-width: 1.5; }
+button.gone { display: none; }
+
+/* 开始 / 结束：默认显示播放三角，running 时换成停止方块并转成醒目色 */
+#btn-start .ico-stop { display: none; }
+#btn-start.running .ico-play { display: none; }
+#btn-start.running .ico-stop { display: inline; }
+#btn-start.running {
+  background: var(--bad); border-color: var(--bad); color: #17090b;
+}
+
+/* 暂停 / 恢复 */
+#btn-pause .ico-resume { display: none; }
+#btn-pause.paused .ico-pause { display: none; }
+#btn-pause.paused .ico-resume { display: inline; }
+#btn-pause.paused { border-color: var(--accent); color: var(--accent); }
 
 /* 6 列而不是 7 列，格距也拉开：格子间距越大，朝向圈盖住邻居的比例越小。
    朝向圈要能画到格子外面去，所以这一路都不能裁剪。 */
@@ -133,8 +144,8 @@ button.icon svg .fill { fill: currentColor; stroke: currentColor; stroke-width: 
 }
 .tray .piece {
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
-  padding: 8px 4px; min-height: 58px;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  padding: 8px 4px; min-height: 52px;
+  display: flex; align-items: center; justify-content: center;
   position: relative;                 /* 朝向圈以它为定位原点 */
   cursor: default;                    /* 棋子本身不可点，别给可点的暗示 */
 }
@@ -150,11 +161,10 @@ button.icon svg .fill { fill: currentColor; stroke: currentColor; stroke-width: 
 .pieces-wrap .card + .card .tray,
 .pieces-wrap .card:first-child:not(:last-child) .tray { gap: 8px 8px; }
 .pieces-wrap .card:first-child:not(:last-child) .piece,
-.pieces-wrap .card + .card .piece { min-height: 46px; padding: 5px 3px; }
+.pieces-wrap .card + .card .piece { min-height: 42px; padding: 5px 3px; }
 
 .tray .piece.used { opacity: .22; }
 .tray .piece.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.tray .piece span { font-size: 10px; color: var(--muted); }
 /* 悬停时把这一格提到最上层，否则圈会被右边和下面的棋子盖住 */
 .tray .piece:hover { z-index: 40; border-color: var(--accent); }
 
@@ -192,10 +202,10 @@ button.icon svg .fill { fill: currentColor; stroke: currentColor; stroke-width: 
 #winfill { height: 100%; width: 50%; background: var(--p0); transition: width .25s; }
 #wintext {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 600; color: #10121a; text-shadow: 0 1px 0 rgba(255,255,255,.25);
+  font-size: 14px; font-weight: 600; color: #10121a; text-shadow: 0 1px 0 rgba(255,255,255,.25);
 }
 
-.topmoves { margin: 0; padding-left: 20px; color: var(--muted); font-size: 13px; }
+.topmoves { margin: 0; padding-left: 22px; color: var(--muted); font-size: 15px; }
 .topmoves li { margin: 3px 0; cursor: pointer; }
 .topmoves li:hover { color: var(--text); }
 .topmoves li.empty { list-style: none; margin-left: -20px; cursor: default; }

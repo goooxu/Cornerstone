@@ -17,7 +17,7 @@ const S = {
   analysis: null,
   busy: false,
   backends: [],
-  autoplay: false,      // AI 对战连打中
+  phase: 'idle',        // idle | playing | paused
 };
 
 const COLORS = ['#2dd4bf', '#fb923c'];
@@ -121,8 +121,10 @@ function draw() {
   }
 
   // 选中朝向的合法锚点
-  if (st && !st.terminal && st.current_player === st.human_player) {
-    CTX.fillStyle = COLORS[st.human_player] + '66';
+  const humanToMove = S.phase === 'playing' && st && !st.terminal
+    && st.players[st.current_player] === null;
+  if (humanToMove) {
+    CTX.fillStyle = COLORS[st.current_player] + '66';
     for (const [r, c] of legalAnchors()) {
       CTX.beginPath();
       CTX.arc(PAD + (c + 0.5) * CELL, PAD + (r + 0.5) * CELL, 3.5, 0, Math.PI * 2);
@@ -131,11 +133,11 @@ function draw() {
   }
 
   // 悬停预览
-  if (S.hover && S.ori !== null && st && !st.terminal && st.current_player === st.human_player) {
+  if (humanToMove && S.hover && S.ori !== null) {
     const [hr, hc] = S.hover;
     const a = actionFor(hr, hc);
     const ok = S.legal.has(a);
-    CTX.fillStyle = ok ? COLORS[st.human_player] + 'bb' : '#f8717166';
+    CTX.fillStyle = ok ? COLORS[st.current_player] + 'bb' : '#f8717166';
     CTX.strokeStyle = ok ? '#ffffff88' : '#f87171';
     CTX.lineWidth = 1.5;
     for (const [dr, dc] of oriCells(S.ori)) {
@@ -187,7 +189,8 @@ function trayPlan() {
     : [0, 1];
   return seats.map(seat => ({
     seat,
-    interactive: st.players[seat] === null && !st.terminal && st.current_player === seat,
+    interactive: S.phase === 'playing' && st.players[seat] === null
+      && !st.terminal && st.current_player === seat,
   }));
 }
 
@@ -214,10 +217,7 @@ function renderTrays() {
       const used = !st.remaining[seat][p.id];
       div.className = 'piece' + (used ? ' used' : '')
         + (interactive && S.piece === p.id ? ' sel' : '');
-      div.appendChild(miniCanvas(p.orientations[0].cells, 8, COLORS[seat]));
-      const label = document.createElement('span');
-      label.textContent = p.name;
-      div.appendChild(label);
+      div.appendChild(miniCanvas(p.orientations[0].cells, 9, COLORS[seat]));
       if (interactive && !used) div.appendChild(orientRing(p, seat));
       tray.appendChild(div);
     }
@@ -280,18 +280,22 @@ function applyState(st, analysis) {
       if (st.result > 0) status.classList.add('win');
       if (st.result < 0) status.classList.add('lose');
     }
-  } else if (noHuman) {
+  } else if (S.phase === 'idle') {
+    status.textContent = st.ply === 0
+      ? '选好双方与模拟数，点「开始对局」'
+      : `已结束对局（停在第 ${st.ply} 手）；点「开始对局」重来一局`;
+  } else if (S.phase === 'paused') {
+    status.textContent = `已暂停（第 ${st.ply} 手）—— 点「恢复」继续`;
+  } else if (st.players[st.current_player] === null) {
     const who = st.current_player === 0 ? '先手' : '后手';
-    status.textContent = `AI 对战 · 轮到${who}（第 ${st.ply} 手）`;
-  } else if (st.current_player === st.human_player) {
-    const first = st.ply < 2 ? '（首手必须盖住你的起点）' : '';
-    status.textContent = `轮到你走，共 ${st.legal_actions.length} 种合法着法 ${first}`;
+    const first = st.ply < 2 ? '（首手必须盖住起点）' : '';
+    status.textContent = noHuman ? `轮到${who}` :
+      `轮到你走（${who}），共 ${st.legal_actions.length} 种合法着法 ${first}`;
   } else {
-    status.textContent = 'AI 思考中…';
+    const who = st.current_player === 0 ? '先手' : '后手';
+    status.textContent = `${who} AI 思考中…`;
   }
 
-  // 两个座位都是 AI 时整块棋子面板都收起来 —— 没人要落子，
-  // 选棋子和朝向都没有意义，留着只会占地方并且看着像能点。
   // 没人在座就不存在「选中的棋子」；有人在座时，选中的棋子被用掉了要清掉。
   // 这里按人的座位索引，noHuman 时直接清空，绝不拿 -1 去索引。
   if (noHuman) {
@@ -301,10 +305,8 @@ function applyState(st, analysis) {
     if (S.piece !== null && !st.remaining[seat][S.piece]) { S.piece = null; S.ori = null; }
   }
 
-  syncLock(st);
+  syncControls();
   renderTrays(); renderAnalysis(); draw();
-  $('btn-ai').disabled = st.terminal || st.current_player === st.human_player;
-  $('btn-undo').disabled = st.ply === 0;
 }
 
 function renderAnalysis() {
@@ -409,22 +411,42 @@ function seatLabel(v) {
   return info ? info.label : v;
 }
 
-// 对局一开跑，双方与模拟数就锁死，直到终局或开新局。
+// ------------------------------------------------------------------ 对局状态机
 //
-// 中途换引擎会让「这一局是谁对谁」变得没法陈述 —— 棋盘上一半的手是
-// A 走的、一半是 B 走的，最后那个比分就不属于任何一对组合。
-// 服务端也会拒（不能只靠界面置灰），这里只是让不可点这件事看得见。
-function isLocked(st) {
-  return !!st && st.ply > 0 && !st.terminal;
+//   idle    还没开始（或已结束）。配置可改，谁都不能落子
+//   playing 进行中。配置锁死，轮到谁谁落子，AI 由 pump() 驱动
+//   paused  已暂停。配置仍锁着，人和 AI 都不能落子
+//
+// 只有这三态，界面上的每个可用/禁用状态都由它推出来 ——
+// 以前是「自动应手」「自动对战」「锁定」几个布尔各管一摊，
+// 组合起来有说不清的中间态（比如自动对战开着但轮到人）。
+
+function setPhase(p) {
+  S.phase = p;
+  syncControls();
 }
 
-function syncLock(st) {
-  const locked = isLocked(st);
+function syncControls() {
+  const playing = S.phase !== 'idle';
+  const paused = S.phase === 'paused';
+
+  $('btn-start').classList.toggle('running', playing);
+  $('start-label').textContent = playing ? '结束对局' : '开始对局';
+  $('btn-start').title = playing ? '结束对局' : '开始对局';
+
+  $('btn-pause').classList.toggle('gone', !playing);
+  $('btn-pause').classList.toggle('paused', paused);
+  $('pause-label').textContent = paused ? '恢复' : '暂停';
+  $('btn-pause').title = paused ? '恢复对局' : '暂停对局';
+
+  // 配置只在 idle 可改。这里不需要服务端再拦一道 ——
+  // 双方与模拟数只在 /api/new 时提交，对局中根本没有改它的通道。
   for (let i = 0; i < 2; i++) {
-    seatSel(i).disabled = locked;
-    simsSel(i).disabled = locked || simsSel(i).dataset.ruleDisabled === '1';
+    seatSel(i).disabled = playing;
+    simsSel(i).disabled = playing || simsSel(i).dataset.ruleDisabled === '1';
   }
-  $('lock-hint').textContent = locked ? '对局进行中，配置已锁定 —— 点「新对局」可重新设置' : '';
+  $('lock-hint').textContent = paused ? '已暂停 —— 双方都不能落子'
+    : playing ? '对局进行中，配置已锁定' : '';
 }
 
 // 模拟数是**每个座位各自的**，所以置灰也按座位来：
@@ -438,90 +460,67 @@ function syncBackendUi() {
   // 本该一直灰着的规则基线那一侧一起点亮。
   for (let i = 0; i < 2; i++) {
     simsSel(i).dataset.ruleDisabled = isNet[i] ? '0' : '1';
-    simsSel(i).disabled = !isNet[i] || isLocked(S.state);
+    simsSel(i).disabled = !isNet[i] || S.phase !== 'idle';
   }
-  $('btn-autoplay').disabled = !bothAi;
   $('ai-name').textContent = seatLabel(vals[0]) + '  vs  ' + seatLabel(vals[1]);
+  void bothAi;
 
-  const parts = [];
-  if (!isNet[0] && !isNet[1]) {
-    parts.push('两边都不用网络，模拟数不起作用（规则基线不搜索）');
-  } else {
-    parts.push('右侧数字 = 该座位每步的 MCTS 模拟数，越大越强也越慢');
-  }
-  if (bothAi) parts.push('点「自动对战」连着走到终局');
-  $('backend-hint').textContent = parts.join('；');
+  $('backend-hint').textContent = (!isNet[0] && !isNet[1])
+    ? '两边都不用网络，模拟数不起作用（规则基线不搜索）'
+    : '右侧数字 = 该座位每步的 MCTS 模拟数，越大越强也越慢';
 }
 
-// 换座位不重置棋盘：同一个局面换个引擎接着下，正是试玩要干的事
-async function changeSeats() {
+// 配置改动只留在本地，等「开始对局」时一次性提交给 /api/new。
+// 不再中途调 /api/backend —— 对局中根本没有改配置的通道，比事后拦更干净。
+function onConfigChange() {
+  syncBackendUi();
+}
+
+// ---------------------------------------------------------------- 开始 / 结束
+
+async function startGame() {
   await guard(async () => {
-    syncBackendUi();
-    if (!S.sid) return;
-    const r = await post('/api/backend', {
-      sid: S.sid,
-      players: seatPlayers(),
-      sims: seatSims(),
-    });
-    S.analysis = null;
-    applyState(r.state, null);
-    await maybeAutoRespond();
-  });
-}
-
-// 人机对局里轮到 AI 就替它走。以前这里有个「AI 自动应手」开关，
-// 现在是固定行为 —— 关掉它只会让人每走一手都要多点一次「让 AI 走一步」。
-//
-// AI 对战时**不在这里连打**：那是「自动对战」按钮的事，
-// 否则一按新对局就会失控地一路跑到终局。
-async function maybeAutoRespond() {
-  if (S.state.human_player < 0) return;
-  while (!S.state.terminal && S.state.current_player !== S.state.human_player) {
-    await aiMove();
-  }
-}
-
-async function newGame() {
-  await guard(async () => {
-    S.autoplay = false;
     S.analysis = null; S.piece = null; S.ori = null;
-    const r = await post('/api/new', {
-      players: seatPlayers(),
-      sims: seatSims(),
-    });
+    const r = await post('/api/new', { players: seatPlayers(), sims: seatSims() });
     S.sid = r.sid;
+    setPhase('playing');
     applyState(r.state, null);
-    await maybeAutoRespond();
   });
+  await pump();
 }
 
-// ---------------------------------------------------------------- AI 对战
-
-function setAutoplayUi(on) {
-  const b = $('btn-autoplay');
-  b.classList.toggle('running', on);      // CSS 据此在播放/停止两个图标间切换
-  b.classList.toggle('primary', on);
-  b.title = on ? '停止自动对战' : '自动对战';
-  b.setAttribute('aria-label', b.title);
+// 结束只是停手：棋盘留在原样供查看，配置解锁。
+// 服务端那边的会话不用管，下次开始会新建一个。
+function endGame() {
+  setPhase('idle');
+  syncBackendUi();          // 解锁后要重算规则基线那一侧的置灰
+  if (S.state) applyState(S.state, undefined);
 }
 
-// 逐步走而不是让后端一次跑完：每步都刷新棋盘，随时能停。
-// 极难档一步要十几秒，一次性跑完整局的话页面会干等几分钟。
-async function autoplay() {
-  if (S.autoplay) { S.autoplay = false; setAutoplayUi(false); return; }
-  if (S.state && S.state.human_player >= 0) return;   // 有人在座，不能自动
-  S.autoplay = true;
-  setAutoplayUi(true);
-  try {
-    while (S.autoplay && S.state && !S.state.terminal) {
+function togglePause() {
+  if (S.phase === 'playing') {
+    setPhase('paused');
+    if (S.state) applyState(S.state, undefined);
+  } else if (S.phase === 'paused') {
+    setPhase('playing');
+    if (S.state) applyState(S.state, undefined);
+    pump();
+  }
+}
+
+// 驱动 AI 落子：轮到的座位若是 AI 就替它走，一直走到轮到人、
+// 被暂停、被结束、或终局为止。人机与 AI 对战共用这一条路径。
+//
+// **暂停只能在两次落子之间生效** —— 一次搜索已经交给引擎了，中途打不断。
+// 所以按下暂停后，可能还要等当前这一步搜完（800 次模拟约十几秒）。
+async function pump() {
+  await guard(async () => {
+    while (S.phase === 'playing' && S.state && !S.state.terminal
+           && S.state.players[S.state.current_player] !== null) {
       await aiMove();
     }
-  } catch (e) {
-    $('status').textContent = '出错：' + e.message;
-  } finally {
-    S.autoplay = false;
-    setAutoplayUi(false);
-  }
+  });
+  if (S.state && S.state.terminal && S.phase !== 'idle') endGame();
 }
 
 async function aiMove() {
@@ -539,9 +538,9 @@ async function play(action) {
     const st = await post('/api/move', { sid: S.sid, action });
     S.piece = null; S.ori = null;
     applyState(st, null);
-    // maybeAutoRespond 里那个 while 已经覆盖了「AI 走完对方仍无法落子（停手）」的情况
-    await maybeAutoRespond();
   });
+  // pump 里那个 while 顺带覆盖了「AI 走完对方仍无法落子（停手）」的情况
+  await pump();
 }
 
 CV.addEventListener('mousemove', (ev) => {
@@ -553,24 +552,20 @@ CV.addEventListener('mousemove', (ev) => {
 CV.addEventListener('mouseleave', () => { S.hover = null; draw(); });
 CV.addEventListener('click', (ev) => {
   const st = S.state;
-  if (!st || st.terminal || st.current_player !== st.human_player || S.ori === null) return;
+  if (S.phase !== 'playing' || !st || st.terminal || S.ori === null) return;
+  if (st.players[st.current_player] !== null) return;      // 轮到 AI，人不能替它下
   const cell = cellAt(ev);
   if (!cell) return;
   const a = actionFor(cell[0], cell[1]);
   if (S.legal.has(a)) play(a);
 });
 
-$('btn-new').onclick = newGame;
-$('btn-ai').onclick = () => guard(aiMove);
-$('seat0').onchange = changeSeats;
-$('seat1').onchange = changeSeats;
-$('sims0').onchange = changeSeats;
-$('sims1').onchange = changeSeats;
-$('btn-autoplay').onclick = autoplay;
-$('btn-undo').onclick = () => guard(async () => {
-  S.analysis = null;
-  applyState(await post('/api/undo', { sid: S.sid }), null);
-});
+$('btn-start').onclick = () => (S.phase === 'idle' ? startGame() : endGame());
+$('btn-pause').onclick = togglePause;
+$('seat0').onchange = onConfigChange;
+$('seat1').onchange = onConfigChange;
+$('sims0').onchange = onConfigChange;
+$('sims1').onchange = onConfigChange;
 
 document.addEventListener('keydown', (ev) => {
   // 没人在座就没有「选棋子」这回事，快捷键一并停掉
@@ -604,6 +599,9 @@ document.addEventListener('keydown', (ev) => {
   // 默认人执先、AI 执后，和改版前一致
   await loadBackends([HUMAN, S.meta.default_backend]);
   syncBackendUi();
-  setAutoplayUi(false);
-  await newGame();
+  setPhase('idle');
+  // 先建一个会话只为渲染出空棋盘；真正开局要点「开始对局」
+  const r0 = await post('/api/new', { players: seatPlayers(), sims: seatSims() });
+  S.sid = r0.sid;
+  applyState(r0.state, null);
 })();

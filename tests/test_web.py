@@ -382,10 +382,9 @@ def test_config_unlocks_after_the_game_ends(client):
 
 
 def test_frontend_locks_config_while_playing():
-    """界面侧也要看得出锁住了，否则只有点下去报错才知道。"""
+    """开局后配置要锁死，且看得出来锁了。"""
     js = _front("app.js")
-    assert re.search(r"function isLocked\(st\)[\s\S]{0,120}st\.ply\s*>\s*0\s*&&\s*!st\.terminal", js)
-    assert "seatSel(i).disabled = locked" in js
+    assert "seatSel(i).disabled = playing" in js
     assert "lock-hint" in js
 
 
@@ -481,13 +480,39 @@ def test_every_element_id_used_by_js_exists_in_html():
     assert not missing, f"app.js 引用了 index.html 里不存在的 id：{missing}"
 
 
-def test_icon_buttons_carry_a_title():
-    """按钮只有图标，没有文字。少了 title 就完全猜不出是干什么的。"""
+def test_only_the_two_state_buttons_remain():
+    """按钮就两个，各有两态：开始/结束、暂停/恢复。
+
+    以前是「新对局 / 悔棋 / 走一步 / 自动对战」四个各管一摊，
+    组合起来有说不清的中间态（自动对战开着但轮到人该怎么办）。
+    """
     html = _front("index.html")
+    ids = re.findall(r'<button[^>]*id="([^"]+)"', html)
+    assert ids == ["btn-start", "btn-pause"], f"按钮应只剩两个，实得 {ids}"
     for tag in re.findall(r"<button[^>]*>", html):
-        bid = re.search(r'id="([^"]+)"', tag)
-        assert "title=" in tag, f"按钮 {bid.group(1) if bid else tag} 缺 title"
-        assert "aria-label" in tag, f"按钮 {bid.group(1) if bid else tag} 缺 aria-label"
+        assert "title=" in tag, f"按钮缺 title：{tag}"
+    # 两态的图标都要在
+    for ico in ("ico-play", "ico-stop", "ico-pause", "ico-resume"):
+        assert ico in html, f"缺图标 {ico}"
+
+
+def test_phase_machine_drives_the_ui():
+    """界面状态全部由 idle/playing/paused 这一个来源推出。"""
+    js = _front("app.js")
+    for name in ("startGame", "endGame", "togglePause", "pump", "syncControls"):
+        assert f"function {name}" in js or f"async function {name}" in js, f"缺 {name}"
+    assert "S.phase === 'idle' ? startGame() : endGame()" in js
+    # 暂停时人和 AI 都不能落子
+    assert "S.phase !== 'playing'" in js, "点击落子要先判断对局是否进行中"
+    assert re.search(r"while \(S\.phase === 'playing'", js), "AI 驱动循环要能被暂停打断"
+
+
+def test_piece_name_labels_are_gone():
+    """棋子下面那两三个字母（I1/L4/P5）没有信息量，已删除。"""
+    js = _front("app.js")
+    assert "p.name" not in js, "棋子托盘不该再渲染棋子名"
+    css = _front("style.css")
+    assert ".tray .piece span" not in css, "对应的样式也该一并清掉"
 
 
 def test_both_seats_get_a_readonly_tray_when_nobody_is_seated():
@@ -500,9 +525,9 @@ def test_both_seats_get_a_readonly_tray_when_nobody_is_seated():
     js = _front("app.js")
     assert "trayPlan" in js and "renderTrays" in js
     assert "readonly" in js, "只读托盘要有区分用的 class"
-    assert re.search(r"interactive:\s*st\.players\[seat\]\s*===\s*null"
+    assert re.search(r"interactive:\s*S\.phase === 'playing'\s*&&\s*st\.players\[seat\]\s*===\s*null"
                      r"\s*&&\s*!st\.terminal\s*&&\s*st\.current_player\s*===\s*seat", js), \
-        "可交互 = 轮到该座位且该座位是人"
+        "可交互 = 对局进行中 且 轮到该座位 且 该座位是人"
     assert re.search(r"human_player\s*>=\s*0[\s\S]{0,200}\[0,\s*1\]", js), \
         "没有人类座位时要摆两块面板"
 
