@@ -7,6 +7,7 @@
 
 import importlib.util
 import os
+import re
 import sys
 
 import pytest
@@ -343,6 +344,25 @@ def test_analysis_without_any_net_is_none(client):
     sid = r.json()["sid"]
     got = client.get(f"/api/analysis?sid={sid}").json()
     assert got["analysis"] is None and got["has_net"] is False
+
+
+# ----------------------------------------------------- 前端的哨兵值误用（静态检查）
+
+def test_frontend_never_indexes_seat_arrays_by_human_player():
+    """`human_player` 在 AI 对战下是 -1，拿它索引按座位分的数组会得到 undefined。
+
+    这条真炸过：选了两个 AI 之后 `remaining[-1]` 是 undefined，
+    再取 `[0]` 就抛「Cannot read properties of undefined」，整个界面卡住。
+    前端没有 JS 运行时可测（容器里没有 node），所以用静态检查兜这一条。
+
+    `COLORS[st.human_player]` 是允许的 —— 它们都在
+    `current_player === human_player` 的判断里面，-1 时根本进不去。
+    危险的是按座位分的数据数组，取到 undefined 之后还会继续往下取。
+    """
+    js = open(os.path.join(REPO, "web", "static", "app.js"), encoding="utf-8").read()
+    bad = re.findall(r"\b(remaining|players|labels|anchors)\s*\[[^\]]*human_player[^\]]*\]", js)
+    assert not bad, (f"这些按座位分的数组用 human_player 做了下标：{bad}；"
+                     "AI 对战时它是 -1，应改用 viewSeat()")
 
 
 def test_legacy_new_game_params_still_work(client):

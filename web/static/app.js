@@ -182,10 +182,19 @@ function miniCanvas(cells, size, color) {
   return cv;
 }
 
+// 棋子托盘展示哪个座位的棋子。
+// human_player 在 AI 对战下是 -1，**不能拿它去索引数组** ——
+// remaining[-1] 是 undefined，再取 [0] 就是
+// 「Cannot read properties of undefined」。没有人类座位时展示当前行棋方的棋子。
+function viewSeat() {
+  if (!S.state) return 0;
+  return S.state.human_player >= 0 ? S.state.human_player : S.state.current_player;
+}
+
 function renderTray() {
   const tray = $('tray');
   tray.innerHTML = '';
-  const me = S.state ? S.state.human_player : 0;
+  const me = viewSeat();
   const remaining = S.state ? S.state.remaining[me] : S.meta.pieces.map(() => true);
 
   for (const p of S.meta.pieces) {
@@ -206,7 +215,7 @@ function renderOrients() {
   const box = $('orients');
   box.innerHTML = '';
   if (S.piece === null) return;
-  const me = S.state ? S.state.human_player : 0;
+  const me = viewSeat();
   const p = S.meta.pieces[S.piece];
   for (const o of p.orientations) {
     const d = document.createElement('div');
@@ -253,8 +262,8 @@ function applyState(st, analysis) {
     status.textContent = 'AI 思考中…';
   }
 
-  // 选中的棋子已经用掉了就取消选中
-  if (S.piece !== null && !st.remaining[st.human_player][S.piece]) { S.piece = null; S.ori = null; }
+  // 选中的棋子已经用掉了就取消选中（同样不能用 -1 去索引）
+  if (S.piece !== null && !st.remaining[viewSeat()][S.piece]) { S.piece = null; S.ori = null; }
 
   renderTray(); renderOrients(); renderAnalysis(); draw();
   $('btn-ai').disabled = st.terminal || st.current_player === st.human_player;
