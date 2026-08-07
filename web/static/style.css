@@ -128,18 +128,9 @@ button.icon svg {
 button.icon svg .fill { fill: currentColor; stroke: currentColor; stroke-width: 1.5; }
 button.gone { display: none; }
 
-/* 开始 / 结束：默认显示播放三角，running 时换成停止方块并转成醒目色 */
-#btn-start .ico-stop { display: none; }
-#btn-start.running .ico-play { display: none; }
-#btn-start.running .ico-stop { display: inline; }
-#btn-start.running {
-  background: var(--bad); border-color: var(--bad); color: #17090b;
-}
-
-/* 暂停 / 恢复 */
-#btn-pause .ico-resume { display: none; }
-#btn-pause.paused .ico-pause { display: none; }
-#btn-pause.paused .ico-resume { display: inline; }
+/* 图形本身由 JS 换（见 ICONS 表），CSS 只管颜色 —— 不再有
+   「两个 svg 靠 display 挑一个」这种一旦样式没生效就双双显示的写法。 */
+#btn-start.running { background: var(--bad); border-color: var(--bad); color: #17090b; }
 #btn-pause.paused { border-color: var(--accent); color: var(--accent); }
 
 /* 6 列而不是 7 列，格距也拉开：格子间距越大，朝向圈盖住邻居的比例越小。

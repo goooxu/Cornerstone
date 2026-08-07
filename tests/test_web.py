@@ -506,9 +506,13 @@ def test_only_the_two_state_buttons_remain():
     for tag in re.findall(r"<button[\s\S]*?</button>", html):
         txt = re.sub(r"<[^>]+>", "", tag).strip()
         assert txt == "", f"图标按钮里不该有文字：{txt!r}"
-    # 两态的图标都要在
-    for ico in ("ico-play", "ico-stop", "ico-pause", "ico-resume"):
-        assert ico in html, f"缺图标 {ico}"
+    # 每个按钮只放一个 svg：两个 svg 叠着靠 CSS 挑一个显示的话，
+    # 样式一旦没生效（比如浏览器用了旧 CSS）就会两个一起冒出来
+    for tag in re.findall(r"<button[\s\S]*?</button>", html):
+        n = tag.count("<svg")
+        assert n == 1, f"按钮里应只有一个 svg，实得 {n} 个：{tag[:80]}"
+    js = _code("app.js")
+    assert "const ICONS" in js and "function setIcon" in js, "图形应由 JS 按状态替换"
 
 
 def test_phase_machine_drives_the_ui():
@@ -552,11 +556,27 @@ def test_bindings_survive_a_missing_element():
         "不要直接 $('x').onclick = ...，缺元素会把整个模块带停"
 
 
-def test_static_assets_are_revalidated():
-    """页面与脚本分开缓存，版本错配会让旧脚本去绑不存在的元素。"""
+def test_static_assets_are_versioned():
+    """页面与脚本分开缓存，版本错配会让旧脚本去绑不存在的元素、
+    旧样式让两个图标一起显示。
+
+    光靠 no-cache 不够 —— 那只在浏览器**真的发请求**时才起作用，
+    它认为手上那份还新鲜就可以连问都不问。所以资源 URL 要带版本号：
+    内容一变 URL 就变，手上那份根本对不上。
+    """
     srv = open(os.path.join(REPO, "web", "server.py"), encoding="utf-8").read()
-    assert 'Cache-Control"] = "no-cache"' in srv or "no-cache" in srv
-    assert "revalidate_static" in srv
+    assert "def asset_version" in srv
+    assert 'f"/static/{name}?v={v}"' in srv, "index.html 里的资源链接要加版本号"
+    assert "revalidate_static" in srv and "no-cache" in srv
+
+
+def test_asset_version_changes_with_content(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "STATIC", str(tmp_path))
+    for n in ("app.js", "style.css", "index.html"):
+        (tmp_path / n).write_text("v1")
+    first = server.asset_version()
+    os.utime(tmp_path / "app.js", (12345, 12345))
+    assert server.asset_version() != first, "改了文件版本号就该变"
 
 
 def test_piece_name_labels_are_gone():

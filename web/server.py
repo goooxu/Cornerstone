@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import os
 import re
 import sys
@@ -55,6 +56,21 @@ DEFAULT_BACKEND = "rule:greedy-mobility"
 
 
 # --------------------------------------------------------------------- 后端发现
+
+def asset_version() -> str:
+    """前端静态资源的版本号：内容变了它就变。
+
+    用 mtime 而不是内容哈希 —— 文件就两个、每次请求都要算，
+    mtime 足够区分且不用读盘内容。
+    """
+    h = hashlib.md5()
+    for name in ("app.js", "style.css", "index.html"):
+        try:
+            h.update(f"{name}:{os.path.getmtime(os.path.join(STATIC, name))};".encode())
+        except OSError:
+            h.update(f"{name}:missing;".encode())
+    return h.hexdigest()[:10]
+
 
 def _step_of(fname: str) -> int:
     m = re.search(r"step(\d+)", fname)
@@ -380,7 +396,7 @@ class BackendReq(BaseModel):
 
 def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
     from fastapi import FastAPI, HTTPException
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, HTMLResponse
     from fastapi.staticfiles import StaticFiles
 
     app = FastAPI(title="cornerstone 试玩")
@@ -460,8 +476,21 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
 
     @app.get("/")
     def index():
-        return FileResponse(os.path.join(STATIC, "index.html"),
-                            headers={"Cache-Control": "no-cache"})
+        """把 index.html 里的静态资源链接加上版本号再发出去。
+
+        光靠 no-cache 不够：那只在浏览器**真的发请求**时才起作用，
+        它若认为手上那份还新鲜，可以连问都不问。而页面与脚本是分开缓存的，
+        于是出现过「新 HTML 配旧 JS/CSS」——旧 JS 去绑不存在的元素直接
+        把整个模块带停，旧 CSS 则让两个图标一起显示、暂停按钮藏不住。
+
+        加了版本号之后，内容一变 URL 就变，浏览器手上那份**根本对不上**，
+        没有「要不要复用」这个问题。index.html 自身仍是 no-cache。
+        """
+        html = open(os.path.join(STATIC, "index.html"), encoding="utf-8").read()
+        v = asset_version()
+        for name in ("app.js", "style.css"):
+            html = html.replace(f"/static/{name}", f"/static/{name}?v={v}")
+        return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/meta")
     def meta():

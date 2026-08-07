@@ -434,6 +434,21 @@ function seatLabel(v) {
 // 以前是「自动应手」「自动对战」「锁定」几个布尔各管一摊，
 // 组合起来有说不清的中间态（比如自动对战开着但轮到人）。
 
+// 图标形状表。一个按钮任何时刻只画其中一个。
+const ICONS = {
+  play: '<path d="M7 4l13 8-13 8z" fill="currentColor" stroke="currentColor" stroke-width="1.5"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="currentColor" stroke-width="1.5"/>',
+  pause: '<path d="M9 5v14M15 5v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+};
+
+function setIcon(id, name) {
+  const svg = $(id);
+  if (svg && svg.dataset.icon !== name) {
+    svg.innerHTML = ICONS[name];
+    svg.dataset.icon = name;
+  }
+}
+
 function setPhase(p) {
   S.phase = p;
   syncControls();
@@ -443,17 +458,21 @@ function syncControls() {
   const playing = S.phase !== 'idle';
   const paused = S.phase === 'paused';
 
-  // 纯图标按钮，状态只体现在图标、颜色和 title 上
+  // 纯图标按钮，状态体现在图标、颜色和 title 上。
+  // 图形直接换 svg 的内容，而不是塞两个 svg 用 CSS 挑一个显示 ——
+  // 后者在样式没生效时会两个一起冒出来。
   const start = $('btn-start');
   start.classList.toggle('running', playing);
   start.title = playing ? '结束对局' : '开始对局';
   start.setAttribute('aria-label', start.title);
+  setIcon('ico-start', playing ? 'stop' : 'play');
 
   const pause = $('btn-pause');
   pause.classList.toggle('gone', !playing);
   pause.classList.toggle('paused', paused);
   pause.title = paused ? '恢复对局' : '暂停对局';
   pause.setAttribute('aria-label', pause.title);
+  setIcon('ico-pause', paused ? 'play' : 'pause');
 
   // 配置只在 idle 可改。这里不需要服务端再拦一道 ——
   // 双方与模拟数只在 /api/new 时提交，对局中根本没有改它的通道。

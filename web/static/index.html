@@ -49,16 +49,16 @@
       </div>
       <div id="backend-hint" class="hint"></div>
       <div id="lock-hint" class="hint lock"></div>
-      <!-- 纯图标按钮，各有两态。图标不自解释，靠 title 悬停提示补上，
-           另外 lock-hint 那一行也会写明当前处于什么状态。 -->
+      <!-- 纯图标按钮。每个按钮**只有一个** svg，图形由 JS 按状态换掉 ——
+           原先是两个 svg 叠着、靠 CSS 显示其中一个，样式一旦没生效
+           （比如浏览器用了旧 CSS）就会两个一起显示。少放一个进 DOM，
+           这种坏法就不存在了。图标不自解释，靠 title 悬停提示补上。 -->
       <div class="row buttons">
         <button id="btn-start" class="icon primary" title="开始对局" aria-label="开始对局">
-          <svg viewBox="0 0 24 24" class="ico-play"><path d="M7 4l13 8-13 8z" class="fill"/></svg>
-          <svg viewBox="0 0 24 24" class="ico-stop"><rect x="6" y="6" width="12" height="12" rx="1.5" class="fill"/></svg>
+          <svg id="ico-start" viewBox="0 0 24 24"></svg>
         </button>
         <button id="btn-pause" class="icon gone" title="暂停" aria-label="暂停">
-          <svg viewBox="0 0 24 24" class="ico-pause"><path d="M9 5v14M15 5v14"/></svg>
-          <svg viewBox="0 0 24 24" class="ico-resume"><path d="M7 4l13 8-13 8z" class="fill"/></svg>
+          <svg id="ico-pause" viewBox="0 0 24 24"></svg>
         </button>
       </div>
     </div>
