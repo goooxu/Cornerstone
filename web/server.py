@@ -42,15 +42,12 @@ RUNS_DIR = os.path.join(os.path.dirname(REPO), "runs")
 # 界面上直接选模拟数，不再套「简单/普通/困难」这层名字 ——
 # 两个座位可以各选各的，用来比「同一个网络多搜一倍值多少棋力」这种事，
 # 名字反而挡着看不清实际预算。
-# 1 是最快的一档，但**不等于「纯策略」**（这一点我一开始判断错了）：
-# 1 次模拟会评估一个由 Gumbel 噪声选中的子节点，而改进策略里
-# sigma = (c_visit + max_n) * c_scale ≈ 51 会让这一个 q 采样彻底盖过
-# log 先验 —— 于是落子基本由那一次随机采样决定，每局都不一样。
-# 真正的「纯策略」要取 root_info().priors 的 argmax，目前没有这个入口。
-#
-# 0 则根本不行：引擎的循环是 while (sims_done < simulations)，
-# 0 的话一次都不进，根节点永远不会展开，root_info().ready 是 false。
-SIM_CHOICES = [1, 16, 32, 64, 128, 256, 512, 800]
+# 0 = 纯策略：直接取网络先验的 argmax，不看搜索结果，确定性。
+# 见 NetBrain._choose_by_policy —— 它**不能**用「把模拟数调到很小」来近似，
+# 少量模拟反而是随机性最大的情形（改进策略里 sigma≈51 会让一次随机采样
+# 到的 q 盖过整个 log 先验）。这一点起初判断错过，详见 docs/05。
+PURE_POLICY = 0
+SIM_CHOICES = [PURE_POLICY, 64, 256, 800]
 DEFAULT_SIMS = 64
 # 上限不是审美问题：单局面搜索的批大小恒为 1，模拟数直接线性折算成等待时间，
 # 放开了就能让一个请求把服务占住好几分钟。
@@ -226,11 +223,37 @@ class NetBrain:
         return info if info["ready"] else None
 
     def choose(self, board: cs.Board, history: list[int], sims: int) -> tuple[int, dict | None]:
+        if sims <= PURE_POLICY:
+            return self._choose_by_policy(history)
         info = self.analyse(history, sims)
         if info is None:
             raise RuntimeError("搜索没有产出可用的根节点信息")
         best = int(np.argmax(info["probs"]))
         return int(info["actions"][best]), info
+
+    def _choose_by_policy(self, history: list[int]) -> tuple[int, dict]:
+        """纯策略：直接取网络先验的 argmax，完全不看搜索结果。
+
+        `root.prior` 是网络 logits 在合法着法上的 softmax，节点展开时写一次、
+        之后再不改动，既没有 Dirichlet 也没有 Gumbel —— 所以这条路是**确定性**的。
+
+        对比之下，改进策略 `probs` 里有一项 `sigma * q`，`sigma ≈ 51`，
+        少量模拟时那一个随机采样到的 q 会盖过整个 log 先验，反而最不稳定
+        （见 docs/05）。所以「纯策略」不能靠把模拟数调小来近似，只能走这里。
+
+        引擎至少要跑 1 次模拟才会展开根节点、才有 prior 可读；
+        多出来的那次子节点评估不影响 prior，只是多约 20ms。
+        """
+        info = self.analyse(history, 1)
+        if info is None:
+            raise RuntimeError("网络没有给出可用的根节点先验")
+        priors = np.asarray(info["priors"], dtype=np.float64)
+        best = int(np.argmax(priors))
+        shown = dict(info)
+        # 面板显示策略本身；访问数在这条路上没有意义，清零免得被当成搜索结果
+        shown["probs"] = priors
+        shown["visits"] = np.zeros(len(priors), dtype=np.int64)
+        return int(info["actions"][best]), shown
 
 
 class BrainPool:
@@ -456,10 +479,9 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
                 n = int(v)
             except (TypeError, ValueError):
                 raise HTTPException(400, f"模拟数必须是整数：{v!r}")
-            if not 1 <= n <= MAX_SIMS:
-                raise HTTPException(400, f"模拟数要在 1..{MAX_SIMS} 之间，收到 {n}"
-                                    + ("（0 不行：根节点不会展开，搜索给不出着法；要「不搜索」请用 1）"
-                                       if n <= 0 else ""))
+            if not PURE_POLICY <= n <= MAX_SIMS:
+                raise HTTPException(400, f"模拟数要在 {PURE_POLICY}..{MAX_SIMS} 之间"
+                                         f"（0 表示纯策略），收到 {n}")
             out.append(n)
         return out
 

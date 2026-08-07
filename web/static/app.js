@@ -673,10 +673,8 @@ document.addEventListener('keydown', (ev) => {
     for (const n of S.meta.sim_choices) {
       const o = document.createElement('option');
       o.value = String(n);
-      // 1 次模拟**不是**「纯策略」：它会评估一个由 Gumbel 噪声选中的子节点，
-      // 而 sigma=(c_visit+max_n)*c_scale≈51 会让这一个 q 采样完全盖过
-      // log 先验，于是每局都不一样。见 docs/05。
-      o.textContent = n === 1 ? '1（随机性极大）' : String(n);
+      // 0 走的是另一条路：取网络先验的 argmax，不看搜索结果（确定性）
+      o.textContent = n === 0 ? '纯策略' : String(n);
       if (n === S.meta.default_sims) o.selected = true;
       sel.appendChild(o);
     }

@@ -212,18 +212,36 @@ def test_sim_choices_are_sane():
     # 界面直接列这些数字，要递增、要在允许范围内、默认值要在其中
     assert server.SIM_CHOICES == sorted(server.SIM_CHOICES)
     assert server.DEFAULT_SIMS in server.SIM_CHOICES
-    assert all(1 <= n <= server.MAX_SIMS for n in server.SIM_CHOICES)
-    # 1 = 纯策略：引擎的循环是 while (sims_done < simulations)，
-    # 1 次刚好展开根节点、跑一次前向就停
-    assert server.SIM_CHOICES[0] == 1
+    assert all(0 <= n <= server.MAX_SIMS for n in server.SIM_CHOICES)
+    # 界面上只留这四档
+    assert server.SIM_CHOICES == [0, 64, 256, 800]
+    assert server.PURE_POLICY == 0
 
 
-def test_zero_sims_rejected_with_an_explanation(client):
-    """0 不能用：根节点永远不会展开，root_info().ready 是 false，
-    choose() 只能抛异常。报错要顺带指出「要不搜索请用 1」。"""
+def test_pure_policy_is_accepted(client):
+    """0 = 纯策略，是一档合法选项。"""
     r = client.post("/api/new", json={"players": [None, "rule:greedy-area"], "sims": [0, 64]})
+    assert r.status_code == 200, r.text
+    assert r.json()["state"]["sims"] == [0, 64]
+
+
+def test_negative_sims_still_rejected(client):
+    r = client.post("/api/new", json={"players": [None, "rule:greedy-area"], "sims": [-1, 64]})
     assert r.status_code == 400
-    assert "1" in r.json()["detail"]
+
+
+def test_pure_policy_reads_priors_not_improved_policy():
+    """纯策略必须取 root.prior 的 argmax。
+
+    不能靠「把模拟数调很小」来近似 —— 恰恰相反，少量模拟是随机性**最大**
+    的情形：改进策略里 sigma = (c_visit + max_n) * c_scale ≈ 51，
+    一次随机采样到的 q 会盖过整个 log 先验（实测 sims=1 局局不同、
+    sims=64 完全确定）。root.prior 则是展开时写一次就不再变的网络输出。
+    """
+    import inspect
+    src = inspect.getsource(server.NetBrain._choose_by_policy)
+    assert 'info["priors"]' in src, "要读 priors，不是 probs"
+    assert "argmax" in src
 
 
 def test_disabled_sims_shows_not_applicable():
@@ -437,7 +455,8 @@ def test_bad_sims_rejected(client):
     两道关卡，返回码不同但都是拒绝：类型不对的由 Pydantic 挡在 422，
     类型对但越界的由 validate_sims 挡在 400。
     """
-    for bad in ([64], [64, 64, 64], [0, 64], [64, -1],
+    # 注意 0 不在此列 —— 它是「纯策略」这一档，合法
+    for bad in ([64], [64, 64, 64], [-1, 64], [64, -1],
                 [64, server.MAX_SIMS + 1], ["快一点", 64]):
         r = client.post("/api/new", json={"players": [None, "rule:greedy-area"],
                                           "sims": bad})
