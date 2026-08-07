@@ -171,37 +171,58 @@ function miniCanvas(cells, size, color) {
   return cv;
 }
 
-// 棋子托盘展示哪个座位的棋子。
-// human_player 在 AI 对战下是 -1，**不能拿它去索引数组** ——
-// remaining[-1] 是 undefined，再取 [0] 就是
-// 「Cannot read properties of undefined」。没有人类座位时展示当前行棋方的棋子。
-function viewSeat() {
-  if (!S.state) return 0;
-  return S.state.human_player >= 0 ? S.state.human_player : S.state.current_player;
+// 哪些座位要摆棋子面板，以及各自可不可交互。
+//
+// 有人在座：只摆人那一侧。两边都是 AI：**两侧各摆一块**，都只读 ——
+// 看双方还剩哪些棋子是 Blokus 里很实的信息（棋子越大越难安置，
+// 谁手里压着大件谁后面越吃紧），只是没人要落子，所以不给交互。
+//
+// 「可交互」的判据是**轮到这个座位、而且这个座位是人**，不是「有人在座」。
+// 用后者的话，AI 思考期间人这侧仍然展开朝向圈，暗示可以落子，其实点了没用。
+function trayPlan() {
+  const st = S.state;
+  if (!st) return [];
+  const seats = st.human_player >= 0
+    ? st.players.map((p, i) => (p === null ? i : -1)).filter(i => i >= 0)
+    : [0, 1];
+  return seats.map(seat => ({
+    seat,
+    interactive: st.players[seat] === null && !st.terminal && st.current_player === seat,
+  }));
 }
 
-// 棋子本身不可点：点一枚棋子并不足以确定一个着法，还得选朝向。
-// 悬停时把它的**全部朝向摊成一圈**围在四周，一次点击直接定下
-// （棋子 + 朝向），省掉「先点棋子、再去下面的列表里点形态」这两步。
-//
-// 圈是棋子格子的 DOM 子元素，不是浮在外面的独立层 —— 这样鼠标从棋子
-// 移到某个朝向上时不会触发棋子的 mouseleave（mouseleave 只在离开元素
-// **及其后代**时才发），圈就不会在半路消失。纯 CSS :hover 即可，不用 JS 计时器。
-function renderTray() {
-  const tray = $('tray');
-  tray.innerHTML = '';
-  const me = viewSeat();
-  const remaining = S.state ? S.state.remaining[me] : S.meta.pieces.map(() => true);
+function renderTrays() {
+  const wrap = $('pieces-wrap');
+  wrap.innerHTML = '';
+  const st = S.state;
+  if (!st) return;
 
-  for (const p of S.meta.pieces) {
-    const div = document.createElement('div');
-    div.className = 'piece' + (remaining[p.id] ? '' : ' used') + (S.piece === p.id ? ' sel' : '');
-    div.appendChild(miniCanvas(p.orientations[0].cells, 8, COLORS[me]));
-    const label = document.createElement('span');
-    label.textContent = p.name;
-    div.appendChild(label);
-    if (remaining[p.id]) div.appendChild(orientRing(p, me));
-    tray.appendChild(div);
+  for (const { seat, interactive } of trayPlan()) {
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const h = document.createElement('h2');
+    h.innerHTML = `<span class="seat p${seat}"></span>${seat === 0 ? '先手' : '后手'}棋子`
+      + `<small>剩 ${st.remaining[seat].filter(Boolean).length} 枚 · 已占 ${st.scores[seat]} 格`
+      + (interactive ? ' · 悬停选形态' : ' · 只读') + '</small>';
+    card.appendChild(h);
+
+    const tray = document.createElement('div');
+    tray.className = 'tray' + (interactive ? '' : ' readonly');
+    for (const p of S.meta.pieces) {
+      const div = document.createElement('div');
+      const used = !st.remaining[seat][p.id];
+      div.className = 'piece' + (used ? ' used' : '')
+        + (interactive && S.piece === p.id ? ' sel' : '');
+      div.appendChild(miniCanvas(p.orientations[0].cells, 8, COLORS[seat]));
+      const label = document.createElement('span');
+      label.textContent = p.name;
+      div.appendChild(label);
+      if (interactive && !used) div.appendChild(orientRing(p, seat));
+      tray.appendChild(div);
+    }
+    card.appendChild(tray);
+    wrap.appendChild(card);
   }
 }
 
@@ -226,7 +247,7 @@ function orientRing(p, me) {
     btn.onclick = (ev) => {
       ev.stopPropagation();
       S.piece = p.id; S.ori = o.id;
-      renderTray(); draw();
+      renderTrays(); draw();
     };
     ring.appendChild(btn);
   });
@@ -271,13 +292,17 @@ function applyState(st, analysis) {
 
   // 两个座位都是 AI 时整块棋子面板都收起来 —— 没人要落子，
   // 选棋子和朝向都没有意义，留着只会占地方并且看着像能点。
-  $('pieces-card').classList.toggle('hidden', noHuman);
-  if (noHuman) { S.piece = null; S.ori = null; }
+  // 没人在座就不存在「选中的棋子」；有人在座时，选中的棋子被用掉了要清掉。
+  // 这里按人的座位索引，noHuman 时直接清空，绝不拿 -1 去索引。
+  if (noHuman) {
+    S.piece = null; S.ori = null;
+  } else {
+    const seat = st.human_player;             // 走到这里一定 >= 0
+    if (S.piece !== null && !st.remaining[seat][S.piece]) { S.piece = null; S.ori = null; }
+  }
 
-  // 选中的棋子已经用掉了就取消选中（同样不能用 -1 去索引）
-  if (S.piece !== null && !st.remaining[viewSeat()][S.piece]) { S.piece = null; S.ori = null; }
-
-  renderTray(); renderAnalysis(); draw();
+  syncLock(st);
+  renderTrays(); renderAnalysis(); draw();
   $('btn-ai').disabled = st.terminal || st.current_player === st.human_player;
   $('btn-undo').disabled = st.ply === 0;
 }
@@ -384,13 +409,37 @@ function seatLabel(v) {
   return info ? info.label : v;
 }
 
+// 对局一开跑，双方与模拟数就锁死，直到终局或开新局。
+//
+// 中途换引擎会让「这一局是谁对谁」变得没法陈述 —— 棋盘上一半的手是
+// A 走的、一半是 B 走的，最后那个比分就不属于任何一对组合。
+// 服务端也会拒（不能只靠界面置灰），这里只是让不可点这件事看得见。
+function isLocked(st) {
+  return !!st && st.ply > 0 && !st.terminal;
+}
+
+function syncLock(st) {
+  const locked = isLocked(st);
+  for (let i = 0; i < 2; i++) {
+    seatSel(i).disabled = locked;
+    simsSel(i).disabled = locked || simsSel(i).dataset.ruleDisabled === '1';
+  }
+  $('lock-hint').textContent = locked ? '对局进行中，配置已锁定 —— 点「新对局」可重新设置' : '';
+}
+
 // 模拟数是**每个座位各自的**，所以置灰也按座位来：
 // 规则基线不搜索，它旁边那个模拟数下拉就没有意义。
 function syncBackendUi() {
   const vals = seatValues();
   const isNet = vals.map(v => v !== HUMAN && (backendInfo(v) || {}).kind === 'net');
   const bothAi = vals.every(v => v !== HUMAN);
-  for (let i = 0; i < 2; i++) simsSel(i).disabled = !isNet[i];
+  // 两种置灰的原因要分开记：规则基线本身用不上模拟数（这里），
+  // 以及对局进行中全部锁死（syncLock）。混在一起的话，解锁时会把
+  // 本该一直灰着的规则基线那一侧一起点亮。
+  for (let i = 0; i < 2; i++) {
+    simsSel(i).dataset.ruleDisabled = isNet[i] ? '0' : '1';
+    simsSel(i).disabled = !isNet[i] || isLocked(S.state);
+  }
   $('btn-autoplay').disabled = !bothAi;
   $('ai-name').textContent = seatLabel(vals[0]) + '  vs  ' + seatLabel(vals[1]);
 
@@ -530,11 +579,11 @@ document.addEventListener('keydown', (ev) => {
   const oris = S.meta.pieces[S.piece].orientations;
   const idx = oris.findIndex(o => o.id === S.ori);
   if (ev.key === 'r' || ev.key === 'R') {
-    S.ori = oris[(idx + 1) % oris.length].id; renderTray(); draw();
+    S.ori = oris[(idx + 1) % oris.length].id; renderTrays(); draw();
   } else if (ev.key === 'f' || ev.key === 'F') {
-    S.ori = oris[(idx + Math.ceil(oris.length / 2)) % oris.length].id; renderTray(); draw();
+    S.ori = oris[(idx + Math.ceil(oris.length / 2)) % oris.length].id; renderTrays(); draw();
   } else if (ev.key === 'Escape') {
-    S.piece = null; S.ori = null; renderTray(); draw();
+    S.piece = null; S.ori = null; renderTrays(); draw();
   }
 });
 
@@ -556,6 +605,5 @@ document.addEventListener('keydown', (ev) => {
   await loadBackends([HUMAN, S.meta.default_backend]);
   syncBackendUi();
   setAutoplayUi(false);
-  renderTray();
   await newGame();
 })();

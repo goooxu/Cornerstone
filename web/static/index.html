@@ -47,6 +47,7 @@
         </label>
       </div>
       <div id="backend-hint" class="hint"></div>
+      <div id="lock-hint" class="hint lock"></div>
       <!-- 图标按钮：title 同时给出中文名，图标本身不够自解释时靠悬停提示补上 -->
       <div class="row buttons">
         <button id="btn-new" class="icon primary" title="新对局" aria-label="新对局">
@@ -65,10 +66,8 @@
       </div>
     </div>
 
-    <div class="card" id="pieces-card">
-      <h2>棋子 <small id="tray-hint">鼠标悬停一枚，四周会展开它的全部形态</small></h2>
-      <div id="tray" class="tray"></div>
-    </div>
+    <!-- 棋子面板由 JS 按座位生成：有人在座摆一块，AI 对战摆两块（只读） -->
+    <div id="pieces-wrap" class="pieces-wrap"></div>
 
     <div class="card" id="analysis-card">
       <h2>AI 判断</h2>

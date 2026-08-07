@@ -333,19 +333,60 @@ def test_undo_in_human_game_returns_to_human(client):
     assert st["history"] == []
 
 
-def test_switch_seats_midgame_keeps_board(client):
+def test_config_locked_once_the_game_starts(client):
+    """对局一开跑就不能再改双方或模拟数。
+
+    中途换引擎会让「这一局是谁对谁」没法陈述 —— 棋盘上一半的手是 A 走的、
+    一半是 B 走的，最后那个比分不属于任何一对组合。
+    拦截必须在服务端：界面把下拉置灰只是提示，请求照样能直接发过来。
+    """
     r = client.post("/api/new", json={"players": ["rule:greedy-area", "rule:corner-min"]})
     sid = r.json()["sid"]
-    for _ in range(3):
+
+    # 还没落子，改得动
+    ok = client.post("/api/backend", json={
+        "sid": sid, "players": ["rule:greedy-mobility", "rule:corner-min"], "sims": [128, 128]})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["state"]["players"][0] == "rule:greedy-mobility"
+
+    st = client.post("/api/ai", json={"sid": sid}).json()   # 落一手，锁上
+    assert st["ply"] == 1
+    for body in ({"players": ["rule:corner-min", "rule:corner-min"]},
+                 {"sims": [16, 16]},
+                 {"players": [None, "rule:corner-min"], "sims": [800, 800]}):
+        rr = client.post("/api/backend", json={"sid": sid, **body})
+        assert rr.status_code == 400, f"{body} 应被拒绝，实得 {rr.status_code}"
+        assert "对局进行中" in rr.json()["detail"]
+
+    # 配置没被改动
+    now = client.get(f"/api/state?sid={sid}").json()
+    assert now["players"] == ["rule:greedy-mobility", "rule:corner-min"]
+    assert now["sims"] == [128, 128]
+
+
+def test_config_unlocks_after_the_game_ends(client):
+    """终局之后可以改 —— 那时改不会让任何一局的归属变模糊。"""
+    r = client.post("/api/new", json={"players": ["rule:greedy-area", "rule:corner-min"]})
+    sid = r.json()["sid"]
+    st = r.json()["state"]
+    n = 0
+    while not st["terminal"] and n < 42:
         st = client.post("/api/ai", json={"sid": sid}).json()
-    hist, scores = list(st["history"]), list(st["scores"])
+        n += 1
+    assert st["terminal"]
 
     rr = client.post("/api/backend", json={
-        "sid": sid, "players": ["rule:greedy-mobility", "rule:corner-min"]})
-    assert rr.status_code == 200
-    st2 = rr.json()["state"]
-    assert st2["history"] == hist and st2["scores"] == scores, "换座位不该动棋盘"
-    assert st2["players"][0] == "rule:greedy-mobility"
+        "sid": sid, "players": [None, "rule:greedy-mobility"], "sims": [256, 256]})
+    assert rr.status_code == 200, rr.text
+    assert rr.json()["state"]["human_player"] == 0
+
+
+def test_frontend_locks_config_while_playing():
+    """界面侧也要看得出锁住了，否则只有点下去报错才知道。"""
+    js = _front("app.js")
+    assert re.search(r"function isLocked\(st\)[\s\S]{0,120}st\.ply\s*>\s*0\s*&&\s*!st\.terminal", js)
+    assert "seatSel(i).disabled = locked" in js
+    assert "lock-hint" in js
 
 
 def test_per_seat_sims_are_independent(client):
@@ -449,12 +490,21 @@ def test_icon_buttons_carry_a_title():
         assert "aria-label" in tag, f"按钮 {bid.group(1) if bid else tag} 缺 aria-label"
 
 
-def test_piece_tray_is_hidden_when_nobody_is_seated():
-    """两个座位都是 AI 时棋子面板要收起来 —— 没人落子，选棋子没有意义。"""
+def test_both_seats_get_a_readonly_tray_when_nobody_is_seated():
+    """两个座位都是 AI 时，两侧各摆一块只读面板，用来看双方的棋子消耗。
+
+    可交互的判据必须是「轮到这个座位、且这个座位是人」——
+    只判「有人在座」的话，AI 思考期间人这侧仍会展开朝向圈，
+    暗示可以落子，其实点了没用。
+    """
     js = _front("app.js")
-    assert "pieces-card" in js and "noHuman" in js
-    assert re.search(r"\$\('pieces-card'\)\.classList\.toggle\('hidden',\s*noHuman\)", js), \
-        "棋子面板应按 noHuman 收起"
+    assert "trayPlan" in js and "renderTrays" in js
+    assert "readonly" in js, "只读托盘要有区分用的 class"
+    assert re.search(r"interactive:\s*st\.players\[seat\]\s*===\s*null"
+                     r"\s*&&\s*!st\.terminal\s*&&\s*st\.current_player\s*===\s*seat", js), \
+        "可交互 = 轮到该座位且该座位是人"
+    assert re.search(r"human_player\s*>=\s*0[\s\S]{0,200}\[0,\s*1\]", js), \
+        "没有人类座位时要摆两块面板"
 
 
 # ----------------------------------------------------- 前端的哨兵值误用（静态检查）

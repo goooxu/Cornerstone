@@ -476,8 +476,17 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
 
     @app.post("/api/backend")
     def set_backend(req: BackendReq):
-        """中途换座位上的对手。棋盘不动 —— 换个引擎接着下正是试玩要干的事。"""
+        """改这一局的双方或模拟数。**只在开局前或终局后允许。**
+
+        中途换引擎会让「这一局是谁对谁」变得没法陈述：棋盘上一半的手是
+        A 走的、一半是 B 走的，最后那个比分不属于任何一对组合。
+        这道拦截必须在服务端 —— 界面把下拉置灰只是提示，
+        请求照样可以直接发过来。
+        """
         s = get(req.sid)
+        if (req.players is not None or req.sims is not None) \
+                and s.board.ply > 0 and not s.board.terminal:
+            raise HTTPException(400, "对局进行中，不能改双方或模拟数；请先开新局")
         if req.players is not None:
             s.players = validate_players(req.players)
         if req.sims is not None:

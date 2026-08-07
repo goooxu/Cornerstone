@@ -92,6 +92,7 @@ canvas { display: block; border-radius: 6px; cursor: pointer; }
 select:disabled { opacity: .45; cursor: not-allowed; }
 .hint { color: var(--muted); font-size: 12px; margin-top: -4px; margin-bottom: 10px; }
 .hint.center { text-align: center; margin: 4px 0 0; min-height: 16px; }
+.hint.lock:not(:empty) { color: var(--accent); margin-top: -6px; }
 
 /* 座位色点，和棋盘上双方的颜色对应 */
 .seat { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 5px; }
@@ -137,6 +138,20 @@ button.icon svg .fill { fill: currentColor; stroke: currentColor; stroke-width: 
   position: relative;                 /* 朝向圈以它为定位原点 */
   cursor: default;                    /* 棋子本身不可点，别给可点的暗示 */
 }
+/* 只读托盘：没有朝向圈，也不给任何可点的暗示。
+   用掉的棋子比可交互时更亮一点 —— 这块面板的**唯一用途**就是看
+   「谁把哪些棋子用掉了」，压到 .22 就基本看不清了。 */
+.tray.readonly .piece { cursor: default; }
+.tray.readonly .piece:hover { z-index: auto; border-color: var(--line); }
+.tray.readonly .piece.used { opacity: .38; }
+
+.pieces-wrap { display: flex; flex-direction: column; gap: 16px; }
+/* 一屏放两块时把格子收一收，否则侧栏太长要滚 */
+.pieces-wrap .card + .card .tray,
+.pieces-wrap .card:first-child:not(:last-child) .tray { gap: 8px 8px; }
+.pieces-wrap .card:first-child:not(:last-child) .piece,
+.pieces-wrap .card + .card .piece { min-height: 46px; padding: 5px 3px; }
+
 .tray .piece.used { opacity: .22; }
 .tray .piece.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .tray .piece span { font-size: 10px; color: var(--muted); }
