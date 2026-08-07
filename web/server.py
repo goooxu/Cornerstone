@@ -313,22 +313,12 @@ def state_of(s: Session, analysis: dict | None = None) -> dict:
 
 
 def analysis_payload(info: dict | None, board: cs.Board) -> dict | None:
-    """把根节点信息整理成前端要的形状：胜率、top 着法、落点热力图。"""
+    """把根节点信息整理成前端要的形状：胜率 + top 着法。"""
     if info is None:
         return None
     actions = np.asarray(info["actions"])
     probs = np.asarray(info["probs"])
     order = np.argsort(-probs)[:8]
-
-    heat = np.zeros((cs.BOARD_N, cs.BOARD_N), dtype=np.float64)
-    for a, p in zip(actions, probs):
-        if p < 1e-4:
-            continue
-        for r, c in cs.decode_action(int(a))["cells"]:
-            heat[r, c] += float(p)
-    m = heat.max()
-    if m > 0:
-        heat /= m
 
     top = []
     for i in order:
@@ -343,7 +333,6 @@ def analysis_payload(info: dict | None, board: cs.Board) -> dict | None:
     return {
         "value": float(info["value"]),
         "win_rate": float((info["value"] + 1) / 2),
-        "heatmap": heat.round(4).tolist(),
         "top_moves": top,
     }
 
@@ -415,17 +404,6 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
         if backend is None:
             raise HTTPException(400, "现在轮到人类走，不该让 AI 落子")
         return load_brain(backend)
-
-    def analysis_brain(s: Session):
-        """用哪个后端来分析局面。
-
-        人机对局时人类回合也要能分析 —— 那正是「让 AI 点评我的局面」，
-        所以轮到人类时借对手那个网络来看。
-        """
-        backend = s.players[s.board.current_player]
-        if backend is None:
-            backend = s.players[1 - s.board.current_player]
-        return load_brain(backend) if backend is not None else None
 
     def validate_players(players: list[str | None]) -> list[str | None]:
         if len(players) != 2:
@@ -549,17 +527,6 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
         out["ai_label"] = b.label
         out["labels"] = seat_labels(s)
         return out
-
-    @app.get("/api/analysis")
-    def analysis(sid: str):
-        s = get(sid)
-        if s.board.terminal:
-            return {"analysis": None}
-        b = analysis_brain(s)
-        if b is None:
-            return {"analysis": None, "has_net": False, "label": "人类"}
-        return {"analysis": analysis_payload(b.analyse(s.history, sims_for(s)), s.board),
-                "has_net": b.has_net, "label": b.label}
 
     @app.post("/api/undo")
     def undo(req: SidReq):

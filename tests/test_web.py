@@ -362,11 +362,28 @@ def test_human_vs_human_is_allowed(client):
     assert r.json()["labels"] == ["人类", "人类"]
 
 
-def test_analysis_without_any_net_is_none(client):
+def test_rule_move_carries_no_analysis(client):
     r = client.post("/api/new", json={"players": ["rule:greedy-area", "rule:corner-min"]})
     sid = r.json()["sid"]
-    got = client.get(f"/api/analysis?sid={sid}").json()
-    assert got["analysis"] is None and got["has_net"] is False
+    got = client.post("/api/ai", json={"sid": sid}).json()
+    assert got.get("analysis") is None
+
+
+def test_on_demand_analysis_endpoint_is_gone(client):
+    """「分析当前局面」已移除，对应的路由也要一并撤掉，别留着没人调的入口。"""
+    r = client.post("/api/new", json={"players": [None, "rule:greedy-area"]})
+    sid = r.json()["sid"]
+    assert client.get(f"/api/analysis?sid={sid}").status_code == 404
+
+
+def test_analysis_payload_has_no_heatmap():
+    """热力图已移除。它是按「每个着法的概率加到它覆盖的每个格子上」算的，
+    合法着法几百个时这是纯浪费 —— 前端不再画，服务端就不该再算、也不该再传。"""
+    import cornerstone as cs
+    info = {"actions": [0], "probs": [1.0], "visits": [1], "value": 0.0}
+    got = server.analysis_payload(info, cs.Board())
+    assert "heatmap" not in got
+    assert set(got) == {"value", "win_rate", "top_moves"}
 
 
 # ----------------------------------------------------- 前端的哨兵值误用（静态检查）

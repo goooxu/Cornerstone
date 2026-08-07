@@ -28,9 +28,8 @@ bash scripts/devbox.sh exec bash scripts/web.sh status|stop|restart
 | `POST /api/backend` | 中途换座位上的引擎 / 改难度，棋盘不动 |
 | `POST /api/new` | 开新局，两个座位各指定一个后端（`null` = 人） |
 | `POST /api/move` | 人类落子（非法着法返回 400） |
-| `POST /api/ai` | AI 走一步，附带分析 |
-| `GET /api/analysis` | 对当前局面跑一次搜索，返回胜率/top 着法/热力图 |
-| `POST /api/undo` | 悔棋，退到轮到人类为止 |
+| `POST /api/ai` | AI 走一步，附带它这一步的胜率与 top 着法 |
+| `POST /api/undo` | 悔棋 |
 
 单局面搜索复用自博弈引擎：`SelfPlayEngine(num_games=1)` + `set_position(history)`
 + 跑完模拟 + `root_info()`，不调 `advance()`。没有为试玩工具单写一套搜索。
@@ -123,9 +122,10 @@ FastAPI 要靠端点函数的 `__globals__` 去解析这些字符串——
   `F` 键跳到镜像组、`Esc` 取消选择）
 - 悬停预览：棋子包围盒左上角落在悬停格，合法为绿、非法为红
 - **当前朝向的全部合法锚点用小圆点标出**，不用靠猜
-- AI 策略热力图：把每个合法着法的概率累加到它覆盖的格子上，看 AI 想往哪下
-- 胜率条、top 着法列表（悬停高亮该着法的落点）
-- 悔棋、AI 自动应手开关、对局导出为 JSON
+- 胜率条、top 着法列表（悬停高亮该着法的落点），在 AI 走完一步后填充
+- 悔棋
+- 人机对局里轮到 AI 就自动应手，没有开关 —— 关掉它只会让人每走一手
+  都要多点一次「让 AI 走一步」
 - **两个座位下拉**：规则基线与各训练跑的 checkpoint 分组列出，外加「我来下」；
   旁边一个 ⟳ 重新扫盘（训练在跑，checkpoint 会一直变多）。
   中途换引擎**不重置棋盘** —— 同一个局面换个引擎接着下，正是试玩要干的事

@@ -91,17 +91,6 @@ function draw() {
 
   const st = S.state;
 
-  // 热力图（AI 想下在哪）
-  if ($('show-heat').checked && S.analysis && S.analysis.heatmap) {
-    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
-      const v = S.analysis.heatmap[r][c];
-      if (v > 0.01) {
-        CTX.fillStyle = `rgba(129,140,248,${(0.12 + 0.55 * v).toFixed(3)})`;
-        CTX.fillRect(PAD + c * CELL, PAD + r * CELL, CELL, CELL);
-      }
-    }
-  }
-
   // 网格
   CTX.strokeStyle = '#2a3143';
   CTX.lineWidth = 1;
@@ -276,7 +265,7 @@ function renderAnalysis() {
   if (!a) {
     $('winfill').style.width = '50%';
     $('wintext').textContent = '—';
-    list.innerHTML = '<li class="empty">点「分析当前局面」或让 AI 走一步</li>';
+    list.innerHTML = '<li class="empty">让 AI 走一步后显示</li>';
     return;
   }
   // value 是「当前行棋方」视角，转成 AI 视角展示
@@ -378,7 +367,6 @@ function syncBackendUi() {
   const anyNet = isNet[0] || isNet[1];
   const bothAi = vals.every(v => v !== HUMAN);
   $('difficulty').disabled = !anyNet;
-  $('btn-analyse').disabled = !anyNet;
   $('btn-autoplay').disabled = !bothAi;
   $('ai-name').textContent = seatLabel(vals[0]) + '  vs  ' + seatLabel(vals[1]);
 
@@ -416,10 +404,12 @@ async function changeSeats() {
   });
 }
 
-// 轮到 AI 且开着自动应手就替它走。AI 对战时不在这里连打 ——
-// 那是「自动对战」按钮的事，否则一按新对局就会失控地跑到终局。
+// 人机对局里轮到 AI 就替它走。以前这里有个「AI 自动应手」开关，
+// 现在是固定行为 —— 关掉它只会让人每走一手都要多点一次「让 AI 走一步」。
+//
+// AI 对战时**不在这里连打**：那是「自动对战」按钮的事，
+// 否则一按新对局就会失控地一路跑到终局。
 async function maybeAutoRespond() {
-  if (!$('auto-ai').checked) return;
   if (S.state.human_player < 0) return;
   while (!S.state.terminal && S.state.current_player !== S.state.human_player) {
     await aiMove();
@@ -481,11 +471,8 @@ async function play(action) {
     const st = await post('/api/move', { sid: S.sid, action });
     S.piece = null; S.ori = null;
     applyState(st, null);
-    if (!st.terminal && st.current_player !== st.human_player && $('auto-ai').checked) {
-      await aiMove();
-      // AI 走完后对方可能仍无法落子（停手），需要继续
-      while (!S.state.terminal && S.state.current_player !== S.state.human_player) await aiMove();
-    }
+    // maybeAutoRespond 里那个 while 已经覆盖了「AI 走完对方仍无法落子（停手）」的情况
+    await maybeAutoRespond();
   });
 }
 
@@ -528,22 +515,6 @@ $('btn-undo').onclick = () => guard(async () => {
   S.analysis = null;
   applyState(await post('/api/undo', { sid: S.sid }), null);
 });
-$('btn-analyse').onclick = () => guard(async () => {
-  $('status').textContent = '分析中…';
-  const r = await api('/api/analysis?sid=' + S.sid);
-  S.analysis = r.analysis;
-  applyState(S.state, r.analysis);
-});
-$('btn-export').onclick = () => {
-  const blob = new Blob([JSON.stringify({
-    history: S.state.history, scores: S.state.scores, result: S.state.result,
-  }, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'cornerstone-game.json';
-  a.click();
-};
-$('show-heat').onchange = draw;
 
 document.addEventListener('keydown', (ev) => {
   if (S.piece === null) return;
