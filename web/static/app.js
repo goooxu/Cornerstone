@@ -27,7 +27,6 @@ const S = {
   piece: null,          // 选中的棋子 id
   ori: null,            // 选中的朝向 id
   hover: null,          // [r, c]
-  hoverMove: null,      // 「AI 判断」里悬停的那个候选着法的落点
   analysis: null,
   busy: false,
   backends: [],
@@ -160,22 +159,6 @@ function draw() {
       CTX.arc(PAD + (c + 0.5) * CELL, PAD + (r + 0.5) * CELL, 3.5, 0, Math.PI * 2);
       CTX.fill();
     }
-  }
-
-  // 「AI 判断」里悬停某个候选着法时，把它的落点标出来。
-  // **颜色必须是行棋方的颜色**：之前用了一个谁都不是的靛蓝 #818cf8aa，
-  // 棋盘上凭空多出第三种颜色，看着像出了什么问题。
-  // 用虚线白框和真正落子区分开。
-  if (st && S.hoverMove) {
-    CTX.fillStyle = seatColor(st.current_player) + '55';
-    CTX.strokeStyle = '#ffffffcc';
-    CTX.lineWidth = 2;
-    CTX.setLineDash([5, 4]);
-    for (const [r, c] of S.hoverMove) {
-      roundRect(PAD + c * CELL + 1.5, PAD + r * CELL + 1.5, CELL - 3, CELL - 3, 4);
-      CTX.fill(); CTX.stroke();
-    }
-    CTX.setLineDash([]);
   }
 
   // 悬停预览
@@ -388,7 +371,6 @@ function orientRing(p, me) {
 
 function applyState(st, analysis) {
   S.state = st;
-  S.hoverMove = null;        // 局面变了，上一手的候选高亮就该清掉
   S.legal = new Set(st.legal_actions);
   if (analysis !== undefined) S.analysis = analysis;
 
@@ -448,10 +430,6 @@ function renderAnalysis() {
   for (const m of a.top_moves) {
     const li = document.createElement('li');
     li.innerHTML = `${m.piece} <b>${(m.prob * 100).toFixed(1)}%</b> <small>(${m.visits} 次访问)</small>`;
-    // 存进状态再由 draw() 统一画。原先是「先 draw() 再直接往画布上糊一层」，
-    // 于是任何一次重绘都会把它抹掉 —— 表现就是「闪一下就没了」。
-    li.onmouseenter = () => { S.hoverMove = m.cells; draw(); };
-    li.onmouseleave = () => { S.hoverMove = null; draw(); };
     list.appendChild(li);
   }
 }

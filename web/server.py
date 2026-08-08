@@ -390,7 +390,6 @@ def analysis_payload(info: dict | None, board: cs.Board) -> dict | None:
             "piece": d["piece_name"],
             "prob": float(probs[i]),
             "visits": int(info["visits"][i]),
-            "cells": d["cells"],
         })
     return {
         "value": float(info["value"]),

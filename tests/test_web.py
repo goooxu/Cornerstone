@@ -943,21 +943,27 @@ def test_tray_is_seven_by_three():
 def test_board_only_ever_paints_the_two_engine_colors():
     """棋盘上不该冒出第三种颜色。
 
-    真出现过：「AI 判断」里悬停某个候选着法时，落点被涂成靛蓝 #818cf8aa ——
-    一个谁都不是的颜色，而且因为它是「先 draw() 再直接往画布上糊一层」，
-    任何一次重绘都会把它抹掉，表现就是「闪一下就没了」。
+    top 着法列表原先有个悬停高亮，把落点涂成靛蓝 #818cf8aa —— 一个谁都不是
+    的颜色；而且它「先 draw() 再往画布上糊一层」，任何重绘都会抹掉它，
+    连打时列表每手重建还会在光标下反复自触发。这个功能已整个删掉。
     """
     js = _code("app.js")
     assert "#818cf8" not in js, "棋盘上不该有第三种颜色"
-    assert "function highlight" not in js, "糊在画布上的那套应已移除"
-    # 改成存进状态、由 draw() 统一画，颜色跟着行棋方
-    assert "S.hoverMove" in js
-    assert re.search(r"if \(st && S\.hoverMove\)[\s\S]{0,160}seatColor\(st\.current_player\)", js)
-    # 画棋盘时允许的颜色：双方色、底色、网格线、非法预览的红、白色描边
+    for gone in ("function highlight", "S.hoverMove", "onmouseenter", "setLineDash"):
+        assert gone not in js, f"{gone} 应已随悬停高亮一起移除"
+    # 画棋盘时允许的颜色：双方色走 seatColor()，其余只有这几个
     body = js[js.index("function draw()"):js.index("function verdict(")]
     hexes = set(re.findall(r"#[0-9a-fA-F]{3,8}", body))
-    allowed = {"#0e1118", "#2a3143", "#f8717166", "#f87171", "#ffffff88", "#ffffffcc"}
+    allowed = {"#0e1118", "#2a3143", "#f8717166", "#f87171", "#ffffff88"}
     assert hexes <= allowed, f"draw() 里出现了意料之外的颜色：{hexes - allowed}"
+
+
+def test_analysis_payload_drops_unused_cells():
+    """前端不再用 top 着法的落点坐标了，服务端就不该再算、再传。"""
+    import cornerstone as cs
+    info = {"actions": [0], "probs": [1.0], "visits": [1], "value": 0.0}
+    got = server.analysis_payload(info, cs.Board())
+    assert set(got["top_moves"][0]) == {"action", "piece", "prob", "visits"}
 
 
 def test_colors_are_bound_to_engines_not_seats():
