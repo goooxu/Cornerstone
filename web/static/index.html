@@ -18,12 +18,15 @@
 <main>
   <section class="board-col">
     <!-- 终局提示放在棋盘**外面**：盖在棋盘上会挡住要看的盘面 -->
-    <div id="endbanner" class="endbanner"></div>
     <div class="board-wrap" id="board-wrap">
       <canvas id="board" width="700" height="700"></canvas>
     </div>
-    <div id="status" class="status">正在开局…</div>
-    <div id="lastmove" class="hint center"></div>
+    <!-- 棋盘下面只有这一条：当前状态在左，上一手在右，终局时整条变成结果横幅。
+         各占一行、或者再单开一块终局横幅，都是白白多占竖向空间。 -->
+    <div id="status" class="status">
+      <span id="status-main">正在开局…</span>
+      <span id="status-side"></span>
+    </div>
     <div class="scores">
       <div class="score" id="score-box0"><span class="dot" id="dot0"></span><span class="label" id="name0"></span><b id="score0">0</b></div>
       <div class="score" id="score-box1"><span class="dot" id="dot1"></span><span class="label" id="name1"></span><b id="score1">0</b></div>

@@ -31,6 +31,7 @@ const S = {
   busy: false,
   backends: [],
   phase: 'idle',        // idle | playing | paused
+  lastMove: '',         // 上一手的描述，显示在状态条右半边
   series: null,         // 连续对战的累计战绩
 };
 
@@ -186,28 +187,48 @@ function verdict(st) {
   return { text: win === st.human_player ? '你赢了' : '你输了', seat: win };
 }
 
-// 终局横幅。放在棋盘**上方**的独立元素里，不画在画布上 ——
-// 一局结束正是要看盘面的时候，盖上去等于把要看的东西挡了。
-function renderEndBanner(st) {
-  const el = $('endbanner');
+// 棋盘下面那一条。左边是当前状态、右边是上一手，终局时整条变成结果横幅。
+//
+// 之前是三块东西各占一行（终局横幅 + 状态 + 上一手），白白吃掉竖向空间，
+// 而且终局横幅一出一进还会顶动棋盘。合成一条之后高度恒定，也不会跳。
+function renderStatus(st) {
+  const bar = $('status');
+  const main = $('status-main');
   const wrap = $('board-wrap');
-  if (!st || !st.terminal) {
-    el.classList.remove('show');     // 只是隐形，位置一直占着，棋盘才不会跳
-    wrap.style.borderColor = '';
+  bar.className = 'status';
+  if (!st) return;
+
+  if (st.terminal) {
+    const v = verdict(st);
+    const color = v.seat < 0 ? 'var(--muted)' : seatColor(v.seat);
+    const s = S.series;
+    const nth = (s && s.total > 1) ? `第 ${s.played} / ${s.total} 局　` : '';
+    const who = v.seat < 0 ? '' : dotHtml(v.seat);
+    bar.classList.add('over');
+    bar.style.borderColor = color;
+    main.innerHTML = `${who}<b style="color:${color}">${v.text}</b>`;
+    $('status-side').innerHTML =
+      `${nth}占格 ${st.scores[0]} : ${st.scores[1]}　共 ${st.ply} 手`;
+    wrap.style.borderColor = color;    // 棋盘描边跟着变，边框不挡格子
     return;
   }
-  const v = verdict(st);
-  const color = v.seat < 0 ? 'var(--muted)' : seatColor(v.seat);
-  const who = v.seat < 0 ? '' : dotHtml(v.seat);
-  const s = S.series;
-  // 连打时要知道这是第几局 —— 只看「胜」不知道进行到哪儿了
-  const nth = (s && s.total > 1) ? `第 ${s.played} / ${s.total} 局　` : '';
-  el.innerHTML = `${who}<b>${v.text}</b>`
-    + `<span>${nth}占格 ${st.scores[0]} : ${st.scores[1]}　共 ${st.ply} 手</span>`;
-  el.style.borderColor = color;
-  el.style.color = color;
-  el.classList.add('show');
-  wrap.style.borderColor = color;      // 棋盘描边也跟着变，边框不挡格子
+
+  bar.style.borderColor = '';
+  wrap.style.borderColor = '';
+  if (S.phase === 'idle') {
+    main.textContent = st.ply === 0
+      ? '选好双方与模拟数，点「开始对局」'
+      : `已结束对局（停在第 ${st.ply} 手）；点「开始对局」重来一局`;
+  } else if (S.phase === 'paused') {
+    main.textContent = `已暂停（第 ${st.ply} 手）—— 点「恢复」继续`;
+  } else if (st.players[st.current_player] === null) {
+    const first = st.ply < 2 ? '（首手必须盖住起点）' : '';
+    main.innerHTML = `轮到${dotHtml(st.current_player)}你走，`
+      + `共 ${st.legal_actions.length} 种合法着法 ${first}`;
+  } else {
+    main.innerHTML = `${dotHtml(st.current_player)}思考中…`;
+  }
+  $('status-side').innerHTML = S.lastMove || '';
 }
 
 // 名字太长会把比分格子撑爆，截一下；完整的放 title
@@ -350,29 +371,7 @@ function applyState(st, analysis) {
     $('score-box' + seat).title = desc;
   }
 
-  const status = $('status');
-  status.className = 'status';
-  const noHuman = st.human_player < 0;
-  if (st.terminal) {
-    const [a, b] = st.scores;
-    const v = verdict(st);
-    status.innerHTML = `终局：占格 ${a} : ${b}`;
-    if (!noHuman && st.result > 0) status.classList.add('win');
-    if (!noHuman && st.result < 0) status.classList.add('lose');
-  } else if (S.phase === 'idle') {
-    status.textContent = st.ply === 0
-      ? '选好双方与模拟数，点「开始对局」'
-      : `已结束对局（停在第 ${st.ply} 手）；点「开始对局」重来一局`;
-  } else if (S.phase === 'paused') {
-    status.textContent = `已暂停（第 ${st.ply} 手）—— 点「恢复」继续`;
-  } else if (st.players[st.current_player] === null) {
-    const first = st.ply < 2 ? '（首手必须盖住起点）' : '';
-    status.innerHTML = `轮到${dotHtml(st.current_player)}你走，`
-      + `共 ${st.legal_actions.length} 种合法着法 ${first}`;
-  } else {
-    status.innerHTML = `${dotHtml(st.current_player)}思考中…`;
-  }
-  renderEndBanner(st);
+  renderStatus(st);
 
   // 没人在座就不存在「选中的棋子」；有人在座时，选中的棋子被用掉了要清掉。
   // 这里按人的座位索引，noHuman 时直接清空，绝不拿 -1 去索引。
@@ -802,8 +801,8 @@ async function aiMove() {
     // 「上一手：规则基线 greedy-mobility · 64 次模拟」这种自相矛盾的话。
     const who = r.players ? r.players[r.ai_player] : null;
     const sims = r.sims ? r.sims[r.ai_player] : 0;
-    $('lastmove').innerHTML =
-      `上一手：${dotHtml(r.ai_player)}${describe(who, r.ai_label, sims)} · ${r.ai_seconds}s`;
+    S.lastMove =
+      `上一手 ${dotHtml(r.ai_player)}${describe(who, r.ai_label, sims)} · ${r.ai_seconds}s`;
   }
   applyState(r, r.analysis || null);
 }

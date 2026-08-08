@@ -753,17 +753,19 @@ def test_model_label_includes_precision():
     assert "· {self.precision}" in srv
 
 
-def test_game_over_banner_does_not_cover_the_board():
-    """终局提示要醒目，但**不能盖住盘面** —— 一局刚结束正是要看盘的时候。
+def test_status_bar_is_one_line_and_doubles_as_the_end_banner():
+    """棋盘下面只有一条：左边当前状态、右边上一手，终局时整条变结果横幅。
 
-    所以它是棋盘上方的独立 DOM 元素，不是画在画布上的浮层。
+    三块东西各占一行（终局横幅 + 状态 + 上一手）白白吃竖向空间，
+    而且终局横幅一出一进还会顶动棋盘。合成一条之后高度恒定。
     """
     js, html, css = _code("app.js"), _front("index.html"), _front("style.css")
-    assert 'id="endbanner"' in html and ".endbanner" in css
-    assert "function renderEndBanner" in js
+    assert 'id="status-main"' in html and 'id="status-side"' in html
+    for gone in ("endbanner", "lastmove"):
+        assert gone not in html and gone not in js and gone not in css, f"{gone} 应已并入状态条"
     assert "drawEndBanner" not in js, "画布上那套浮层应已移除"
-    # 横幅必须在棋盘容器之前（上方），不在它里面
-    assert html.index('id="endbanner"') < html.index('id="board-wrap"')
+    assert "function renderStatus" in js
+    assert ".status.over" in css, "终局态要有独立样式"
 
 
 def test_rule_baseline_never_shows_a_simulation_count():
@@ -783,15 +785,13 @@ def test_rule_baseline_never_shows_a_simulation_count():
     assert not hits, f"这些地方绕过了 describe()：{hits}"
 
 
-def test_end_banner_reserves_its_space():
-    """横幅一出一进不能把棋盘往下顶 —— 连打时棋盘会一局跳一次。"""
-    css, js = _front("style.css"), _code("app.js")
-    assert "visibility: hidden" in css and ".endbanner.show" in css
-    assert "el.classList.add('show')" in js and "el.classList.remove('show')" in js
-    assert "min-height: 52px" in css, "要留出固定高度占位"
+def test_status_bar_height_is_fixed():
+    """终局态字更大，高度必须钉死，否则棋盘会跟着上下跳。"""
+    css = _front("style.css")
+    assert re.search(r"\.status \{[^}]*min-height: 52px", css, re.S)
 
 
-def test_end_banner_shows_which_game():
+def test_status_shows_which_game_when_playing_a_series():
     """连打时只写「胜」不知道进行到第几局了。"""
     js = _code("app.js")
     assert re.search(r"第 \$\{s\.played\} / \$\{s\.total\} 局", js)
@@ -818,8 +818,12 @@ def test_background_is_css_only():
     """背景用 CSS 画，不引外部图片 —— 没有构建步骤，也不该多一个要部署的文件。"""
     css, html = _front("style.css"), _front("index.html")
     assert "radial-gradient" in css and "background-attachment: fixed" in css
-    assert "url(" not in css, "不该引用外部图片"
+    # 图案是内联的 SVG data URI —— 仍然「不多一个要部署的文件」
+    assert "data:image/svg+xml" in css
+    assert not re.search(r"url\(\s*[\"']?(?!data:)[a-zA-Z./]", css), "不该引用外部图片文件"
     assert "<img" not in html
+    # 面板要半透明，否则整页被不透明卡片盖住，等于没有背景
+    assert "backdrop-filter" in css and "rgba(26, 31, 42, .82)" in css
 
 
 def test_tray_is_seven_by_three():
