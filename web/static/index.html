@@ -27,6 +27,11 @@
       <div class="score p1"><span class="dot"></span><span class="label">后手</span><b id="score1">0</b></div>
       <div class="score"><span class="label">手数</span><b id="ply">0</b></div>
     </div>
+    <!-- 战绩放棋盘下面：连打时眼睛在棋盘上，统计跟着一起看才顺 -->
+    <div class="card gone" id="series-card">
+      <h2>战绩 <small id="series-progress"></small></h2>
+      <div id="series-result"></div>
+    </div>
   </section>
 
   <aside class="side-col">
@@ -67,11 +72,6 @@
       </div>
     </div>
 
-    <!-- 战绩：只有连续对战时才出现，展示累计胜负 -->
-    <div class="card gone" id="series-card">
-      <h2>战绩 <small id="series-progress"></small></h2>
-      <div id="series-result"></div>
-    </div>
 
     <!-- 棋子面板由 JS 按座位生成：有人在座摆一块，AI 对战摆两块（只读） -->
     <div id="pieces-wrap" class="pieces-wrap"></div>

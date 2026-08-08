@@ -524,7 +524,7 @@ function syncBackendUi() {
     }
     sel.disabled = !isNet[i] || S.phase !== 'idle';
   }
-  $('ai-name').textContent = seatLabel(vals[0]) + '  vs  ' + seatLabel(vals[1]);
+  $('ai-name').textContent = seatDesc(0) + '  vs  ' + seatDesc(1);
   void bothAi;
 
   $('backend-hint').textContent = (!isNet[0] && !isNet[1])
@@ -552,7 +552,8 @@ function onConfigChange(ev) {
 
 // 开一局新棋（不动战绩）
 async function newSession() {
-  const r = await post('/api/new', { players: seatPlayers(), sims: seatSims() });
+  const o = orderedForThisGame();          // 连续对战时逐局交换先后手
+  const r = await post('/api/new', { players: o.players, sims: o.sims });
   S.sid = r.sid;
   S.analysis = null; S.piece = null; S.ori = null;
   applyState(r.state, null);
@@ -600,23 +601,63 @@ function togglePause() {
 
 function seriesCount() { return parseInt($('series-count').value, 10) || 1; }
 
-function newSeries(total) {
-  S.series = { total, played: 0, wins: [0, 0], draws: 0,
-               squares: [0, 0], plies: 0 };
+// 模拟数怎么写给人看。规则基线不搜索，就不写这一项。
+function simsText(n) { return n <= 0 ? '纯策略' : n + ' 次模拟'; }
+
+// 一方的完整描述：模型要连模拟数一起说清楚 ——
+// 光写 step 数看不出它这局到底搜了多少，而那对棋力的影响不比 step 小。
+function describe(backendId, label, sims) {
+  if (backendId === null || backendId === HUMAN) return '人类';
+  return backendId.startsWith('net:') ? label + ' · ' + simsText(sims) : label;
 }
 
-// 一局终局时调用，累加战绩。**每局只能记一次** ——
-// applyState 会被调用很多遍，靠 sid 去重最省事。
+function seatDesc(i) {
+  const v = seatValues()[i];
+  return describe(v, seatLabel(v), seatSims()[i]);
+}
+
+// 连续对战**逐局交换先后手**。
+//
+// 不交换的话得分率量的是「甲执先 vs 乙执后」，而本项目先手优势极大
+// （网络自博弈的先手胜率能到 0.97），那个数字和相对棋力基本无关。
+// 交换之后甲一半局执先、一半局执后，先手优势对双方各记一半，就抵消了。
+//
+// 因此战绩必须按**引擎**记，不能按座位记 —— 座位每局都在换。
+function newSeries(total) {
+  S.series = {
+    total: total, played: 0, swap: false,
+    wins: [0, 0], draws: 0, squares: [0, 0], plies: 0,
+    firstWins: [0, 0], secondWins: [0, 0],
+    names: [seatDesc(0), seatDesc(1)],
+  };
+}
+
+// 这一局「甲」实际坐哪个座位
+function seatOfA() { return S.series && S.series.swap ? 1 : 0; }
+
+// 按当前该谁执先，给出这一局的 players / sims
+function orderedForThisGame() {
+  const p = seatPlayers(), m = seatSims();
+  return (S.series && S.series.swap) ? { players: [p[1], p[0]], sims: [m[1], m[0]] }
+                                     : { players: p, sims: m };
+}
+
+// 一局终局时累加。**每局只能记一次** —— applyState 会被调用很多遍，
+// 靠 sid 去重最省事。
 function recordResult(st) {
-  if (!S.series || S.series.lastSid === S.sid) return;
-  S.series.lastSid = S.sid;
-  const [a, b] = st.scores;
-  if (a > b) S.series.wins[0]++;
-  else if (b > a) S.series.wins[1]++;
-  else S.series.draws++;
-  S.series.squares[0] += a; S.series.squares[1] += b;
-  S.series.plies += st.ply;
-  S.series.played++;
+  const s = S.series;
+  if (!s || s.lastSid === S.sid) return;
+  s.lastSid = S.sid;
+
+  const a = seatOfA(), b = 1 - a;
+  const sa = st.scores[a], sb = st.scores[b];
+  if (sa > sb) { s.wins[0]++; (a === 0 ? s.firstWins : s.secondWins)[0]++; }
+  else if (sb > sa) { s.wins[1]++; (b === 0 ? s.firstWins : s.secondWins)[1]++; }
+  else s.draws++;
+  s.squares[0] += sa; s.squares[1] += sb;
+  s.plies += st.ply;
+  s.played++;
+  s.swap = !s.swap;                        // 下一局换边
   renderSeries();
 }
 
@@ -626,30 +667,28 @@ function renderSeries() {
   if (!s || s.total <= 1) { card.classList.add('gone'); return; }   // 单局不用摆战绩
   card.classList.remove('gone');
   $('series-progress').textContent =
-    `${s.played} / ${s.total} 局` + (S.phase === 'idle' ? '（已结束）' : '');
+    s.played + ' / ' + s.total + ' 局' + (S.phase === 'idle' ? '（已结束）' : '');
   if (!s.played) { $('series-result').innerHTML = '<div class="hint">第 1 局进行中…</div>'; return; }
 
   const n = s.played;
-  const score0 = (s.wins[0] + 0.5 * s.draws) / n;
-  // Elo 换算和 cornerstone/elo.py 里那条一致；0/1 会发散，钳一下
-  const r = Math.min(0.999, Math.max(0.001, score0));
+  const scoreA = (s.wins[0] + 0.5 * s.draws) / n;
+  // Elo 换算和 cornerstone/elo.py 那条一致；0/1 会发散，钳一下
+  const r = Math.min(0.999, Math.max(0.001, scoreA));
   const elo = -400 * Math.log10(1 / r - 1);
-  const names = [seatLabel(seatValues()[0]), seatLabel(seatValues()[1])];
   $('series-result').innerHTML =
-    `<table class="mstat"><tr><th></th>` +
-    `<th><span class="seat p0"></span>先手</th>` +
-    `<th><span class="seat p1"></span>后手</th></tr>` +
-    `<tr><td>引擎</td><td>${names[0]}</td><td>${names[1]}</td></tr>` +
-    `<tr><td>胜</td><td>${s.wins[0]}</td><td>${s.wins[1]}</td></tr>` +
-    `<tr><td>和</td><td colspan="2">${s.draws}</td></tr>` +
-    `<tr><td>平均占格</td><td>${(s.squares[0] / n).toFixed(1)}</td>` +
-    `<td>${(s.squares[1] / n).toFixed(1)}</td></tr></table>` +
-    `<div class="hint">先手得分率 ${score0.toFixed(3)}` +
-    `　Elo 差 ${elo > 0 ? '+' : ''}${elo.toFixed(0)}` +
-    `　平均 ${(s.plies / n).toFixed(1)} 手</div>` +
-    `<div class="hint">注意：整个系列**不换边**，先手优势没有被抵消，` +
-    `所以这个得分率是「A 执先 vs B 执后」，不是双方的相对棋力。</div>`;
+    '<table class="mstat"><tr><th></th><th>甲</th><th>乙</th></tr>' +
+    '<tr><td>引擎</td><td>' + s.names[0] + '</td><td>' + s.names[1] + '</td></tr>' +
+    '<tr><td>胜</td><td>' + s.wins[0] + '</td><td>' + s.wins[1] + '</td></tr>' +
+    '<tr><td>和</td><td colspan="2">' + s.draws + '</td></tr>' +
+    '<tr><td>执先胜 / 执后胜</td><td>' + s.firstWins[0] + ' / ' + s.secondWins[0] + '</td>' +
+    '<td>' + s.firstWins[1] + ' / ' + s.secondWins[1] + '</td></tr>' +
+    '<tr><td>平均占格</td><td>' + (s.squares[0] / n).toFixed(1) + '</td>' +
+    '<td>' + (s.squares[1] / n).toFixed(1) + '</td></tr></table>' +
+    '<div class="hint">甲的得分率 ' + scoreA.toFixed(3) +
+    '　Elo 差 ' + (elo > 0 ? '+' : '') + elo.toFixed(0) +
+    '　平均 ' + (s.plies / n).toFixed(1) + ' 手　逐局交换先后手</div>';
 }
+
 
 async function pump() {
   await guard(async () => {
@@ -673,10 +712,21 @@ async function pump() {
 
 async function aiMove() {
   const r = await post('/api/ai', { sid: S.sid });
-  if (r.labels) $('ai-name').textContent = r.labels[0] + '  vs  ' + r.labels[1];
+  // 用服务端的 label（它带解析后的真实 step）配上本地的模拟数。
+  // 连续对战会换边，所以这里按**当前这一局的实际座位**显示，不看下拉框顺序。
+  if (r.labels) {
+    const p = r.players || [null, null];
+    const m = r.sims || [0, 0];
+    $('ai-name').textContent =
+      '先手 ' + describe(p[0], r.labels[0], m[0]) +
+      '  vs  后手 ' + describe(p[1], r.labels[1], m[1]);
+  }
   if (r.ai_seconds !== undefined) {
     const who = r.ai_player === 0 ? '先手' : '后手';
-    $('lastmove').textContent = `上一手：${who} · ${r.ai_label} · ${r.ai_seconds}s`;
+    const sims = r.sims ? r.sims[r.ai_player] : undefined;
+    const tail = sims === undefined ? '' : ' · ' + simsText(sims);
+    $('lastmove').textContent =
+      `上一手：${who} · ${r.ai_label}${tail} · ${r.ai_seconds}s`;
   }
   applyState(r, r.analysis || null);
 }

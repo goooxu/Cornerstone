@@ -710,10 +710,50 @@ def test_series_plays_games_one_after_another():
     assert "S.series.played >= S.series.total" in js, "打满局数才收工"
 
 
+def test_series_alternates_sides():
+    """连续对战必须逐局交换先后手。
+
+    不交换的话得分率量的是「甲执先 vs 乙执后」，而本项目先手优势极大
+    （网络自博弈的先手胜率能到 0.97），那个数字和相对棋力基本无关。
+    换边之后，战绩就必须按**引擎**记而不是按座位记 —— 座位每局都在换。
+    """
+    js = _code("app.js")
+    assert "function orderedForThisGame" in js
+    assert re.search(r"swap\)\s*\?\s*\{ players: \[p\[1\], p\[0\]\], sims: \[m\[1\], m\[0\]\] \}", js), \
+        "换边时 players 和 sims 要一起换 —— 引擎带着自己的模拟数走"
+    assert "s.swap = !s.swap" in js, "每局结束要翻转"
+    assert "function seatOfA" in js and "const a = seatOfA()" in js, "战绩要按引擎记"
+    assert "orderedForThisGame()" in js and "o.players" in js, "开局要用换过边的顺序"
+
+
+def test_series_reports_per_side_records():
+    """执先胜/执后胜要分开报 —— 换边之后这两个数才看得出先手优势有多大。"""
+    js = _code("app.js")
+    assert "firstWins" in js and "secondWins" in js
+
+
+def test_model_label_includes_simulation_count():
+    """一方是模型时，光写 step 数不够，还要写这局搜了多少次。"""
+    js = _code("app.js")
+    assert "function simsText" in js and "function describe" in js
+    assert re.search(r"backendId\.startsWith\('net:'\) \? label \+ ' · ' \+ simsText", js)
+    assert "seatDesc(0)" in js and "seatDesc(1)" in js
+
+
+def test_series_card_sits_under_the_board():
+    """战绩放棋盘下面：连打时眼睛在棋盘上，统计跟着一起看才顺。"""
+    html = _front("index.html")
+    board = html.index('id="board"')
+    card = html.index('id="series-card"')
+    side = html.index('class="side-col"')
+    assert board < card < side, "战绩卡应在棋盘那一栏里、侧栏之前"
+
+
 def test_series_counts_each_game_once():
     """applyState 会被调用很多次，战绩必须按局去重，不能一局记多次。"""
     js = _code("app.js")
-    assert "S.series.lastSid === S.sid" in js, "要按 sid 去重"
+    assert "s.lastSid === S.sid" in js, "要按 sid 去重"
+    assert "s.lastSid = S.sid" in js
 
 
 def test_series_row_hidden_when_not_applicable():
