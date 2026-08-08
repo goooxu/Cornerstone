@@ -31,6 +31,7 @@ const S = {
   busy: false,
   backends: [],
   phase: 'idle',        // idle | playing | paused
+  labels: null,         // 服务端给的双方 label（按座位），显示一律以它为准
   lastMove: '',         // 上一手的描述，显示在状态条右半边
   series: null,         // 连续对战的累计战绩
 };
@@ -234,10 +235,16 @@ function renderStatus(st) {
 // 名字太长会把比分格子撑爆，截一下；完整的放 title
 function shorten(s) { return s.length > 26 ? s.slice(0, 25) + '…' : s; }
 
-// 某座位当前引擎在下拉框里对应的显示名
-function seatLabelForSeat(seat) {
-  const eng = engineOfSeat(seat);
-  return seatLabel(seatValues()[eng]);
+// **一个座位怎么描述，只有这里说了算。**
+//
+// 之前右上角徽标用服务端返回的 label（带解析后的真实 step），
+// 而比分格和战绩表各自去下拉框取选项文字（「最新（跟随训练，当前 step …）」），
+// 同一个对手在三个地方写法不一样。现在统一走这里：
+// 有服务端 label 就用它，没有（还没开局）才回落到下拉框。
+function describeSeat(st, seat) {
+  const fallback = seatLabel(seatValues()[engineOfSeat(seat)]);
+  const label = (S.labels && S.labels[seat]) || fallback;
+  return describe(st.players[seat], label, st.sims[seat]);
 }
 
 function roundRect(x, y, w, h, r) {
@@ -366,10 +373,21 @@ function applyState(st, analysis) {
   // 比分格子的颜色和名字跟着「这一局谁坐这个座位」走
   for (const seat of [0, 1]) {
     $('dot' + seat).style.background = seatColor(seat);
-    const desc = describe(st.players[seat], seatLabelForSeat(seat), st.sims[seat]);
+    const desc = describeSeat(st, seat);
     $('name' + seat).textContent = shorten(desc);
     $('score-box' + seat).title = desc;
   }
+
+  // 战绩表里的引擎名也用同一套描述。swap 要等 recordResult 之后才翻，
+  // 所以这里读到的仍是**当前这一局**的座位分配，对得上。
+  if (S.series) {
+    const a = seatOfA();
+    S.series.names[0] = describeSeat(st, a);
+    S.series.names[1] = describeSeat(st, 1 - a);
+  }
+
+  $('ai-name').innerHTML =
+    dotHtml(0) + describeSeat(st, 0) + '　vs　' + dotHtml(1) + describeSeat(st, 1);
 
   renderStatus(st);
 
@@ -608,6 +626,7 @@ function syncBackendUi() {
 // 配置改动只留在本地，等「开始对局」时一次性提交给 /api/new。
 // 不再中途调 /api/backend —— 对局中根本没有改配置的通道，比事后拦更干净。
 function onConfigChange(ev) {
+  S.labels = null;                  // 旧 label 已经不对应新选择了
   // 记下这一侧手选的模拟数，切到规则基线再切回来时能恢复
   const t = ev && ev.target;
   if (t && t.classList.contains('sims') && t.value !== NA) t.dataset.last = t.value;
@@ -621,6 +640,7 @@ async function newSession() {
   const o = orderedForThisGame();          // 连续对战时逐局交换先后手
   const r = await post('/api/new', { players: o.players, sims: o.sims });
   S.sid = r.sid;
+  S.labels = r.labels || null;
   S.analysis = null; S.piece = null; S.ori = null;
   applyState(r.state, null);
 }
@@ -694,7 +714,7 @@ function newSeries(total) {
     total: total, played: 0, swap: false,
     wins: [0, 0], draws: 0, squares: [0, 0], plies: 0,
     firstWins: [0, 0], secondWins: [0, 0],
-    names: [seatDesc(0), seatDesc(1)],
+    names: [seatDesc(0), seatDesc(1)],   // 开局前的占位，拿到服务端 label 后覆盖
   };
 }
 
@@ -789,13 +809,7 @@ async function aiMove() {
   const r = await post('/api/ai', { sid: S.sid });
   // 用服务端的 label（它带解析后的真实 step）配上本地的模拟数。
   // 连续对战会换边，所以这里按**当前这一局的实际座位**显示，不看下拉框顺序。
-  if (r.labels) {
-    const p = r.players || [null, null];
-    const m = r.sims || [0, 0];
-    $('ai-name').innerHTML =
-      dotHtml(0) + describe(p[0], r.labels[0], m[0]) +
-      '　vs　' + dotHtml(1) + describe(p[1], r.labels[1], m[1]);
-  }
+  if (r.labels) S.labels = r.labels;
   if (r.ai_seconds !== undefined) {
     // 用 describe() 而不是自己拼 —— 它知道「规则基线不搜索，别写模拟数」。
     // 之前这里无条件拼上模拟数，于是出现过

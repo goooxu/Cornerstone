@@ -873,6 +873,23 @@ def test_background_is_css_only():
     assert re.search(r"background: rgba\([\d, .]+\)", css)
 
 
+def test_one_place_decides_how_a_seat_is_described():
+    """同一个对手在徽标、比分格、战绩表里必须写法一致。
+
+    真出现过不一致：徽标用服务端返回的 label（带解析后的真实 step），
+    比分格和战绩表各自去下拉框取选项文字
+    （「最新（跟随训练，当前 step …）」）—— 三处三个样。
+    """
+    js = _code("app.js")
+    assert "function describeSeat" in js
+    assert "seatLabelForSeat" not in js, "旧的下拉框取名路径应已移除"
+    # 三处显示都得走 describeSeat
+    assert js.count("describeSeat(st, ") >= 4
+    assert re.search(r"\$\('ai-name'\)\.innerHTML =[\s\S]{0,140}describeSeat", js)
+    assert re.search(r"S\.series\.names\[0\] = describeSeat", js)
+    assert re.search(r"const desc = describeSeat\(st, seat\)", js)
+
+
 def test_background_glows_are_inside_the_viewport():
     """色晕的圆心必须落在视口之内。
 

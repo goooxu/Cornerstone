@@ -27,9 +27,9 @@ body {
      圆心必须落在**视口之内**：第一版放在 6%/-14%、106%/4%、48%/120%，
      全在屏幕外，进到画面里的只剩最淡的尾巴，等于没画。 */
   background:
-    radial-gradient(620px 620px at 16% 14%, rgba(45, 212, 191, .38), transparent 70%),
-    radial-gradient(660px 660px at 86% 16%, rgba(251, 146, 60, .34), transparent 70%),
-    radial-gradient(720px 640px at 52% 92%, rgba(129, 140, 248, .32), transparent 70%),
+    radial-gradient(1000px 900px at 16% 12%, rgba(45, 212, 191, .60), transparent 72%),
+    radial-gradient(1040px 940px at 88% 14%, rgba(251, 146, 60, .54), transparent 72%),
+    radial-gradient(1120px 900px at 52% 96%, rgba(129, 140, 248, .50), transparent 72%),
     linear-gradient(160deg, #202a3d 0%, #19202e 45%, #141a26 100%);
   background-attachment: fixed;
   min-height: 100vh;
