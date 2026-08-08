@@ -89,3 +89,4 @@ $D bash scripts/web.sh start               # 试玩服务，浏览器开 <开发
 - [docs/06-FP8主权重.md](docs/06-FP8主权重.md) —— MXFP8 主权重、随机舍入、踩过的坑
 - [docs/07-性能调优.md](docs/07-性能调优.md) —— 瓶颈三次转移、单卡 4.2×、四卡 22.7×
 - [docs/08-已知问题与后续.md](docs/08-已知问题与后续.md) —— 当前限制、优先级、经验教训
+- [reports/BF16训练报告.md](reports/BF16训练报告.md) —— 首个完整模型的结构、训练方法与棋力评测
