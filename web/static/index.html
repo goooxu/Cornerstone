@@ -47,6 +47,10 @@
           </span>
         </label>
       </div>
+      <div class="row">
+        <label>连续对战 <select id="series-count"></select></label>
+        <span id="series-hint" class="hint inline"></span>
+      </div>
       <div id="backend-hint" class="hint"></div>
       <div id="lock-hint" class="hint lock"></div>
       <!-- 纯图标按钮。每个按钮**只有一个** svg，图形由 JS 按状态换掉 ——
@@ -63,19 +67,10 @@
       </div>
     </div>
 
-    <!-- 连续对战单独成卡：它和上面那个「开始对局」是两回事 ——
-         上面下一局、这里下几百局只出统计。放在同一张卡里太容易点错。 -->
-    <div class="card" id="match-card">
-      <h2>连续对战 <small>双方都是 AI；只统计胜负，不逐手显示</small></h2>
-      <div class="row match-row">
-        <label>局数 <select id="match-games"></select></label>
-        <button id="btn-match" class="icon" title="开始连续对战" aria-label="开始连续对战">
-          <svg id="ico-match" viewBox="0 0 24 24"></svg>
-        </button>
-        <span id="match-hint" class="hint inline"></span>
-      </div>
-      <div id="match-progress" class="hint"></div>
-      <div id="match-result"></div>
+    <!-- 战绩：只有连续对战时才出现，展示累计胜负 -->
+    <div class="card gone" id="series-card">
+      <h2>战绩 <small id="series-progress"></small></h2>
+      <div id="series-result"></div>
     </div>
 
     <!-- 棋子面板由 JS 按座位生成：有人在座摆一块，AI 对战摆两块（只读） -->

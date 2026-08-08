@@ -428,8 +428,7 @@ def test_frontend_locks_config_while_playing():
     """开局后配置要锁死，且看得出来锁了。"""
     js = _code("app.js")
     assert "seatSel(i).disabled = locked" in js
-    # 单局与多局都要锁配置
-    assert "const locked = playing || matching" in js
+    assert "$('series-count').disabled = locked" in js, "连续对战局数也要锁"
     assert "lock-hint" in js
 
 
@@ -537,31 +536,6 @@ def test_every_element_id_used_by_js_exists_in_html():
     assert not missing, f"app.js 引用了 index.html 里不存在的 id：{missing}"
 
 
-def test_match_controls_live_in_their_own_card():
-    """连续对战和「开始对局」必须分开放。
-
-    它们是两回事：一个下一局并逐手显示，一个下几百局只出统计。
-    挤在同一张卡里时，用户点了「开始对局」、看着一局结束就停，
-    以为连续对战坏了 —— 实际后端跑得好好的。
-    """
-    html = _front("index.html")
-    assert 'id="match-card"' in html
-    # 局数下拉和多局按钮都要在 match-card 里，不能留在单局那张卡
-    card = html[html.index('id="match-card"'):]
-    card = card[:card.index("</div>\n\n    <!--")] if "</div>\n\n    <!--" in card else card
-    assert 'id="match-games"' in card and 'id="btn-match"' in card
-    single = html[:html.index('id="match-card"')]
-    assert 'id="btn-start"' in single and 'id="match-games"' not in single
-
-
-def test_match_errors_shown_next_to_the_match_controls():
-    """多局对战的报错要显示在它自己那张卡上。
-
-    之前丢进棋盘下面那行 status，隔了半个屏幕，等于没报。
-    """
-    js = _code("app.js")
-    assert re.search(r"async function toggleMatch[\s\S]{0,900}match-result", js)
-    assert re.search(r"async function toggleMatch[\s\S]{0,900}catch", js)
 
 
 def test_buttons_are_all_two_state():
@@ -573,7 +547,7 @@ def test_buttons_are_all_two_state():
     """
     html = _front("index.html")
     ids = re.findall(r'<button[^>]*id="([^"]+)"', html)
-    assert ids == ["btn-start", "btn-pause", "btn-match"], f"实得 {ids}"
+    assert ids == ["btn-start", "btn-pause"], f"实得 {ids}"
     for tag in re.findall(r"<button[^>]*>", html):
         assert "title=" in tag and "aria-label" in tag, f"纯图标按钮缺 title/aria-label：{tag}"
     # 纯图标：按钮里不该再有文字标签
@@ -653,101 +627,10 @@ def test_asset_version_changes_with_content(tmp_path, monkeypatch):
     assert server.asset_version() != first, "改了文件版本号就该变"
 
 
-# ------------------------------------------------------------------- 连续对战
-
-def test_match_requires_two_ai():
-    """人在座就没法批量跑 —— 批量对局是引擎自己推进的，没有等人落子这回事。"""
-    pool = server.BrainPool("cpu")
-    app = server.build_app(pool, "rule:greedy-mobility")
-    with TestClient(app) as c:
-        r = c.post("/api/match/start", json={
-            "players": [None, "rule:greedy-area"], "sims": [64, 64], "games": 100})
-        assert r.status_code == 400 and "都必须是 AI" in r.json()["detail"]
 
 
-def test_match_rejects_bad_game_counts():
-    pool = server.BrainPool("cpu")
-    app = server.build_app(pool, "rule:greedy-mobility")
-    with TestClient(app) as c:
-        for n in (0, 7, 99, 1000):
-            r = c.post("/api/match/start", json={
-                "players": ["rule:greedy-area", "rule:corner-min"],
-                "sims": [64, 64], "games": n})
-            assert r.status_code == 400, f"{n} 局应被拒"
 
 
-def test_match_game_counts_are_even():
-    """必须是偶数：先后手成对交换，奇数会让分配不平衡。"""
-    assert all(n % 2 == 0 for n in server.MATCH_GAMES)
-    assert server.MATCH_CHUNK % 2 == 0
-
-
-def test_rule_vs_rule_match_runs_and_tallies():
-    """规则基线不碰 GPU，可以在单测里真跑完一场。"""
-    pool = server.BrainPool("cpu")
-    app = server.build_app(pool, "rule:greedy-mobility")
-    with TestClient(app) as c:
-        r = c.post("/api/match/start", json={
-            "players": ["rule:greedy-area", "rule:corner-min"],
-            "sims": [64, 64], "games": 100})
-        assert r.status_code == 200, r.text
-        for _ in range(600):
-            m = c.get("/api/match/status").json()
-            if not m["running"]:
-                break
-            time.sleep(0.1)
-        assert not m["running"], "100 局规则对局不该跑这么久"
-        assert m["error"] == "", m["error"]
-        assert m["played"] == 100
-        assert m["wins_a"] + m["wins_b"] + m["draws"] == 100, "胜负和必须对得上局数"
-        assert 0.0 <= m["score_a"] <= 1.0
-        # docs/03：corner-min 比 greedy-area 强，B 应该占优
-        assert m["wins_b"] > m["wins_a"], f"{m['wins_a']} vs {m['wins_b']}"
-
-
-def test_match_pins_both_sides_at_start(runs, monkeypatch):
-    """整场对战必须用同两个模型，中途不能再解析后端 ID。
-
-    真事：一场 100 局的网络对网络跑到 80 局时炸了 ——
-    `checkpoint 已不存在：step00133030.pt`，训练把它轮换删掉了。
-    而更隐蔽的是 `net:<跑>/latest`：分块之间重新解析的话，一场 400 局会
-    横跨好几个 checkpoint，那个总比分不属于任何一对模型，却看不出来。
-    """
-    d = runs("r", [10], latest="step00000010.pt")
-    monkeypatch.setattr(server, "NetBrain", _FakeNet)
-    _FakeNet.loaded = []
-    pool = server.BrainPool("cpu", max_models=3)
-    runner = server.MatchRunner(pool)
-
-    resolved = []
-    orig = pool.get
-    monkeypatch.setattr(pool, "get", lambda b: (resolved.append(b), orig(b))[1])
-
-    brains = [pool.get("net:r/latest"), pool.get("net:r/latest")]
-    resolved.clear()
-    # 模拟 start() 之后训练又落了新 checkpoint、旧的被删
-    (d / "step00000020.pt").write_bytes(b"x")
-    (d / "latest").write_text("step00000020.pt")
-    (d / "step00000010.pt").unlink()
-
-    # _one_chunk 拿到的是对象，不该再去解析 ID（解析会因文件已删而抛错）
-    import inspect
-    src = inspect.getsource(server.MatchRunner._one_chunk)
-    assert "pool.get" not in src, "_one_chunk 不能再按 ID 解析后端"
-    assert "a, b = players" in src
-    assert not resolved, "定死之后不该再有解析动作"
-    assert brains[0] is brains[1]
-
-
-def test_only_one_match_at_a_time():
-    pool = server.BrainPool("cpu")
-    app = server.build_app(pool, "rule:greedy-mobility")
-    with TestClient(app) as c:
-        body = {"players": ["rule:greedy-area", "rule:corner-min"],
-                "sims": [64, 64], "games": 400}
-        assert c.post("/api/match/start", json=body).status_code == 200
-        assert c.post("/api/match/start", json=body).status_code == 409
-        c.post("/api/match/stop", json={})
 
 
 def test_piece_name_labels_are_gone():
@@ -801,3 +684,39 @@ def test_legacy_new_game_params_still_work(client):
     st = r.json()["state"]
     assert st["human_player"] == 1
     assert st["players"] == ["rule:greedy-area", None]
+
+
+# ------------------------------------------------------------------- 连续对战
+
+def test_series_counts_offered():
+    """连续对战只是「开始对局」的一个选项，1 局就是普通单局。"""
+    assert server.SERIES_COUNTS == [1, 100, 200, 400]
+    assert server.SERIES_COUNTS[0] == 1
+
+
+def test_no_background_match_endpoints():
+    """连续对战在前端逐局跑，服务端不该再有后台批量对局那套。"""
+    srv = open(os.path.join(REPO, "web", "server.py"), encoding="utf-8").read()
+    for gone in ("MatchRunner", "/api/match", "MatchState"):
+        assert gone not in srv, f"{gone} 应已移除"
+
+
+def test_series_plays_games_one_after_another():
+    """一局终局就开下一局，棋盘照常逐手显示 —— 不是后台批量。"""
+    js = _code("app.js")
+    assert "function recordResult" in js and "function renderSeries" in js
+    assert re.search(r"if \(S\.state\.terminal\)[\s\S]{0,200}await newSession\(\)", js), \
+        "终局后要自动开下一局"
+    assert "S.series.played >= S.series.total" in js, "打满局数才收工"
+
+
+def test_series_counts_each_game_once():
+    """applyState 会被调用很多次，战绩必须按局去重，不能一局记多次。"""
+    js = _code("app.js")
+    assert "S.series.lastSid === S.sid" in js, "要按 sid 去重"
+
+
+def test_series_requires_no_human():
+    js = _code("app.js")
+    assert re.search(r"if \(!bothAi\)[\s\S]{0,120}sc\.value = '1'", js), \
+        "有人在座时局数要锁回 1"

@@ -30,9 +30,8 @@ const S = {
   analysis: null,
   busy: false,
   backends: [],
-  phase: 'idle',        // idle | playing | paused | match
-  match: null,          // 连续对战的最新进度
-  matchTimer: null,
+  phase: 'idle',        // idle | playing | paused
+  series: null,         // 连续对战的累计战绩
 };
 
 const COLORS = ['#2dd4bf', '#fb923c'];
@@ -456,10 +455,6 @@ const ICONS = {
   stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2.6" fill="currentColor"/>',
   pause: '<rect x="7.6" y="5.5" width="3.4" height="13" rx="1.7" fill="currentColor"/>'
        + '<rect x="13" y="5.5" width="3.4" height="13" rx="1.7" fill="currentColor"/>',
-  // 连续对战：两个方向的箭头，表示「一局接一局地跑」
-  stack: '<path d="M4 8h13m0 0-3.5-3.5M17 8l-3.5 3.5M20 16H7m0 0 3.5-3.5M7 16l3.5 3.5"'
-       + ' fill="none" stroke="currentColor" stroke-width="2"'
-       + ' stroke-linecap="round" stroke-linejoin="round"/>',
 };
 
 function setIcon(id, name) {
@@ -476,10 +471,9 @@ function setPhase(p) {
 }
 
 function syncControls() {
-  const matching = S.phase === 'match';
-  const playing = S.phase !== 'idle' && !matching;
+  const playing = S.phase !== 'idle';
   const paused = S.phase === 'paused';
-  const locked = playing || matching;      // 两种「跑起来了」都要锁配置
+  const locked = playing;
 
   // 纯图标按钮，状态体现在图标、颜色和 title 上。
   // 图形直接换 svg 的内容，而不是塞两个 svg 用 CSS 挑一个显示 ——
@@ -504,20 +498,8 @@ function syncControls() {
     simsSel(i).disabled = locked || simsSel(i).dataset.ruleDisabled === '1';
   }
   $('lock-hint').textContent = paused ? '已暂停 —— 双方都不能落子'
-    : matching ? '连续对战进行中，配置已锁定'
     : playing ? '对局进行中，配置已锁定' : '';
-
-  // 单局与多局互斥：一块 GPU，同时跑两边只会互相拖慢且结果不可比
-  $('btn-start').disabled = matching;
-  $('btn-start').title = matching ? '连续对战进行中'
-    : playing ? '结束对局' : '开始对局（只下一局）';
-  const mb = $('btn-match');
-  mb.disabled = playing;
-  mb.classList.toggle('running', matching);
-  mb.title = matching ? '停止连续对战' : '连续对战';
-  mb.setAttribute('aria-label', mb.title);
-  setIcon('ico-match', matching ? 'stop' : 'stack');
-  $('match-games').disabled = matching;
+  $('series-count').disabled = locked;
 }
 
 // 模拟数是**每个座位各自的**，所以置灰也按座位来：
@@ -549,17 +531,18 @@ function syncBackendUi() {
     ? '两边都不用网络，模拟数不起作用（规则基线不搜索）'
     : '右侧数字 = 该座位每步的 MCTS 模拟数，越大越强也越慢';
 
-  // 连续对战的适用条件，先在界面上说清楚，别等点了才报错
-  const vals2 = seatValues();
-  const bothAi2 = vals2.every(v => v !== HUMAN);
-  const purePolicy = [0, 1].some(i => isNet[i] && seatSims()[i] <= 0);
-  const mismatched = isNet[0] && isNet[1] && seatSims()[0] !== seatSims()[1];
-  let why = '';
-  if (!bothAi2) why = '需要双方都是 AI';
-  else if (purePolicy) why = '批量对局不支持「纯策略」';
-  else if (mismatched) why = '网络对网络时两方模拟数要相同';
-  $('match-hint').textContent = why ? '（' + why + '）' : '';
-  if (S.phase !== 'match') $('btn-match').disabled = !!why || S.phase !== 'idle';
+  // 连续对战要求双方都不是人 —— 一局完自动开下一局，中间不能停下来等人
+  const sc = $('series-count');
+  if (!bothAi) {
+    sc.value = '1';
+    sc.disabled = true;
+    $('series-hint').textContent = '（双方都不是人类时才能连打）';
+  } else {
+    sc.disabled = S.phase !== 'idle';
+    const n = seriesCount();
+    $('series-hint').textContent = n > 1
+      ? `（一局完自动开下一局，共 ${n} 局；棋盘照常逐手显示）` : '';
+  }
 }
 
 // 配置改动只留在本地，等「开始对局」时一次性提交给 /api/new。
@@ -573,14 +556,21 @@ function onConfigChange(ev) {
 
 // ---------------------------------------------------------------- 开始 / 结束
 
+// 开一局新棋（不动战绩）
+async function newSession() {
+  const r = await post('/api/new', { players: seatPlayers(), sims: seatSims() });
+  S.sid = r.sid;
+  S.analysis = null; S.piece = null; S.ori = null;
+  applyState(r.state, null);
+}
+
 async function startGame() {
+  newSeries(seriesCount());
   await guard(async () => {
-    S.analysis = null; S.piece = null; S.ori = null;
-    const r = await post('/api/new', { players: seatPlayers(), sims: seatSims() });
-    S.sid = r.sid;
     setPhase('playing');
-    applyState(r.state, null);
+    await newSession();
   });
+  renderSeries();
   await pump();
 }
 
@@ -590,6 +580,7 @@ function endGame() {
   setPhase('idle');
   syncBackendUi();          // 解锁后要重算规则基线那一侧的置灰
   if (S.state) applyState(S.state, undefined);
+  renderSeries();           // 战绩留在页面上，别一结束就没了
 }
 
 function togglePause() {
@@ -608,92 +599,82 @@ function togglePause() {
 //
 // **暂停只能在两次落子之间生效** —— 一次搜索已经交给引擎了，中途打不断。
 // 所以按下暂停后，可能还要等当前这一步搜完（800 次模拟约十几秒）。
-// ------------------------------------------------------------- 连续对战（多局）
+// ------------------------------------------------------------------ 连续对战
 //
-// 走的是**批量对局**那条路（cornerstone/evaluate.py、arena.py），不是把单局
-// 对战重复 N 遍：批量能几十局同时推进、共用一次前向，差着一两个数量级。
-// 代价是着法由引擎自己选，所以「纯策略」和「两边不同模拟数」在这里用不了 ——
-// 服务端会拒并说明原因。
-//
-// 服务端分块跑（每块 20 局），这里每 2 秒轮询一次进度。
+// 只是「开始对局」的一个选项：一局下完自动开下一局，棋盘照常逐手显示，
+// 统计在前端累加。服务端不需要知道有这回事 —— 每局就是一次 /api/new。
 
-async function refreshMatch() {
-  const m = await api('/api/match/status');
-  S.match = m;
-  renderMatch(m);
-  if (m.running) {
-    if (S.phase !== 'match') setPhase('match');
-    if (!S.matchTimer) S.matchTimer = setInterval(() => refreshMatch().catch(() => {}), 2000);
-  } else {
-    if (S.matchTimer) { clearInterval(S.matchTimer); S.matchTimer = null; }
-    if (S.phase === 'match') setPhase('idle');
-  }
-  return m;
+function seriesCount() { return parseInt($('series-count').value, 10) || 1; }
+
+function newSeries(total) {
+  S.series = { total, played: 0, wins: [0, 0], draws: 0,
+               squares: [0, 0], plies: 0 };
 }
 
-function renderMatch(m) {
-  if (!m || !m.total) {          // 还没跑过：只留控件，结果区空着
-    $('match-progress').textContent = '';
-    $('match-result').innerHTML = '';
-    return;
-  }
-  $('match-progress').textContent =
-    `${m.played} / ${m.total} 局` + (m.running ? '（进行中…）' : '（已结束）')
-    + (m.sims ? ` · 每步 ${m.sims} 次模拟` : '');
-
-  if (m.error) {
-    $('match-result').innerHTML = `<div class="hint bad">出错：${m.error}</div>`;
-    return;
-  }
-  if (!m.played) { $('match-result').innerHTML = '<div class="hint">正在开跑…</div>'; return; }
-
-  const pct = Math.round(m.score_a * 100);
-  const lead = m.score_a > 0.5 ? m.label_a : m.score_a < 0.5 ? m.label_b : '势均力敌';
-  $('match-result').innerHTML =
-    `<div class="winbar"><div class="fill" style="width:${pct}%"></div>` +
-    `<span>${m.label_a} 得分率 ${m.score_a.toFixed(3)}</span></div>` +
-    `<table class="mstat"><tr><th></th><th>${m.label_a}</th><th>${m.label_b}</th></tr>` +
-    `<tr><td>胜</td><td>${m.wins_a}</td><td>${m.wins_b}</td></tr>` +
-    `<tr><td>和</td><td colspan="2">${m.draws}</td></tr>` +
-    `<tr><td>平均占格</td><td>${m.mean_squares_a}</td><td>${m.mean_squares_b}</td></tr></table>` +
-    `<div class="hint">Elo 差 ${m.elo_diff > 0 ? '+' : ''}${m.elo_diff}（${lead} 领先）` +
-    ` · 平均 ${m.mean_plies} 手` +
-    ` · ${m.label_a} 执先赢 ${m.a_first_wins} / 执后赢 ${m.a_second_wins}</div>`;
+// 一局终局时调用，累加战绩。**每局只能记一次** ——
+// applyState 会被调用很多遍，靠 sid 去重最省事。
+function recordResult(st) {
+  if (!S.series || S.series.lastSid === S.sid) return;
+  S.series.lastSid = S.sid;
+  const [a, b] = st.scores;
+  if (a > b) S.series.wins[0]++;
+  else if (b > a) S.series.wins[1]++;
+  else S.series.draws++;
+  S.series.squares[0] += a; S.series.squares[1] += b;
+  S.series.plies += st.ply;
+  S.series.played++;
+  renderSeries();
 }
 
-async function toggleMatch() {
-  if (S.busy) return;
-  S.busy = true;
-  try {
-    if (S.match && S.match.running) {
-      await post('/api/match/stop', {});
-    } else {
-      $('match-progress').textContent = '正在启动…';
-      $('match-result').innerHTML = '';
-      await post('/api/match/start', {
-        players: seatPlayers(),
-        sims: seatSims(),
-        games: parseInt($('match-games').value, 10),
-      });
-    }
-    await refreshMatch();
-  } catch (e) {
-    // 报在这张卡上。之前是丢进棋盘下面那行 status，隔了半个屏幕，等于没报
-    $('match-progress').textContent = '';
-    $('match-result').innerHTML = `<div class="hint bad">${e.message}</div>`;
-  } finally {
-    S.busy = false;
-  }
+function renderSeries() {
+  const s = S.series;
+  const card = $('series-card');
+  if (!s || s.total <= 1 && !s.played) { card.classList.add('gone'); return; }
+  card.classList.remove('gone');
+  $('series-progress').textContent =
+    `${s.played} / ${s.total} 局` + (S.phase === 'idle' ? '（已结束）' : '');
+  if (!s.played) { $('series-result').innerHTML = '<div class="hint">第 1 局进行中…</div>'; return; }
+
+  const n = s.played;
+  const score0 = (s.wins[0] + 0.5 * s.draws) / n;
+  // Elo 换算和 cornerstone/elo.py 里那条一致；0/1 会发散，钳一下
+  const r = Math.min(0.999, Math.max(0.001, score0));
+  const elo = -400 * Math.log10(1 / r - 1);
+  const names = [seatLabel(seatValues()[0]), seatLabel(seatValues()[1])];
+  $('series-result').innerHTML =
+    `<table class="mstat"><tr><th></th>` +
+    `<th><span class="seat p0"></span>先手</th>` +
+    `<th><span class="seat p1"></span>后手</th></tr>` +
+    `<tr><td>引擎</td><td>${names[0]}</td><td>${names[1]}</td></tr>` +
+    `<tr><td>胜</td><td>${s.wins[0]}</td><td>${s.wins[1]}</td></tr>` +
+    `<tr><td>和</td><td colspan="2">${s.draws}</td></tr>` +
+    `<tr><td>平均占格</td><td>${(s.squares[0] / n).toFixed(1)}</td>` +
+    `<td>${(s.squares[1] / n).toFixed(1)}</td></tr></table>` +
+    `<div class="hint">先手得分率 ${score0.toFixed(3)}` +
+    `　Elo 差 ${elo > 0 ? '+' : ''}${elo.toFixed(0)}` +
+    `　平均 ${(s.plies / n).toFixed(1)} 手</div>` +
+    `<div class="hint">注意：整个系列**不换边**，先手优势没有被抵消，` +
+    `所以这个得分率是「A 执先 vs B 执后」，不是双方的相对棋力。</div>`;
 }
 
 async function pump() {
   await guard(async () => {
-    while (S.phase === 'playing' && S.state && !S.state.terminal
-           && S.state.players[S.state.current_player] !== null) {
+    while (S.phase === 'playing' && S.state) {
+      if (S.state.terminal) {
+        recordResult(S.state);
+        if (S.series.played >= S.series.total) break;
+        await newSession();          // 自动开下一局
+        continue;
+      }
+      // 轮到人就停下来等点击
+      if (S.state.players[S.state.current_player] === null) break;
       await aiMove();
     }
   });
-  if (S.state && S.state.terminal && S.phase !== 'idle') endGame();
+  if (S.phase !== 'idle' && S.state && S.state.terminal
+      && S.series && S.series.played >= S.series.total) {
+    endGame();
+  }
 }
 
 async function aiMove() {
@@ -755,8 +736,7 @@ on('seat0', 'onchange', onConfigChange);
 on('seat1', 'onchange', onConfigChange);
 on('sims0', 'onchange', onConfigChange);
 on('sims1', 'onchange', onConfigChange);
-on('btn-match', 'onclick', toggleMatch);
-on('match-games', 'onchange', () => {});
+on('series-count', 'onchange', onConfigChange);
 
 document.addEventListener('keydown', (ev) => {
   // 没人在座就没有「选棋子」这回事，快捷键一并停掉
@@ -794,18 +774,17 @@ document.addEventListener('keydown', (ev) => {
     sel.dataset.last = String(S.meta.default_sims);
   }
   // 默认人执先、AI 执后，和改版前一致
-  const mg = $('match-games');
-  for (const n of S.meta.match_games) {
+  const sc = $('series-count');
+  for (const n of S.meta.series_counts) {
     const o = document.createElement('option');
-    o.value = String(n); o.textContent = n + ' 局';
-    mg.appendChild(o);
+    o.value = String(n); o.textContent = n === 1 ? '1 局' : n + ' 局';
+    sc.appendChild(o);
   }
 
   await loadBackends([HUMAN, S.meta.default_backend]);
   syncBackendUi();
   setPhase('idle');
-  // 服务重启前可能有跑到一半的多局对战，刷新页面要能接上
-  await refreshMatch().catch(() => {});
+
 
   // 开一个会话只为渲染出空棋盘；真正开局要点「开始对局」。
   // **这一步失败不能连累配置界面** —— 上面 loadBackends 已经把双方
