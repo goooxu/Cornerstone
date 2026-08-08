@@ -203,8 +203,12 @@ MatchResult play_match(const AgentConfig& a, const AgentConfig& b, int64_t games
         pool.emplace_back([&per, &a, &b, t, lo, hi, seed, opening_plies] {
             MatchResult& out = per[static_cast<size_t>(t)];
             for (int64_t i = lo; i < hi; ++i) {
-                // 每局一个独立种子，保证结果与线程划分无关，可复现
-                uint64_t rng = seed ^ (uint64_t(i) * 0x9E3779B97F4A7C15ULL);
+                // 种子按 i/2 派生，于是第 2k 与第 2k+1 局**开局完全相同**，
+                // 只是执先方相反 —— 同一个随机开局双方各走一次。
+                // 不这么做的话，某个碰巧利于一方的开局只会被一方碰上。
+                // 开局之后 rng 继续被两个智能体消耗，走法自然分岔，不影响独立性。
+                // 仍然只依赖 i，所以结果与线程划分无关、可复现。
+                uint64_t rng = seed ^ (uint64_t(i / 2) * 0x9E3779B97F4A7C15ULL);
                 play_one(a, b, (i % 2) == 0, opening_plies, rng, out);
             }
         });

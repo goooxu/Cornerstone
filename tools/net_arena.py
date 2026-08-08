@@ -79,9 +79,14 @@ def play(a: Participant, b: Participant, games: int, sims: int, seed: int,
     """
     from cornerstone.evaluate import evaluate_vs_baseline, evaluate_vs_network
 
+    # parallel_games = games/2：每个槽位正好打一对 —— 同一个随机开局、执先方相反。
+    # 用别的值会让某些槽位打奇数局，最后一局落单，配对就断了；而且槽位数除不尽
+    # 目标局数时驱动循环会超发（实测请求 400 实际 403），座位也就分不平。
+
     if a.is_net and b.is_net:
         r = evaluate_vs_network(a.model, b.model, device, games=games,
-                                simulations=sims, parallel_games=min(128, games),
+                                parallel_games=games // 2,
+                                simulations=sims,
                                 seed=seed, engine_threads=threads,
                                 opening_plies=opening_plies)
         return r.wins + 0.5 * r.draws, r.games
@@ -89,7 +94,8 @@ def play(a: Participant, b: Participant, games: int, sims: int, seed: int,
     if a.is_net or b.is_net:
         net, rule = (a, b) if a.is_net else (b, a)
         r = evaluate_vs_baseline(net.model, device, opponent=rule.name, games=games,
-                                 simulations=sims, parallel_games=min(128, games),
+                                 parallel_games=games // 2,
+                                 simulations=sims,
                                  seed=seed, engine_threads=threads,
                                  opening_plies=opening_plies)
         net_score = r.wins + 0.5 * r.draws

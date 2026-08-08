@@ -128,3 +128,38 @@ def test_opening_randomization_changes_the_distribution():
     rate0 = (r0["wins_a"] + 0.5 * r0["draws"]) / 200
     rate6 = (r6["wins_a"] + 0.5 * r6["draws"]) / 200
     assert rate0 > 0.5 and rate6 > 0.5 and rate0 != rate6
+
+
+# ---- 开局配对 ----------------------------------------------------------
+#
+# 第 2k 与第 2k+1 局用**同一个随机开局**，只是执先方相反。
+# 不这么做的话，某个碰巧利于一方的开局只会被一方碰上 —— 400 局就是 400 个
+# 互不相干的开局，公平性只在期望意义上成立。
+
+def test_self_match_scores_exactly_half():
+    """同一个智能体自我对局，得分率必须**精确**是 0.5。
+
+    这是开局配对最强的判据：一对里两局开局相同、rng 流相同、双方策略相同，
+    所以两局逐手完全一样，只是执先方相反 —— 一胜一负必然抵消。
+    没有配对的话这里只会是 0.5 ± 0.025，而且胜负数不对称。
+    """
+    from cornerstone.arena import BASELINES, play_pair
+    for name in ("random", "greedy-area", "greedy-mobility"):
+        cfg = BASELINES[name]
+        r = play_pair(name, name, cfg, cfg, 200, 11, 4, 4)
+        assert r.score_rate_a == 0.5, f"{name} 自我对局得分率 {r.score_rate_a}，开局配对没生效"
+        assert r.wins_a == r.wins_b, f"{name} 胜负数不对称：{r.wins_a} vs {r.wins_b}"
+
+
+def test_paired_openings_still_differ_between_pairs():
+    """配对是「相邻两局相同」，不是「所有局都相同」。
+
+    如果把种子写成常数，400 局会变成同一局打 400 遍 —— 得分率同样是 0.5，
+    上一个测试抓不到。这里用两个强弱悬殊的智能体：真的只打一个开局的话，
+    得分率会钉在 0 或 1，不可能落在中间。
+    """
+    from cornerstone.arena import BASELINES, play_pair
+    r = play_pair("greedy-area", "greedy-mobility",
+                  BASELINES["greedy-area"], BASELINES["greedy-mobility"], 200, 5, 4, 4)
+    assert 0.02 < r.score_rate_a < 0.98, f"得分率 {r.score_rate_a} 像是所有局共用一个开局"
+    assert r.mean_plies > 20
