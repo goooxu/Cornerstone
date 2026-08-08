@@ -157,7 +157,7 @@ def round_robin(
     games: int = 200,
     seed: int = 1,
     threads: int = 1,
-    opening_plies: int = 4,
+    opening_plies: int = 2,
     anchor: str = "random",
     progress=None,
 ) -> ArenaResult:

@@ -345,6 +345,21 @@ struct SelfPlayEngine::Impl {
             for (size_t gi = lo; gi < hi; ++gi) {
                 GameState& g = games[gi];
                 if (g.nodes[0].terminal) continue;    // 根终局，等 advance 收尾
+                // 根的评估本来就不计入模拟预算（见 expand 里 ni==0 的分支），
+                // 但原先它藏在下面这个循环的第一次 descend 里 —— 于是 simulations=0
+                // 时循环一次都不进，根永远等不到评估，advance 又因为根没展开直接跳过，
+                // 整个驱动循环空转。提到外面之后 simulations=0 才有意义：
+                // 没有任何子节点被访问 => max_n=0、q 全等于 v_mix =>
+                // improved_policy = log(prior) + 常数 => argmax 就是纯策略。
+                //
+                // simulations >= 1 的行为不变：原来第一次 descend 处理的也是未展开的根，
+                // 这里的 continue 和那边的 break 一样都是跳过本局的后续。
+                if (!g.nodes[0].expanded) {
+                    if (descend(g, scratch)) {
+                        out.push_back(int32_t(gi));
+                        continue;
+                    }
+                }
                 while (g.sims_done < cfg.simulations) {
                     if (descend(g, scratch)) {
                         out.push_back(int32_t(gi));

@@ -268,7 +268,7 @@ PYBIND11_MODULE(_engine, m) {
                  return c;
              }),
              py::arg("enabled") = false, py::arg("opponent") = AgentConfig{},
-             py::arg("net_opponent") = false, py::arg("opening_plies") = 4)
+             py::arg("net_opponent") = false, py::arg("opening_plies") = 2)
         .def_readwrite("enabled", &EvalConfig::enabled)
         .def_readwrite("opponent", &EvalConfig::opponent)
         .def_readwrite("net_opponent", &EvalConfig::net_opponent)
@@ -420,7 +420,7 @@ PYBIND11_MODULE(_engine, m) {
               return d;
           },
           py::arg("a"), py::arg("b"), py::arg("games"), py::arg("seed") = 0,
-          py::arg("threads") = 1, py::arg("opening_plies") = 0);
+          py::arg("threads") = 1, py::arg("opening_plies") = 2);
 
     m.def("build_batch",
           [](py::array_t<int32_t, py::array::c_style> actions,

@@ -83,7 +83,7 @@ struct EvalConfig {
     bool enabled = false;
     AgentConfig opponent;
     bool net_opponent = false;
-    int opening_plies = 4;    // 开局随机手数，打散重复对局
+    int opening_plies = 2;    // 开局随机手数（双方各 1 手），打散重复对局
 };
 
 class SelfPlayEngine {
