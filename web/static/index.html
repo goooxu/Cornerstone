@@ -61,19 +61,20 @@
           <svg id="ico-pause" viewBox="0 0 24 24"></svg>
         </button>
       </div>
+    </div>
+
+    <!-- 连续对战单独成卡：它和上面那个「开始对局」是两回事 ——
+         上面下一局、这里下几百局只出统计。放在同一张卡里太容易点错。 -->
+    <div class="card" id="match-card">
+      <h2>连续对战 <small>双方都是 AI；只统计胜负，不逐手显示</small></h2>
       <div class="row match-row">
-        <label>连续对战
-          <select id="match-games"></select>
-        </label>
-        <button id="btn-match" class="icon" title="连续对战" aria-label="连续对战">
+        <label>局数 <select id="match-games"></select></label>
+        <button id="btn-match" class="icon" title="开始连续对战" aria-label="开始连续对战">
           <svg id="ico-match" viewBox="0 0 24 24"></svg>
         </button>
         <span id="match-hint" class="hint inline"></span>
       </div>
-    </div>
-
-    <div class="card gone" id="match-card">
-      <h2>连续对战 <small id="match-progress"></small></h2>
+      <div id="match-progress" class="hint"></div>
       <div id="match-result"></div>
     </div>
 

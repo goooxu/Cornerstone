@@ -509,6 +509,8 @@ function syncControls() {
 
   // 单局与多局互斥：一块 GPU，同时跑两边只会互相拖慢且结果不可比
   $('btn-start').disabled = matching;
+  $('btn-start').title = matching ? '连续对战进行中'
+    : playing ? '结束对局' : '开始对局（只下一局）';
   const mb = $('btn-match');
   mb.disabled = playing;
   mb.classList.toggle('running', matching);
@@ -630,10 +632,11 @@ async function refreshMatch() {
 }
 
 function renderMatch(m) {
-  const card = $('match-card');
-  if (!m || !m.total) { card.classList.add('gone'); return; }
-  card.classList.remove('gone');
-
+  if (!m || !m.total) {          // 还没跑过：只留控件，结果区空着
+    $('match-progress').textContent = '';
+    $('match-result').innerHTML = '';
+    return;
+  }
   $('match-progress').textContent =
     `${m.played} / ${m.total} 局` + (m.running ? '（进行中…）' : '（已结束）')
     + (m.sims ? ` · 每步 ${m.sims} 次模拟` : '');
@@ -659,19 +662,28 @@ function renderMatch(m) {
 }
 
 async function toggleMatch() {
-  await guard(async () => {
+  if (S.busy) return;
+  S.busy = true;
+  try {
     if (S.match && S.match.running) {
       await post('/api/match/stop', {});
-      await refreshMatch();
-      return;
+    } else {
+      $('match-progress').textContent = '正在启动…';
+      $('match-result').innerHTML = '';
+      await post('/api/match/start', {
+        players: seatPlayers(),
+        sims: seatSims(),
+        games: parseInt($('match-games').value, 10),
+      });
     }
-    await post('/api/match/start', {
-      players: seatPlayers(),
-      sims: seatSims(),
-      games: parseInt($('match-games').value, 10),
-    });
     await refreshMatch();
-  });
+  } catch (e) {
+    // 报在这张卡上。之前是丢进棋盘下面那行 status，隔了半个屏幕，等于没报
+    $('match-progress').textContent = '';
+    $('match-result').innerHTML = `<div class="hint bad">${e.message}</div>`;
+  } finally {
+    S.busy = false;
+  }
 }
 
 async function pump() {

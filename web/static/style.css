@@ -209,7 +209,8 @@ button.gone { display: none; }
 .topmoves b { color: var(--text); font-variant-numeric: tabular-nums; }
 
 /* 连续对战 */
-.match-row { align-items: center; }
+.match-row { align-items: center; margin-bottom: 8px; }
+#match-progress:not(:empty) { margin: 0 0 10px; }
 .hint.inline { margin: 0; }
 .hint.bad { color: var(--bad); }
 #btn-match.running { background: var(--bad); border-color: var(--bad); color: #17090b; }

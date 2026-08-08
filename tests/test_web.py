@@ -537,6 +537,33 @@ def test_every_element_id_used_by_js_exists_in_html():
     assert not missing, f"app.js 引用了 index.html 里不存在的 id：{missing}"
 
 
+def test_match_controls_live_in_their_own_card():
+    """连续对战和「开始对局」必须分开放。
+
+    它们是两回事：一个下一局并逐手显示，一个下几百局只出统计。
+    挤在同一张卡里时，用户点了「开始对局」、看着一局结束就停，
+    以为连续对战坏了 —— 实际后端跑得好好的。
+    """
+    html = _front("index.html")
+    assert 'id="match-card"' in html
+    # 局数下拉和多局按钮都要在 match-card 里，不能留在单局那张卡
+    card = html[html.index('id="match-card"'):]
+    card = card[:card.index("</div>\n\n    <!--")] if "</div>\n\n    <!--" in card else card
+    assert 'id="match-games"' in card and 'id="btn-match"' in card
+    single = html[:html.index('id="match-card"')]
+    assert 'id="btn-start"' in single and 'id="match-games"' not in single
+
+
+def test_match_errors_shown_next_to_the_match_controls():
+    """多局对战的报错要显示在它自己那张卡上。
+
+    之前丢进棋盘下面那行 status，隔了半个屏幕，等于没报。
+    """
+    js = _code("app.js")
+    assert re.search(r"async function toggleMatch[\s\S]{0,900}match-result", js)
+    assert re.search(r"async function toggleMatch[\s\S]{0,900}catch", js)
+
+
 def test_buttons_are_all_two_state():
     """按钮各有两态，状态由 phase 一处推出：
     开始/结束、暂停/恢复、连续对战/停止。
