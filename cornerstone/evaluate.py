@@ -63,7 +63,16 @@ def evaluate_vs_baseline(
     dtype: torch.dtype = torch.bfloat16,
     max_seconds: float | None = None,
     compile_model: bool = False,
+    engine_threads: int = 16,
 ) -> EvalResult:
+    """网络 vs 规则基线。
+
+    `engine_threads` 一定要给够。这个参数是补上去的 —— 之前这里根本没有它，
+    于是 `SelfPlayDriver` 吃默认值 1，在 144 核的机器上**单线程**跑树搜索。
+    对手是 `flat-mcts-4k` 这种每手 4096 次 rollout 的基线时，
+    200 局要跑 25 分钟；BF16 那条正式训练里 50 次周期评测因此吃掉了
+    21 小时墙钟，比训练加自博弈加起来还多。
+    """
     if opponent not in BASELINES:
         raise KeyError(f"未知基线 {opponent}，可选 {list(BASELINES)}")
 
@@ -75,7 +84,7 @@ def evaluate_vs_baseline(
     ev = E.EvalConfig(enabled=True, opponent=BASELINES[opponent], opening_plies=opening_plies)
     driver = SelfPlayDriver(model, device, num_games=min(parallel_games, games),
                             mcts=mcts, seed=seed, eval_cfg=ev, dtype=dtype,
-                            compile_model=compile_model)
+                            compile_model=compile_model, engine_threads=engine_threads)
 
     recs, _ = driver.run(games, max_seconds=max_seconds)
     if not recs:

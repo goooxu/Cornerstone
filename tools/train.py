@@ -148,6 +148,8 @@ def main() -> int:
                 games=cfg.eval_games, simulations=cfg.eval_simulations,
                 parallel_games=min(cfg.parallel_games, cfg.eval_games),
                 seed=trainer.iteration,
+                # 不传的话会退到单线程，评测能吃掉大半墙钟（见 evaluate_vs_baseline 的注释）
+                engine_threads=cfg.engine_threads,
             )
             print("  " + str(res))
             row.update({"eval_opponent": res.opponent, "eval_score_rate": res.score_rate,
