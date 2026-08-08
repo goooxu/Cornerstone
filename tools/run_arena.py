@@ -20,7 +20,7 @@ def main() -> None:
                     help=f"可选: {' '.join(BASELINES)}")
     ap.add_argument("--games", type=int, default=200, help="每对的对局数（必须是偶数）")
     ap.add_argument("--threads", type=int, default=os.cpu_count() or 1)
-    ap.add_argument("--opening-plies", type=int, default=4, help="开局随机手数")
+    ap.add_argument("--opening-plies", type=int, default=2, help="开局随机手数")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--anchor", default="random", help="Elo 零点锚定在谁身上")
     ap.add_argument("--out", default=None, help="结果 JSON 输出路径")

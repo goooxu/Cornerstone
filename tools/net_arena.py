@@ -117,9 +117,12 @@ def main() -> None:
                     help="网络之间只打里程碑距离 <= N 的对（0 = 不限）")
     ap.add_argument("--bootstrap", type=int, default=200, help="自举次数，用来算 ±")
     ap.add_argument("--games", type=int, default=400, help="每对的对局数（必须是偶数）")
-    ap.add_argument("--simulations", type=int, default=64)
+    ap.add_argument("--simulations", type=int, default=0,
+                    help="网络每手的模拟数；**0 = 纯策略**（只做一次前向，落 argmax(prior)）。"
+                         "注意 1 不是纯策略 —— 那是「根评估 + 1 次子节点访问」，"
+                         "单次访问会把 σ 放大 51 倍，反而是最随机的设置。")
     ap.add_argument("--engine-threads", type=int, default=os.cpu_count() or 16)
-    ap.add_argument("--opening-plies", type=int, default=4)
+    ap.add_argument("--opening-plies", type=int, default=2)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--anchor", default="random", help="Elo 零点锚定在谁身上")
@@ -188,6 +191,10 @@ def main() -> None:
     # ± 用参数自举，不用 elo_stderr。后者是按「总得分率服从二项分布」估的，
     # 依赖每个参赛者碰到的对手组合 —— 而这里各人打的对子并不一样
     # （网络只打相邻档、桥接只打几对），那个 ± 跨行不可比。
+    # **按「对」重采样，不是按「局」**。开局是成对的（同一开局双方各执先一次），
+    # 同一对里的两局强相关 —— 纯策略下更是由开局唯一决定 —— 所以把 400 局当成
+    # 400 次独立二项试验会高估精度。改成对 games/2 个配对重采样。
+    # 这是保守上界：配对得分取值于 {0, 0.5, 1}，其方差恒 <= p(1-p)。
     rng = np.random.default_rng(args.seed)
     boot = []
     for _ in range(args.bootstrap):
@@ -196,8 +203,10 @@ def main() -> None:
             g = games[i, j]
             if g <= 0:
                 continue
-            w = rng.binomial(int(round(g)), min(max(scores[i, j] / g, 0.0), 1.0))
-            s2[i, j], s2[j, i] = w, g - w
+            rate = min(max(scores[i, j] / g, 0.0), 1.0)
+            npair = max(1, int(round(g / 2)))
+            sa = rng.binomial(npair, rate) / npair * g      # 换算回局数尺度
+            s2[i, j], s2[j, i] = sa, g - sa
         boot.append(fit_elo(s2, games, anchor=anchor_i))
     err = np.std(np.array(boot), axis=0) if boot else np.zeros(n)
     order = np.argsort(-elo)
@@ -212,16 +221,23 @@ def main() -> None:
             if r["a"] == y and r["b"] == x:
                 return 1.0 - r["rate_a"]
         return None
+    # 断言必须**不依赖具体有哪些基线在场** —— 原先钉死 flat-mcts-4k，参赛者一换
+    # 这段就整体跳过，等于没有自检。改成两条无论怎么组队都成立的不变量。
     nets_sorted = sorted((p for p in parts if p.is_net), key=lambda q: q.step)
-    if nets_sorted and "flat-mcts-4k" in idx:
-        lo = _rate(nets_sorted[0].name, "flat-mcts-4k")
-        hi = _rate(nets_sorted[-1].name, "flat-mcts-4k")
-        if lo is not None and lo > 0.5:
-            raise SystemExit(f"方向自检失败：最早的网络 {nets_sorted[0].name} "
-                             f"对 flat-mcts-4k 得分率 {lo:.3f}，不该 > 0.5")
-        if hi is not None and hi < 0.9:
-            raise SystemExit(f"方向自检失败：最终网络 {nets_sorted[-1].name} "
-                             f"对 flat-mcts-4k 得分率 {hi:.3f}，不该 < 0.9")
+    checks = []
+    if len(nets_sorted) >= 2:
+        checks.append((nets_sorted[-1].name, nets_sorted[0].name, 0.5,
+                       "训练了 20 万步的网络不可能打不过最早那一档"))
+    for strong, weak in (("greedy-mobility", "random"), ("greedy-area", "random"),
+                         ("flat-mcts-1k", "random")):
+        if strong in idx and weak in idx:
+            checks.append((strong, weak, 0.8, f"{strong} 对 {weak} 应当碾压"))
+            break
+    for x, y, floor, why in checks:
+        r = _rate(x, y)
+        if r is not None and r < floor:
+            raise SystemExit(f"方向自检失败：{x} 对 {y} 得分率 {r:.3f} < {floor}"
+                             f"（{why}）—— 整张表可能上下颠倒了，先查 play() 的方向")
 
     print(f"\n{len(todo)} 对打完，用时 {time.perf_counter()-t0:.1f}s\n")
     print(f"{'参赛者':<22}{'Elo':>9}{'±':>7}{'总得分率':>10}{'局数':>8}")
