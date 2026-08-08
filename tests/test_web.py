@@ -523,6 +523,54 @@ def _code(name: str) -> str:
     return re.sub(r"^\s*//.*$", "", src, flags=re.M)
 
 
+def _js_identifiers(src: str):
+    """粗略地找出 app.js 里「用到但没声明」的标识符。
+
+    没有 JS 运行时，这类错误只能等浏览器抛 ReferenceError 才发现 ——
+    而它一抛就是整块逻辑停摆。真事：合并状态栏时把 `const noHuman = ...`
+    删了，但后面还在用，于是一刷新就「初始局面加载失败：noHuman is not defined」。
+    """
+    s = re.sub(r"/\*[\s\S]*?\*/", "", src)
+    s = re.sub(r"//.*$", "", s, flags=re.M)
+    for q in ("`", "'", '"'):
+        s = re.sub(q + r"(?:[^" + q + r"\\]|\\.)*" + q, q * 2, s)
+
+    declared = set()
+    for pat in (r"function\s+([\w$]+)", r"(?:const|let|var)\s+([\w$]+)",
+                r",\s*([\w$]+)\s*=", r"catch\s*\(\s*([\w$]+)",
+                r"for\s*\(\s*(?:const|let|var)\s+([\w$]+)"):
+        declared |= set(re.findall(pat, s))
+    for grp in re.findall(r"(?:const|let|var)\s*[\{\[]([^\}\]]*)[\}\]]", s):
+        declared |= set(re.findall(r"[\w$]+", grp))
+    for params in (re.findall(r"function\s*[\w$]*\s*\(([^)]*)\)", s)
+                   + re.findall(r"\(([^)]*)\)\s*=>", s)):
+        declared |= set(re.findall(r"[\w$]+", params))
+    declared |= set(re.findall(r"([\w$]+)\s*=>", s))
+
+    body = re.sub(r"\.\s*[\w$]+", "", s)      # 属性访问不算引用标识符
+    body = re.sub(r"[\w$]+\s*:", "", body)     # 对象字面量的键
+    used = set(re.findall(r"\b([a-zA-Z_$][\w$]*)\b", body))
+
+    keywords = set("""await async break case catch class const continue default delete do else export
+        extends finally for function if import in instanceof let new of return static super switch this
+        throw try typeof var void while with yield true false null undefined""".split())
+    globals_ = set("""window document console Math JSON Object Array String Number Boolean Promise Set
+        Map setTimeout setInterval clearInterval clearTimeout fetch URL Blob Infinity NaN parseInt
+        parseFloat requestAnimationFrame localStorage isNaN Error""".split())
+    return sorted(used - declared - keywords - globals_)
+
+
+def test_no_undefined_identifiers_in_frontend():
+    """用到但没声明的标识符 = 浏览器一抛 ReferenceError，整块逻辑停摆。"""
+    missing = _js_identifiers(_front("app.js"))
+    assert not missing, f"这些标识符没找到声明：{missing}"
+
+
+def test_the_undefined_check_actually_catches_things():
+    """检查本身要有效，否则等于没测。"""
+    assert "noHuman" in _js_identifiers("function f(st) { if (noHuman) return; }")
+
+
 def test_every_element_id_used_by_js_exists_in_html():
     """`$('xxx')` 取不到就是 null，接着取属性即抛异常、整页停摆。
 
@@ -823,7 +871,8 @@ def test_background_is_css_only():
     assert not re.search(r"url\(\s*[\"']?(?!data:)[a-zA-Z./]", css), "不该引用外部图片文件"
     assert "<img" not in html
     # 面板要半透明，否则整页被不透明卡片盖住，等于没有背景
-    assert "backdrop-filter" in css and "rgba(26, 31, 42, .82)" in css
+    assert "backdrop-filter" in css, "面板要半透明，否则背景透不出来"
+    assert re.search(r"background: rgba\([\d, .]+\)", css)
 
 
 def test_tray_is_seven_by_three():

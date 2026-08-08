@@ -375,6 +375,7 @@ function applyState(st, analysis) {
 
   // 没人在座就不存在「选中的棋子」；有人在座时，选中的棋子被用掉了要清掉。
   // 这里按人的座位索引，noHuman 时直接清空，绝不拿 -1 去索引。
+  const noHuman = st.human_player < 0;
   if (noHuman) {
     S.piece = null; S.ori = null;
   } else {
