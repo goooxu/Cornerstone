@@ -70,6 +70,27 @@ start_training() {
     bash scripts/ab_experiment.sh $arm 2>&1 | tail -2"
 }
 
+# 配置里的总步数。从 ab_experiment.sh 里取，而不是在这儿再抄一份 ——
+# 抄一份就迟早对不上（这个教训在启动参数上已经吃过一次）。
+total_steps() {
+  sed -n 's/.*--total-steps \([0-9]\+\).*/\1/p' "$REPO/scripts/ab_experiment.sh" | head -1
+}
+
+# 训练是不是已经跑满了。
+#
+# 不判这个的话，跑满之后会陷入死循环：训练进程一启动就发现
+# step >= total_steps，落一份 checkpoint 加几百 MB 的 replay 快照然后退出；
+# 守护看它没在跑，3 分钟后再拉一次。既白烧 NFS，日志也会被
+# 「恢复失败，下一轮重试」刷满 —— 而它根本不是失败。
+finished() {
+  local exp="$1" f="$RUNS/$exp/logs/metrics.jsonl" total step
+  total="$(total_steps)"
+  [ -n "$total" ] && [ -f "$f" ] || return 1
+  step="$(tail -1 "$f" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("step",0))' 2>/dev/null)"
+  [ -n "$step" ] || return 1
+  [ "$step" -ge "$total" ]
+}
+
 progress() {   # 直接读 NFS 上的 metrics，不用 ssh
   local exp="$1" f="$RUNS/$exp/logs/metrics.jsonl"
   [ -f "$f" ] || { echo "无数据"; return; }
@@ -99,6 +120,15 @@ check_once() {
 
     if is_training "$host" "$exp"; then
       continue                              # 一切正常，不刷日志
+    fi
+
+    if finished "$exp"; then
+      # 只记一条就够，别每 3 分钟往日志里刷一遍
+      if [ ! -f "$RUNS/$exp/.done" ]; then
+        log "[$exp] 已跑满 $(total_steps) 步，训练完成，不再拉起（$(progress "$exp")）"
+        : >"$RUNS/$exp/.done"
+      fi
+      continue
     fi
 
     log "[$exp] 训练未在运行，尝试恢复（进度 $(progress "$exp")）"
@@ -147,7 +177,8 @@ case "${1:-}" in
     [ -f "$PAUSE" ] && echo "当前处于暂停状态"
     while read -r host exp devs <&3; do
       case "$host" in ''|\#*) continue ;; esac
-      printf '  %-10s %s\n' "$exp" "$(progress "$exp")"
+      printf '  %-10s %s%s\n' "$exp" "$(progress "$exp")" \
+             "$(finished "$exp" && echo '  [已跑满，不再拉起]')"
     done 3<"$HOSTS_FILE" 2>/dev/null
     echo "--- 日志尾部 ---"; tail -8 "$LOG" 2>/dev/null
     exit 0 ;;
