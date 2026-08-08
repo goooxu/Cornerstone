@@ -766,6 +766,43 @@ def test_game_over_banner_does_not_cover_the_board():
     assert html.index('id="endbanner"') < html.index('id="board-wrap"')
 
 
+def test_rule_baseline_never_shows_a_simulation_count():
+    """规则基线不搜索，界面上就不该给它写模拟数。
+
+    真出现过：「上一手：规则基线 greedy-mobility · 64 次模拟 · 0s」——
+    因为那一处自己拼了 simsText，没走 describe() 的判断。
+    凡是要显示一方名字的地方，都必须经过 describe()。
+    """
+    js = _code("app.js")
+    assert re.search(r"describe\(who, r\.ai_label, sims\)", js), \
+        "「上一手」要走 describe()，别自己拼模拟数"
+    # 把 simsText 的定义和 describe 的函数体挖掉，剩下的地方都不该再拼模拟数
+    rest = re.sub(r"function simsText[\s\S]*?\n\}?\n", "", js, count=1)
+    rest = re.sub(r"function describe\([\s\S]*?\n\}\n", "", rest, count=1)
+    hits = [m.strip() for m in re.findall(r"[^\n]*simsText\([^\n]*", rest)]
+    assert not hits, f"这些地方绕过了 describe()：{hits}"
+
+
+def test_end_banner_reserves_its_space():
+    """横幅一出一进不能把棋盘往下顶 —— 连打时棋盘会一局跳一次。"""
+    css, js = _front("style.css"), _code("app.js")
+    assert "visibility: hidden" in css and ".endbanner.show" in css
+    assert "el.classList.add('show')" in js and "el.classList.remove('show')" in js
+    assert "min-height: 52px" in css, "要留出固定高度占位"
+
+
+def test_end_banner_shows_which_game():
+    """连打时只写「胜」不知道进行到第几局了。"""
+    js = _code("app.js")
+    assert re.search(r"第 \$\{s\.played\} / \$\{s\.total\} 局", js)
+
+
+def test_tray_is_seven_by_three():
+    """21 枚正好 7 列 3 排，比 6 列紧凑，也不留半排空格。"""
+    css = _front("style.css")
+    assert "repeat(7, 1fr)" in css
+
+
 def test_colors_are_bound_to_engines_not_seats():
     """颜色绑对战双方，不绑先后手。
 

@@ -108,14 +108,17 @@ select:disabled { opacity: .45; cursor: not-allowed; }
 .seat.p0 { background: #2dd4bf; }      /* 只用在座位选择那两行 */
 .seat.p1 { background: #fb923c; }
 
-/* 终局横幅：在棋盘上方，不盖盘面 */
+/* 终局横幅：在棋盘上方，不盖盘面。
+   **位置一直占着**（只切 visibility，不切 display）—— 用 display:none
+   的话它一出一进就把整个棋盘往下顶，连打时棋盘会一局跳一次。 */
 .endbanner {
   display: flex; align-items: baseline; gap: 10px;
-  background: var(--panel); border: 2px solid var(--line); border-radius: 10px;
-  padding: 12px 18px; margin-bottom: 10px;
+  background: var(--panel); border: 2px solid transparent; border-radius: 10px;
+  padding: 10px 18px; margin-bottom: 10px;
+  min-height: 52px; visibility: hidden;
 }
-.endbanner.gone { display: none; }
-.endbanner b { font-size: 24px; }
+.endbanner.show { visibility: visible; }
+.endbanner b { font-size: 22px; }
 .endbanner span:last-child { color: var(--muted); font-size: 15px; margin-left: auto; }
 .board-wrap { transition: border-color .2s; }
 
@@ -149,12 +152,13 @@ button.gone, .row.gone { display: none; }
 /* 6 列而不是 7 列，格距也拉开：格子间距越大，朝向圈盖住邻居的比例越小。
    朝向圈要能画到格子外面去，所以这一路都不能裁剪。 */
 .tray {
-  display: grid; grid-template-columns: repeat(6, 1fr);
-  gap: 14px 12px; overflow: visible; padding: 4px 2px;
+  /* 21 枚正好 7 列 3 排，比 6 列紧凑，也不留半排空格 */
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  gap: 10px 8px; overflow: visible; padding: 4px 2px;
 }
 .tray .piece {
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
-  padding: 8px 4px; min-height: 52px;
+  padding: 6px 3px; min-height: 46px;
   display: flex; align-items: center; justify-content: center;
   position: relative;                 /* 朝向圈以它为定位原点 */
   cursor: default;                    /* 棋子本身不可点，别给可点的暗示 */
@@ -171,7 +175,7 @@ button.gone, .row.gone { display: none; }
 .pieces-wrap .card + .card .tray,
 .pieces-wrap .card:first-child:not(:last-child) .tray { gap: 8px 8px; }
 .pieces-wrap .card:first-child:not(:last-child) .piece,
-.pieces-wrap .card + .card .piece { min-height: 42px; padding: 5px 3px; }
+.pieces-wrap .card + .card .piece { min-height: 38px; padding: 4px 2px; }
 
 .tray .piece.used { opacity: .22; }
 .tray .piece.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }

@@ -192,18 +192,21 @@ function renderEndBanner(st) {
   const el = $('endbanner');
   const wrap = $('board-wrap');
   if (!st || !st.terminal) {
-    el.classList.add('gone');
+    el.classList.remove('show');     // 只是隐形，位置一直占着，棋盘才不会跳
     wrap.style.borderColor = '';
     return;
   }
   const v = verdict(st);
   const color = v.seat < 0 ? 'var(--muted)' : seatColor(v.seat);
   const who = v.seat < 0 ? '' : dotHtml(v.seat);
+  const s = S.series;
+  // 连打时要知道这是第几局 —— 只看「胜」不知道进行到哪儿了
+  const nth = (s && s.total > 1) ? `第 ${s.played} / ${s.total} 局　` : '';
   el.innerHTML = `${who}<b>${v.text}</b>`
-    + `<span>占格 ${st.scores[0]} : ${st.scores[1]}　共 ${st.ply} 手</span>`;
+    + `<span>${nth}占格 ${st.scores[0]} : ${st.scores[1]}　共 ${st.ply} 手</span>`;
   el.style.borderColor = color;
   el.style.color = color;
-  el.classList.remove('gone');
+  el.classList.add('show');
   wrap.style.borderColor = color;      // 棋盘描边也跟着变，边框不挡格子
 }
 
@@ -300,7 +303,7 @@ function orientRing(p, me) {
   ring.className = 'ring';
   const oris = p.orientations;
   const k = oris.length;
-  const radius = k <= 2 ? 42 : k <= 4 ? 52 : 64;
+  const radius = k <= 2 ? 38 : k <= 4 ? 48 : 58;   // 7 列后格子变窄，圈跟着收一点
   // 圆形暗底的大小跟着半径走，由 CSS 用 calc 加上按钮尺寸
   ring.style.setProperty('--r', radius + 'px');
 
@@ -786,10 +789,13 @@ async function aiMove() {
       '　vs　' + dotHtml(1) + describe(p[1], r.labels[1], m[1]);
   }
   if (r.ai_seconds !== undefined) {
-    const sims = r.sims ? r.sims[r.ai_player] : undefined;
-    const tail = sims === undefined ? '' : ' · ' + simsText(sims);
+    // 用 describe() 而不是自己拼 —— 它知道「规则基线不搜索，别写模拟数」。
+    // 之前这里无条件拼上模拟数，于是出现过
+    // 「上一手：规则基线 greedy-mobility · 64 次模拟」这种自相矛盾的话。
+    const who = r.players ? r.players[r.ai_player] : null;
+    const sims = r.sims ? r.sims[r.ai_player] : 0;
     $('lastmove').innerHTML =
-      `上一手：${dotHtml(r.ai_player)}${r.ai_label}${tail} · ${r.ai_seconds}s`;
+      `上一手：${dotHtml(r.ai_player)}${describe(who, r.ai_label, sims)} · ${r.ai_seconds}s`;
   }
   applyState(r, r.analysis || null);
 }
