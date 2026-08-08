@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""把 metrics.jsonl 画成损失曲线。
+"""把 metrics.jsonl 画成图。
 
-    python3 tools/plot_metrics.py --exp ab-bf16 --out reports/图表/损失曲线.png
+    python3 tools/plot_metrics.py --kind loss      --exp ab-bf16
+    python3 tools/plot_metrics.py --kind timeline  --exp ab-bf16
+
+`loss` 画损失曲线，`timeline` 画一轮的时间线（各阶段按真实秒数等比例）。
 
 三块面板对应报告里那段结论：
 
@@ -37,6 +40,7 @@ def rolling(y, k: int):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--kind", choices=["loss", "timeline"], default="loss")
     ap.add_argument("--exp", default="ab-bf16")
     ap.add_argument("--metrics", default=None, help="直接给 metrics.jsonl 路径")
     ap.add_argument("--out", default=None)
@@ -54,6 +58,11 @@ def main() -> None:
     rows = [r for r in rows if "loss" in r]          # 攒数据那几轮没有训练项
     if not rows:
         raise SystemExit(f"{src} 里没有带 loss 的记录")
+
+    if args.kind == "timeline":
+        out = args.out or os.path.join(REPO, "reports", "图表", "一轮的时间线.png")
+        fig_timeline(rows, plt, np, out, args.dpi)
+        return
 
     step = np.array([r["step"] for r in rows], dtype=float)
     get = lambda k: np.array([r.get(k, np.nan) for r in rows], dtype=float)  # noqa: E731
@@ -144,6 +153,98 @@ def main() -> None:
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     fig.savefig(out, dpi=args.dpi, bbox_inches="tight", facecolor="white")
     print(f"已写入 {out}（{len(rows)} 个数据点，最低点 step {int(step[lo]):,}）")
+
+
+def fig_timeline(rows, plt, np, out: str, dpi: int) -> None:
+    """一轮的时间线：各阶段按真实秒数等比例画。
+
+    重点是让「评测那一段有多长」一眼可见 —— 它比自博弈加训练还长一个数量级，
+    而这不是「测得勤」，是评测走了单线程（见报告 §7.3）。
+    """
+    import matplotlib.patches as mpatches
+
+    wall = np.array([r["wall"] for r in rows], float)
+    dt = np.diff(wall)
+    is_ev = np.array(["eval_score_rate" in r for r in rows])[1:]
+    sp = np.array([r["selfplay_games"] / r["selfplay_games_per_s"] for r in rows])[1:]
+    tr = np.array([r.get("planned_steps", 400) / r["train_steps_per_s"] for r in rows])[1:]
+    other = dt - sp - tr
+
+    SP, TR, OT = (float(np.median(x)) for x in (sp, tr, other[~is_ev]))
+    EV = float(np.median(other[is_ev]))
+    n_ev, n_pl = int(is_ev.sum()), int((~is_ev).sum())
+
+    C = {"sp": "#2f7fd1", "tr": "#2f9e6f", "ev": "#c0392b", "ot": "#9aa5b1"}
+    fig, ax = plt.subplots(2, 1, figsize=(11, 5.4),
+                           gridspec_kw={"height_ratios": [2.1, 1], "hspace": 0.62})
+
+    # ── 上：一轮的时间线，两种轮次共用一条时间轴 ──────────────────
+    a = ax[0]
+    bars = [("eval iteration\n(every 10th, ×%d)" % n_ev, 1,
+             [("sync + I/O", OT, C["ot"]), ("self-play", SP, C["sp"]),
+              ("train 400 steps", TR, C["tr"]), ("evaluation", EV, C["ev"])]),
+            ("typical iteration\n(×%d)" % n_pl, 0,
+             [("sync + I/O", OT, C["ot"]), ("self-play", SP, C["sp"]),
+              ("train 400 steps", TR, C["tr"])])]
+    XMAX = 1700.0
+    seen = {}
+    for label, y, segs in bars:
+        x = 0.0
+        for name, w, col in segs:
+            h = a.barh(y, w, left=x, height=0.46, color=col, edgecolor="white", lw=0.8)
+            seen.setdefault(name, h)
+            # 只有够宽的段才塞得下字；窄段靠图例认色，别画成截断的半个词
+            if w / XMAX > 0.09:
+                a.text(x + w / 2, y, f"{name}\n{w:.0f}s", ha="center", va="center",
+                       fontsize=9, color="white", fontweight="bold")
+            x += w
+        a.text(-28, y, label, ha="right", va="center", fontsize=9)
+        a.text(x + 16, y, f"{x:.0f}s", ha="left", va="center", fontsize=9.5,
+               fontweight="bold", color="#333")
+    # 窄段的数字放到条子下面，图上就不会有半截词
+    a.text(SP + TR + OT + 16, -0.34,
+           f"self-play {SP:.0f}s  ·  train {TR:.0f}s  ·  sync + I/O {OT:.0f}s",
+           ha="left", va="center", fontsize=8.5, color="#666")
+    a.legend([seen[k] for k in ("self-play", "train 400 steps", "evaluation", "sync + I/O")],
+             ["self-play", "train 400 steps", "evaluation", "sync + I/O"],
+             loc="upper right", fontsize=8.5, ncol=4, frameon=False,
+             bbox_to_anchor=(1.0, 1.22))
+    a.set_yticks([])
+    a.set_ylim(-0.62, 1.42)
+    a.set_xlim(-330, XMAX)
+    a.set_xticks([0, 250, 500, 750, 1000, 1250, 1500])   # 时间轴不该出现负刻度
+    a.set_xlabel("seconds (to scale)")
+    a.set_title(f"One iteration = self-play → train 400 steps. Every 10th also evaluates — "
+                f"that eval alone costs {EV/(SP+TR+OT):.0f}× the rest",
+                fontsize=10.5, pad=10)
+    a.spines[["left", "right", "top"]].set_visible(False)
+    a.grid(axis="x", alpha=0.18)
+
+    # ── 下：全程墙钟怎么分掉的 ───────────────────────────────────
+    b = ax[1]
+    tot = float(wall[-1] - wall[0])
+    parts = [("self-play", float(sp.sum()), C["sp"]), ("training", float(tr.sum()), C["tr"]),
+             ("evaluation", float(other[is_ev].sum()), C["ev"])]
+    parts.append(("other", tot - sum(p[1] for p in parts), C["ot"]))
+    x = 0.0
+    for name, v, col in parts:
+        b.barh(0, v, left=x, height=0.5, color=col, edgecolor="white", lw=0.8)
+        if v / tot > 0.04:
+            b.text(x + v / 2, 0, f"{name}\n{v/3600:.1f}h  ({100*v/tot:.0f}%)",
+                   ha="center", va="center", fontsize=8.5, color="white", fontweight="bold")
+        x += v
+    b.set_yticks([])
+    b.set_xlim(0, tot)
+    b.set_xlabel("total wall clock")
+    b.set_title(f"Where the {tot/3600:.1f} hours went", fontsize=10.5, pad=8)
+    b.set_xticks([i * 3600 for i in range(0, int(tot / 3600) + 1, 6)])
+    b.set_xticklabels([f"{i}h" for i in range(0, int(tot / 3600) + 1, 6)])
+    b.spines[["left", "right", "top"]].set_visible(False)
+    del mpatches
+
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    fig.savefig(out, dpi=dpi, bbox_inches="tight", facecolor="white")
+    print(f"已写入 {out}（普通轮 {SP+TR+OT:.0f}s，评测轮 {SP+TR+OT+EV:.0f}s）")
 
 
 if __name__ == "__main__":
