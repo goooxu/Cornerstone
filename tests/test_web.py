@@ -940,6 +940,26 @@ def test_tray_is_seven_by_three():
     assert "repeat(7, 1fr)" in css
 
 
+def test_board_only_ever_paints_the_two_engine_colors():
+    """棋盘上不该冒出第三种颜色。
+
+    真出现过：「AI 判断」里悬停某个候选着法时，落点被涂成靛蓝 #818cf8aa ——
+    一个谁都不是的颜色，而且因为它是「先 draw() 再直接往画布上糊一层」，
+    任何一次重绘都会把它抹掉，表现就是「闪一下就没了」。
+    """
+    js = _code("app.js")
+    assert "#818cf8" not in js, "棋盘上不该有第三种颜色"
+    assert "function highlight" not in js, "糊在画布上的那套应已移除"
+    # 改成存进状态、由 draw() 统一画，颜色跟着行棋方
+    assert "S.hoverMove" in js
+    assert re.search(r"if \(st && S\.hoverMove\)[\s\S]{0,160}seatColor\(st\.current_player\)", js)
+    # 画棋盘时允许的颜色：双方色、底色、网格线、非法预览的红、白色描边
+    body = js[js.index("function draw()"):js.index("function verdict(")]
+    hexes = set(re.findall(r"#[0-9a-fA-F]{3,8}", body))
+    allowed = {"#0e1118", "#2a3143", "#f8717166", "#f87171", "#ffffff88", "#ffffffcc"}
+    assert hexes <= allowed, f"draw() 里出现了意料之外的颜色：{hexes - allowed}"
+
+
 def test_colors_are_bound_to_engines_not_seats():
     """颜色绑对战双方，不绑先后手。
 
