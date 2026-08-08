@@ -146,6 +146,8 @@ function draw() {
     }
   }
 
+  if (st && st.terminal) { drawEndBanner(st); return; }
+
   // 悬停预览
   if (humanToMove && S.hover && S.ori !== null) {
     const [hr, hc] = S.hover;
@@ -161,6 +163,45 @@ function draw() {
       CTX.fill(); CTX.stroke();
     }
   }
+}
+
+// 胜负规则：占格多者胜，相同为和局
+function verdictText(st) {
+  const [a, b] = st.scores;
+  if (st.human_player < 0) return a > b ? '先手胜' : a < b ? '后手胜' : '和局';
+  return st.result > 0 ? '你赢了' : st.result < 0 ? '你输了' : '和局';
+}
+
+// 终局横幅。状态行那一句在棋盘下面，连打时眼睛盯着棋盘根本注意不到 ——
+// 一局结束这件事值得画在棋盘正中间。
+function drawEndBanner(st) {
+  const w = CV.width, h = CV.height;
+  CTX.fillStyle = '#0b0e15c9';
+  CTX.fillRect(0, 0, w, h);
+
+  const [a, b] = st.scores;
+  const verdict = verdictText(st);
+  const win = st.human_player < 0
+    ? (a > b ? 0 : a < b ? 1 : -1)          // AI 对战：谁占格多
+    : (st.result > 0 ? 0 : st.result < 0 ? 1 : -1);
+  const color = win < 0 ? '#98a2b8' : (win === 0 ? COLORS[0] : COLORS[1]);
+
+  const bh = 132, by = (h - bh) / 2;
+  CTX.fillStyle = '#161b26f2';
+  roundRect(w * 0.08, by, w * 0.84, bh, 14);
+  CTX.fill();
+  CTX.strokeStyle = color; CTX.lineWidth = 3;
+  roundRect(w * 0.08, by, w * 0.84, bh, 14);
+  CTX.stroke();
+
+  CTX.textAlign = 'center';
+  CTX.fillStyle = color;
+  CTX.font = '700 40px system-ui, sans-serif';
+  CTX.fillText(verdict, w / 2, by + 58);
+  CTX.fillStyle = '#e6e9f0';
+  CTX.font = '500 22px system-ui, sans-serif';
+  CTX.fillText(`占格 ${a} : ${b}　共 ${st.ply} 手`, w / 2, by + 98);
+  CTX.textAlign = 'start';
 }
 
 function roundRect(x, y, w, h, r) {
@@ -284,16 +325,9 @@ function applyState(st, analysis) {
   const noHuman = st.human_player < 0;
   if (st.terminal) {
     const [a, b] = st.scores;
-    if (noHuman) {
-      // 胜负规则：占格多者胜，相同为和局
-      const verdict = a > b ? '先手胜' : a < b ? '后手胜' : '和局';
-      status.textContent = `终局：占格 ${a} : ${b} —— ${verdict}`;
-    } else {
-      const verdict = st.result > 0 ? '你赢了' : st.result < 0 ? '你输了' : '和局';
-      status.textContent = `终局：占格 ${a} : ${b} —— ${verdict}`;
-      if (st.result > 0) status.classList.add('win');
-      if (st.result < 0) status.classList.add('lose');
-    }
+    status.textContent = `终局：占格 ${a} : ${b} —— ${verdictText(st)}`;
+    if (!noHuman && st.result > 0) status.classList.add('win');
+    if (!noHuman && st.result < 0) status.classList.add('lose');
   } else if (S.phase === 'idle') {
     status.textContent = st.ply === 0
       ? '选好双方与模拟数，点「开始对局」'
@@ -690,12 +724,20 @@ function renderSeries() {
 }
 
 
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// 连续对战里，一局结束到下一局开始之间停一会儿，让人看清终局。
+// 没有这个停顿，棋盘会「啪」地跳到下一局的空盘，等于没看见。
+const BETWEEN_GAMES_MS = 2000;
+
 async function pump() {
   await guard(async () => {
     while (S.phase === 'playing' && S.state) {
       if (S.state.terminal) {
         recordResult(S.state);
         if (S.series.played >= S.series.total) break;
+        await sleep(BETWEEN_GAMES_MS);
+        if (S.phase !== 'playing') break;   // 停顿期间被暂停/结束了
         await newSession();          // 自动开下一局
         continue;
       }

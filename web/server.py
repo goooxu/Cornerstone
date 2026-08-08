@@ -184,7 +184,13 @@ class NetBrain:
         self.device = torch.device(device)
         self.step = step
         self.path = path
-        self.label = f"CornerNet {model.num_params()/1e6:.1f}M (step {step})"
+        # 精度写进标签：ab-fp8 / ab-bf16 两条腿的 checkpoint 混在一个下拉里，
+        # 光看 step 分不出是哪一条。这个标志来自 checkpoint 自带的 model_config，
+        # 不是从跑名猜的 —— 跑名可以随便起，模型配置不会骗人。
+        self.fp8 = bool(getattr(model.cfg, "fp8", False))
+        self.precision = "FP8" if self.fp8 else "BF16"
+        self.label = (f"CornerNet {model.num_params()/1e6:.1f}M · {self.precision}"
+                      f" · step {step}")
         self.engines: dict[int, E.SelfPlayEngine] = {}
         # SelfPlayEngine 是有状态的：set_position 之后要 prepare/feed 到底。
         # FastAPI 的同步 handler 跑在线程池里，两个人同时点「让 AI 走」

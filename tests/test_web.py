@@ -740,6 +740,38 @@ def test_model_label_includes_simulation_count():
     assert "seatDesc(0)" in js and "seatDesc(1)" in js
 
 
+def test_model_label_includes_precision():
+    """标签要带精度。ab-fp8 / ab-bf16 的 checkpoint 混在一个下拉里，
+    光看 step 分不出是哪一条。
+
+    精度取自 checkpoint 自带的 model_config，不是从跑名猜的 ——
+    跑名可以随便起，模型配置不会骗人。
+    """
+    srv = open(os.path.join(REPO, "web", "server.py"), encoding="utf-8").read()
+    assert 'self.fp8 = bool(getattr(model.cfg, "fp8", False))' in srv
+    assert 'self.precision = "FP8" if self.fp8 else "BF16"' in srv
+    assert "· {self.precision}" in srv
+
+
+def test_game_over_is_shown_on_the_board():
+    """终局要在棋盘上给出明显提示。
+
+    状态行那一句在棋盘下面，连打时眼睛盯着棋盘根本注意不到。
+    """
+    js = _code("app.js")
+    assert "function drawEndBanner" in js
+    assert "if (st && st.terminal) { drawEndBanner(st); return; }" in js
+    assert "function verdictText" in js, "判词要和状态行共用一份，别写两套"
+
+
+def test_series_pauses_between_games():
+    """连打时每局之间停一下，否则棋盘会「啪」地跳到下一局的空盘。"""
+    js = _code("app.js")
+    assert "BETWEEN_GAMES_MS = 2000" in js
+    assert re.search(r"await sleep\(BETWEEN_GAMES_MS\);\s*\n\s*if \(S\.phase !== 'playing'\) break;", js), \
+        "停顿期间被暂停/结束要能退出"
+
+
 def test_series_card_sits_under_the_board():
     """战绩放棋盘下面：连打时眼睛在棋盘上，统计跟着一起看才顺。"""
     html = _front("index.html")
