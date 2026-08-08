@@ -235,6 +235,13 @@ function renderStatus(st) {
 // 名字太长会把比分格子撑爆，截一下；完整的放 title
 function shorten(s) { return s.length > 26 ? s.slice(0, 25) + '…' : s; }
 
+// 往 HTML 属性里塞文本前先转义。引擎名来自 checkpoint 文件名，
+// 理论上不会有引号，但拼 HTML 就该转义，不指望输入永远干净。
+function esc(t) {
+  return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                  .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 // **一个座位怎么描述，只有这里说了算。**
 //
 // 之前右上角徽标用服务端返回的 label（带解析后的真实 step），
@@ -765,7 +772,10 @@ function renderSeries() {
     '<table class="mstat"><tr><th></th>' +
     `<th><span class="seat" style="background:${COLORS[0]}"></span></th>` +
     `<th><span class="seat" style="background:${COLORS[1]}"></span></th></tr>` +
-    '<tr><td>引擎</td><td>' + s.names[0] + '</td><td>' + s.names[1] + '</td></tr>' +
+    // 名字很长，CSS 里按列宽省略号截断；完整的挂在 title 上
+    '<tr class="engine"><td>引擎</td>' +
+    '<td title="' + esc(s.names[0]) + '">' + esc(s.names[0]) + '</td>' +
+    '<td title="' + esc(s.names[1]) + '">' + esc(s.names[1]) + '</td></tr>' +
     '<tr><td>胜</td><td>' + s.wins[0] + '</td><td>' + s.wins[1] + '</td></tr>' +
     '<tr><td>和</td><td colspan="2">' + s.draws + '</td></tr>' +
     '<tr><td>平均占格</td><td>' + (s.squares[0] / n).toFixed(1) + '</td>' +

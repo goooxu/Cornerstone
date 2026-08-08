@@ -183,6 +183,16 @@ AI 由 `pump()` 驱动：轮到的座位若是 AI 就替它走，一直走到轮
 
 战绩卡放在**棋盘下方**：连打时眼睛在棋盘上，统计跟着一起看才顺。
 
+引擎名很长（`CornerNet 14.2M · FP8 · step 140652 · 256 次模拟`），
+不处理会把整栏撑宽。两道措施：
+
+- `.board-col` 宽度**钉死** 722px（canvas 700 + padding 20 + border 2），
+  这一栏再也不会被里面的内容拉宽。
+- 表格用 `table-layout: fixed` + 单元格 `max-width: 0`，再配
+  `overflow: hidden` / `text-overflow: ellipsis`。这三样缺一不可 ——
+  只写 `text-overflow` 是不生效的，单元格仍会按内容撑开。
+  完整名字挂在 `title` 上，截断不丢信息。
+
 ### 模型标签要写全：精度 + step + 模拟数
 
     CornerNet 14.2M · FP8 · step 135852 · 64 次模拟

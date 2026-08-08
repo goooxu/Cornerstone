@@ -873,6 +873,29 @@ def test_background_is_css_only():
     assert re.search(r"background: rgba\([\d, .]+\)", css)
 
 
+def test_series_table_truncates_long_engine_names():
+    """引擎名很长（「CornerNet 14.2M · FP8 · step 140652 · 256 次模拟」），
+    不截断会把整个界面撑宽。
+
+    表格单元格要省略号截断，必须 table-layout: fixed + max-width: 0 —— 
+    只写 text-overflow 是不生效的，单元格会按内容撑开。
+    """
+    css, js = _front("style.css"), _code("app.js")
+    assert "table-layout: fixed" in css
+    assert re.search(r"\.mstat th, \.mstat td \{[^}]*max-width: 0[^}]*text-overflow: ellipsis",
+                     css, re.S), "截断三件套要齐"
+    # 完整内容要留在 title 里，截断不能丢信息
+    assert re.search(r"title=\"' \+ esc\(s\.names\[0\]\)", js)
+    assert "function esc" in js, "往 HTML 属性里塞文本要转义"
+
+
+def test_board_column_width_is_pinned():
+    """棋盘那一栏宽度要钉死，否则里面最宽的内容会把整个界面拉宽。"""
+    css = _front("style.css")
+    assert re.search(r"\.board-col \{[^}]*width: 722px", css), \
+        "canvas 700 + padding 20 + border 2"
+
+
 def test_one_place_decides_how_a_seat_is_described():
     """同一个对手在徽标、比分格、战绩表里必须写法一致。
 

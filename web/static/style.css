@@ -61,7 +61,10 @@ main {
   flex-wrap: wrap;
 }
 
-.board-col { flex: 0 0 auto; }
+/* 宽度钉死在棋盘那么宽（canvas 700 + padding 20 + border 2）。
+   不钉的话，这一栏会被里面最宽的内容撑开 —— 战绩表里一行
+   「CornerNet 14.2M · FP8 · step 140652 · 256 次模拟」就足以把整个界面拉宽。 */
+.board-col { flex: 0 0 auto; width: 722px; max-width: 100%; min-width: 0; }
 .board-wrap { background: rgba(28, 35, 49, .74); backdrop-filter: blur(6px);
               border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
 canvas { display: block; border-radius: 6px; cursor: pointer; }
@@ -238,7 +241,20 @@ button.gone, .row.gone { display: none; }
 /* 连续对战的战绩表 */
 .hint.inline { margin: 0; }
 .hint.bad { color: var(--bad); }
-.mstat { width: 100%; border-collapse: collapse; margin-bottom: 10px; font-variant-numeric: tabular-nums; }
-.mstat th, .mstat td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; }
-.mstat th:first-child, .mstat td:first-child { text-align: left; color: var(--muted); }
-.mstat th { color: var(--muted); font-weight: 500; font-size: 14px; }
+/* table-layout: fixed + max-width: 0 是让表格单元格能省略号截断的标准组合：
+   没有它，单元格会按内容撑开，text-overflow 根本不生效。 */
+.mstat {
+  width: 100%; table-layout: fixed; border-collapse: collapse;
+  margin-bottom: 10px; font-variant-numeric: tabular-nums; font-size: 14px;
+}
+.mstat th, .mstat td {
+  padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right;
+  max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mstat th:first-child, .mstat td:first-child {
+  text-align: left; color: var(--muted); width: 34%;
+}
+.mstat th { color: var(--muted); font-weight: 500; }
+/* 引擎名最长，单独小一号；完整内容在 title 里 */
+.mstat .engine td { font-size: 13px; }
+.mstat .engine td[title] { cursor: help; }
