@@ -34,7 +34,20 @@ const S = {
   series: null,         // 连续对战的累计战绩
 };
 
+// 颜色绑的是**对战双方**，不是先后手。
+// 连续对战逐局换边，若按座位上色，同一个引擎会一局一个颜色，根本看不出谁是谁。
+// COLORS[0] 恒为「甲」（座位选择里第一个下拉的引擎），COLORS[1] 恒为「乙」。
 const COLORS = ['#2dd4bf', '#fb923c'];
+
+// 某个座位这一局坐的是甲还是乙
+function engineOfSeat(seat) {
+  return (S.series && S.series.swap) ? 1 - seat : seat;
+}
+function seatColor(seat) { return COLORS[engineOfSeat(seat)]; }
+// 一个带颜色的小圆点，用来代替「先手/后手」这种字样
+function dotHtml(seat) {
+  return `<span class="seat" style="background:${seatColor(seat)}"></span>`;
+}
 
 // ---------------------------------------------------------------- 网络请求
 
@@ -117,7 +130,7 @@ function draw() {
 
   // 起始格
   S.meta.start_cells.forEach(([r, c], p) => {
-    CTX.strokeStyle = COLORS[p]; CTX.lineWidth = 2;
+    CTX.strokeStyle = seatColor(p); CTX.lineWidth = 2;
     CTX.beginPath();
     CTX.arc(PAD + (c + 0.5) * CELL, PAD + (r + 0.5) * CELL, CELL * 0.28, 0, Math.PI * 2);
     CTX.stroke();
@@ -128,7 +141,7 @@ function draw() {
     for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
       const v = st.grid[r][c];
       if (v < 0) continue;
-      CTX.fillStyle = COLORS[v];
+      CTX.fillStyle = seatColor(v);
       roundRect(PAD + c * CELL + 1.5, PAD + r * CELL + 1.5, CELL - 3, CELL - 3, 4);
       CTX.fill();
     }
@@ -138,7 +151,7 @@ function draw() {
   const humanToMove = S.phase === 'playing' && st && !st.terminal
     && st.players[st.current_player] === null;
   if (humanToMove) {
-    CTX.fillStyle = COLORS[st.current_player] + '66';
+    CTX.fillStyle = seatColor(st.current_player) + '66';
     for (const [r, c] of legalAnchors()) {
       CTX.beginPath();
       CTX.arc(PAD + (c + 0.5) * CELL, PAD + (r + 0.5) * CELL, 3.5, 0, Math.PI * 2);
@@ -146,14 +159,12 @@ function draw() {
     }
   }
 
-  if (st && st.terminal) { drawEndBanner(st); return; }
-
   // 悬停预览
   if (humanToMove && S.hover && S.ori !== null) {
     const [hr, hc] = S.hover;
     const a = actionFor(hr, hc);
     const ok = S.legal.has(a);
-    CTX.fillStyle = ok ? COLORS[st.current_player] + 'bb' : '#f8717166';
+    CTX.fillStyle = ok ? seatColor(st.current_player) + 'bb' : '#f8717166';
     CTX.strokeStyle = ok ? '#ffffff88' : '#f87171';
     CTX.lineWidth = 1.5;
     for (const [dr, dc] of oriCells(S.ori)) {
@@ -165,43 +176,44 @@ function draw() {
   }
 }
 
-// 胜负规则：占格多者胜，相同为和局
-function verdictText(st) {
+// 胜负规则：占格多者胜，相同为和局。
+// 返回 {text, seat}：seat 是赢家的座位（-1 表示和局），颜色由调用方按引擎取。
+function verdict(st) {
   const [a, b] = st.scores;
-  if (st.human_player < 0) return a > b ? '先手胜' : a < b ? '后手胜' : '和局';
-  return st.result > 0 ? '你赢了' : st.result < 0 ? '你输了' : '和局';
+  if (a === b) return { text: '和局', seat: -1 };
+  const win = a > b ? 0 : 1;
+  if (st.human_player < 0) return { text: '胜', seat: win };
+  return { text: win === st.human_player ? '你赢了' : '你输了', seat: win };
 }
 
-// 终局横幅。状态行那一句在棋盘下面，连打时眼睛盯着棋盘根本注意不到 ——
-// 一局结束这件事值得画在棋盘正中间。
-function drawEndBanner(st) {
-  const w = CV.width, h = CV.height;
-  CTX.fillStyle = '#0b0e15c9';
-  CTX.fillRect(0, 0, w, h);
+// 终局横幅。放在棋盘**上方**的独立元素里，不画在画布上 ——
+// 一局结束正是要看盘面的时候，盖上去等于把要看的东西挡了。
+function renderEndBanner(st) {
+  const el = $('endbanner');
+  const wrap = $('board-wrap');
+  if (!st || !st.terminal) {
+    el.classList.add('gone');
+    wrap.style.borderColor = '';
+    return;
+  }
+  const v = verdict(st);
+  const color = v.seat < 0 ? 'var(--muted)' : seatColor(v.seat);
+  const who = v.seat < 0 ? '' : dotHtml(v.seat);
+  el.innerHTML = `${who}<b>${v.text}</b>`
+    + `<span>占格 ${st.scores[0]} : ${st.scores[1]}　共 ${st.ply} 手</span>`;
+  el.style.borderColor = color;
+  el.style.color = color;
+  el.classList.remove('gone');
+  wrap.style.borderColor = color;      // 棋盘描边也跟着变，边框不挡格子
+}
 
-  const [a, b] = st.scores;
-  const verdict = verdictText(st);
-  const win = st.human_player < 0
-    ? (a > b ? 0 : a < b ? 1 : -1)          // AI 对战：谁占格多
-    : (st.result > 0 ? 0 : st.result < 0 ? 1 : -1);
-  const color = win < 0 ? '#98a2b8' : (win === 0 ? COLORS[0] : COLORS[1]);
+// 名字太长会把比分格子撑爆，截一下；完整的放 title
+function shorten(s) { return s.length > 26 ? s.slice(0, 25) + '…' : s; }
 
-  const bh = 132, by = (h - bh) / 2;
-  CTX.fillStyle = '#161b26f2';
-  roundRect(w * 0.08, by, w * 0.84, bh, 14);
-  CTX.fill();
-  CTX.strokeStyle = color; CTX.lineWidth = 3;
-  roundRect(w * 0.08, by, w * 0.84, bh, 14);
-  CTX.stroke();
-
-  CTX.textAlign = 'center';
-  CTX.fillStyle = color;
-  CTX.font = '700 40px system-ui, sans-serif';
-  CTX.fillText(verdict, w / 2, by + 58);
-  CTX.fillStyle = '#e6e9f0';
-  CTX.font = '500 22px system-ui, sans-serif';
-  CTX.fillText(`占格 ${a} : ${b}　共 ${st.ply} 手`, w / 2, by + 98);
-  CTX.textAlign = 'start';
+// 某座位当前引擎在下拉框里对应的显示名
+function seatLabelForSeat(seat) {
+  const eng = engineOfSeat(seat);
+  return seatLabel(seatValues()[eng]);
 }
 
 function roundRect(x, y, w, h, r) {
@@ -260,7 +272,7 @@ function renderTrays() {
     card.className = 'card';
 
     const h = document.createElement('h2');
-    h.innerHTML = `<span class="seat p${seat}"></span>${seat === 0 ? '先手' : '后手'}棋子`
+    h.innerHTML = dotHtml(seat) + '棋子'
       + `<small>剩 ${st.remaining[seat].filter(Boolean).length} 枚 · 已占 ${st.scores[seat]} 格`
       + (interactive ? ' · 悬停选形态' : ' · 只读') + '</small>';
     card.appendChild(h);
@@ -272,7 +284,7 @@ function renderTrays() {
       const used = !st.remaining[seat][p.id];
       div.className = 'piece' + (used ? ' used' : '')
         + (interactive && S.piece === p.id ? ' sel' : '');
-      div.appendChild(miniCanvas(p.orientations[0].cells, 9, COLORS[seat]));
+      div.appendChild(miniCanvas(p.orientations[0].cells, 9, seatColor(seat)));
       if (interactive && !used) div.appendChild(orientRing(p, seat));
       tray.appendChild(div);
     }
@@ -298,7 +310,7 @@ function orientRing(p, me) {
     btn.className = 'ori-btn' + (S.piece === p.id && S.ori === o.id ? ' sel' : '');
     btn.style.left = `calc(50% + ${(radius * Math.cos(ang)).toFixed(1)}px)`;
     btn.style.top = `calc(50% + ${(radius * Math.sin(ang)).toFixed(1)}px)`;
-    btn.appendChild(miniCanvas(o.cells, 9, COLORS[me]));
+    btn.appendChild(miniCanvas(o.cells, 9, seatColor(me)));
     btn.onclick = (ev) => {
       ev.stopPropagation();
       S.piece = p.id; S.ori = o.id;
@@ -319,13 +331,21 @@ function applyState(st, analysis) {
   $('score0').textContent = st.scores[0];
   $('score1').textContent = st.scores[1];
   $('ply').textContent = st.ply;
+  // 比分格子的颜色和名字跟着「这一局谁坐这个座位」走
+  for (const seat of [0, 1]) {
+    $('dot' + seat).style.background = seatColor(seat);
+    const desc = describe(st.players[seat], seatLabelForSeat(seat), st.sims[seat]);
+    $('name' + seat).textContent = shorten(desc);
+    $('score-box' + seat).title = desc;
+  }
 
   const status = $('status');
   status.className = 'status';
   const noHuman = st.human_player < 0;
   if (st.terminal) {
     const [a, b] = st.scores;
-    status.textContent = `终局：占格 ${a} : ${b} —— ${verdictText(st)}`;
+    const v = verdict(st);
+    status.innerHTML = `终局：占格 ${a} : ${b}`;
     if (!noHuman && st.result > 0) status.classList.add('win');
     if (!noHuman && st.result < 0) status.classList.add('lose');
   } else if (S.phase === 'idle') {
@@ -335,14 +355,13 @@ function applyState(st, analysis) {
   } else if (S.phase === 'paused') {
     status.textContent = `已暂停（第 ${st.ply} 手）—— 点「恢复」继续`;
   } else if (st.players[st.current_player] === null) {
-    const who = st.current_player === 0 ? '先手' : '后手';
     const first = st.ply < 2 ? '（首手必须盖住起点）' : '';
-    status.textContent = noHuman ? `轮到${who}` :
-      `轮到你走（${who}），共 ${st.legal_actions.length} 种合法着法 ${first}`;
+    status.innerHTML = `轮到${dotHtml(st.current_player)}你走，`
+      + `共 ${st.legal_actions.length} 种合法着法 ${first}`;
   } else {
-    const who = st.current_player === 0 ? '先手' : '后手';
-    status.textContent = `${who} AI 思考中…`;
+    status.innerHTML = `${dotHtml(st.current_player)}思考中…`;
   }
+  renderEndBanner(st);
 
   // 没人在座就不存在「选中的棋子」；有人在座时，选中的棋子被用掉了要清掉。
   // 这里按人的座位索引，noHuman 时直接清空，绝不拿 -1 去索引。
@@ -558,7 +577,9 @@ function syncBackendUi() {
     }
     sel.disabled = !isNet[i] || S.phase !== 'idle';
   }
-  $('ai-name').textContent = seatDesc(0) + '  vs  ' + seatDesc(1);
+  $('ai-name').innerHTML =
+    `<span class="seat" style="background:${COLORS[0]}"></span>` + seatDesc(0) +
+    '　vs　' + `<span class="seat" style="background:${COLORS[1]}"></span>` + seatDesc(1);
   void bothAi;
 
   $('backend-hint').textContent = (!isNet[0] && !isNet[1])
@@ -710,17 +731,18 @@ function renderSeries() {
   const r = Math.min(0.999, Math.max(0.001, scoreA));
   const elo = -400 * Math.log10(1 / r - 1);
   $('series-result').innerHTML =
-    '<table class="mstat"><tr><th></th><th>甲</th><th>乙</th></tr>' +
+    '<table class="mstat"><tr><th></th>' +
+    `<th><span class="seat" style="background:${COLORS[0]}"></span></th>` +
+    `<th><span class="seat" style="background:${COLORS[1]}"></span></th></tr>` +
     '<tr><td>引擎</td><td>' + s.names[0] + '</td><td>' + s.names[1] + '</td></tr>' +
     '<tr><td>胜</td><td>' + s.wins[0] + '</td><td>' + s.wins[1] + '</td></tr>' +
     '<tr><td>和</td><td colspan="2">' + s.draws + '</td></tr>' +
-    '<tr><td>执先胜 / 执后胜</td><td>' + s.firstWins[0] + ' / ' + s.secondWins[0] + '</td>' +
-    '<td>' + s.firstWins[1] + ' / ' + s.secondWins[1] + '</td></tr>' +
     '<tr><td>平均占格</td><td>' + (s.squares[0] / n).toFixed(1) + '</td>' +
     '<td>' + (s.squares[1] / n).toFixed(1) + '</td></tr></table>' +
-    '<div class="hint">甲的得分率 ' + scoreA.toFixed(3) +
+    '<div class="hint">' +
+    `<span class="seat" style="background:${COLORS[0]}"></span>得分率 ` + scoreA.toFixed(3) +
     '　Elo 差 ' + (elo > 0 ? '+' : '') + elo.toFixed(0) +
-    '　平均 ' + (s.plies / n).toFixed(1) + ' 手　逐局交换先后手</div>';
+    '　平均 ' + (s.plies / n).toFixed(1) + ' 手　自动换边</div>';
 }
 
 
@@ -759,16 +781,15 @@ async function aiMove() {
   if (r.labels) {
     const p = r.players || [null, null];
     const m = r.sims || [0, 0];
-    $('ai-name').textContent =
-      '先手 ' + describe(p[0], r.labels[0], m[0]) +
-      '  vs  后手 ' + describe(p[1], r.labels[1], m[1]);
+    $('ai-name').innerHTML =
+      dotHtml(0) + describe(p[0], r.labels[0], m[0]) +
+      '　vs　' + dotHtml(1) + describe(p[1], r.labels[1], m[1]);
   }
   if (r.ai_seconds !== undefined) {
-    const who = r.ai_player === 0 ? '先手' : '后手';
     const sims = r.sims ? r.sims[r.ai_player] : undefined;
     const tail = sims === undefined ? '' : ' · ' + simsText(sims);
-    $('lastmove').textContent =
-      `上一手：${who} · ${r.ai_label}${tail} · ${r.ai_seconds}s`;
+    $('lastmove').innerHTML =
+      `上一手：${dotHtml(r.ai_player)}${r.ai_label}${tail} · ${r.ai_seconds}s`;
   }
   applyState(r, r.analysis || null);
 }

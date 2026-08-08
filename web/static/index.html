@@ -17,14 +17,16 @@
 
 <main>
   <section class="board-col">
-    <div class="board-wrap">
+    <!-- 终局提示放在棋盘**外面**：盖在棋盘上会挡住要看的盘面 -->
+    <div id="endbanner" class="endbanner gone"></div>
+    <div class="board-wrap" id="board-wrap">
       <canvas id="board" width="700" height="700"></canvas>
     </div>
     <div id="status" class="status">正在开局…</div>
     <div id="lastmove" class="hint center"></div>
     <div class="scores">
-      <div class="score p0"><span class="dot"></span><span class="label">先手</span><b id="score0">0</b></div>
-      <div class="score p1"><span class="dot"></span><span class="label">后手</span><b id="score1">0</b></div>
+      <div class="score" id="score-box0"><span class="dot" id="dot0"></span><span class="label" id="name0"></span><b id="score0">0</b></div>
+      <div class="score" id="score-box1"><span class="dot" id="dot1"></span><span class="label" id="name1"></span><b id="score1">0</b></div>
       <div class="score"><span class="label">手数</span><b id="ply">0</b></div>
     </div>
     <!-- 战绩放棋盘下面：连打时眼睛在棋盘上，统计跟着一起看才顺 -->

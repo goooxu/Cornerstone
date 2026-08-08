@@ -63,7 +63,8 @@ canvas { display: block; border-radius: 6px; cursor: pointer; }
   background: var(--panel); border: 1px solid var(--line);
   border-radius: 8px; padding: 8px 12px;
 }
-.score .label { color: var(--muted); font-size: 14px; }
+.score .label { color: var(--muted); font-size: 13px; overflow: hidden;
+                text-overflow: ellipsis; white-space: nowrap; }
 .score b { margin-left: auto; font-size: 22px; font-variant-numeric: tabular-nums; }
 .score .dot { width: 10px; height: 10px; border-radius: 3px; }
 .score.p0 .dot { background: var(--p0); }
@@ -101,10 +102,22 @@ select:disabled { opacity: .45; cursor: not-allowed; }
 }
 .js-error.gone { display: none; }
 
-/* 座位色点，和棋盘上双方的颜色对应 */
-.seat { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 5px; }
-.seat.p0 { background: #2dd4bf; }
+/* 色点：颜色绑对战双方，不绑先后手。多数地方由 JS 设 background。 */
+.seat { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px;
+        vertical-align: baseline; flex: 0 0 auto; }
+.seat.p0 { background: #2dd4bf; }      /* 只用在座位选择那两行 */
 .seat.p1 { background: #fb923c; }
+
+/* 终局横幅：在棋盘上方，不盖盘面 */
+.endbanner {
+  display: flex; align-items: baseline; gap: 10px;
+  background: var(--panel); border: 2px solid var(--line); border-radius: 10px;
+  padding: 12px 18px; margin-bottom: 10px;
+}
+.endbanner.gone { display: none; }
+.endbanner b { font-size: 24px; }
+.endbanner span:last-child { color: var(--muted); font-size: 15px; margin-left: auto; }
+.board-wrap { transition: border-color .2s; }
 
 select, button {
   background: var(--panel-2); color: var(--text);

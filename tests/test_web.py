@@ -753,15 +753,48 @@ def test_model_label_includes_precision():
     assert "· {self.precision}" in srv
 
 
-def test_game_over_is_shown_on_the_board():
-    """终局要在棋盘上给出明显提示。
+def test_game_over_banner_does_not_cover_the_board():
+    """终局提示要醒目，但**不能盖住盘面** —— 一局刚结束正是要看盘的时候。
 
-    状态行那一句在棋盘下面，连打时眼睛盯着棋盘根本注意不到。
+    所以它是棋盘上方的独立 DOM 元素，不是画在画布上的浮层。
+    """
+    js, html, css = _code("app.js"), _front("index.html"), _front("style.css")
+    assert 'id="endbanner"' in html and ".endbanner" in css
+    assert "function renderEndBanner" in js
+    assert "drawEndBanner" not in js, "画布上那套浮层应已移除"
+    # 横幅必须在棋盘容器之前（上方），不在它里面
+    assert html.index('id="endbanner"') < html.index('id="board-wrap"')
+
+
+def test_colors_are_bound_to_engines_not_seats():
+    """颜色绑对战双方，不绑先后手。
+
+    连续对战逐局换边，若按座位上色，同一个引擎会一局一个颜色，
+    根本看不出谁是谁。
     """
     js = _code("app.js")
-    assert "function drawEndBanner" in js
-    assert "if (st && st.terminal) { drawEndBanner(st); return; }" in js
-    assert "function verdictText" in js, "判词要和状态行共用一份，别写两套"
+    assert "function engineOfSeat" in js and "function seatColor" in js
+    assert re.search(r"return \(S\.series && S\.series\.swap\) \? 1 - seat : seat;", js)
+    # 画棋盘时不能再直接按座位索引颜色
+    for bad in ("COLORS[v]", "COLORS[p]", "COLORS[st.current_player]", "COLORS[seat]", "COLORS[me]"):
+        assert bad not in js, f"{bad} 应改用 seatColor()"
+
+
+def test_no_first_second_wording_outside_seat_pickers():
+    """除了选择对战双方那两行，界面上不该再出现「先手/后手」——
+    自动换边之后它已经不指代任何一方了，改用颜色。
+    """
+    html = _front("index.html")
+    # 只允许出现在座位选择的两个 label 上
+    assert html.count("先手") == 1 and html.count("后手") == 1
+    for tag in re.findall(r"<label[^>]*>[^<]*", html):
+        pass
+    js = _code("app.js")
+    # 去掉行尾注释后，面向界面的字符串里不该有这两个词
+    code = re.sub(r"//.*$", "", js, flags=re.M)
+    for m in re.finditer(r"'[^']*'|`[^`]*`", code):
+        assert "先手" not in m.group(0) and "后手" not in m.group(0), \
+            f"界面字符串里仍有先手/后手：{m.group(0)[:60]}"
 
 
 def test_series_pauses_between_games():
