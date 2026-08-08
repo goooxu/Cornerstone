@@ -59,6 +59,8 @@ struct GameState {
     std::vector<MoveTarget> history;
     uint64_t rng = 0;
     int8_t net_player = 0;                              // 评测模式下网络执哪一方
+    uint64_t pair_rng = 0;      // 本对开局用的 rng 快照
+    bool paired_second = false; // 这一局是不是「同一开局的第二遍」
 };
 
 // 终局节点的价值，从 player 视角
@@ -117,6 +119,10 @@ struct SelfPlayEngine::Impl {
     void start_game(GameState& g) {
         g.board.reset();
         if (eval.enabled) {
+            // 开局配对：第一遍先把 rng 存下来，第二遍恢复它，于是两局开局逐手相同，
+            // 而 net_player 已经翻过边 —— 同一个随机开局双方各执先一次。
+            if (g.paired_second) g.rng = g.pair_rng;
+            else                 g.pair_rng = g.rng;
             std::vector<int32_t> mv;
             for (int i = 0; i < eval.opening_plies && !g.board.terminal(); ++i) {
                 g.board.legal_moves(mv);
@@ -580,8 +586,9 @@ struct SelfPlayEngine::Impl {
         ++finished;
 
         g.history.clear();
-        // 下一局换边，保证长期看先后手各半
+        // 下一局换边，并且重放同一个开局（见 start_game 里的配对逻辑）
         g.net_player = int8_t(1 - g.net_player);
+        g.paired_second = !g.paired_second;
         start_game(g);
     }
 };
