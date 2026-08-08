@@ -866,13 +866,26 @@ def test_background_is_css_only():
     """背景用 CSS 画，不引外部图片 —— 没有构建步骤，也不该多一个要部署的文件。"""
     css, html = _front("style.css"), _front("index.html")
     assert "radial-gradient" in css and "background-attachment: fixed" in css
-    # 图案是内联的 SVG data URI —— 仍然「不多一个要部署的文件」
-    assert "data:image/svg+xml" in css
-    assert not re.search(r"url\(\s*[\"']?(?!data:)[a-zA-Z./]", css), "不该引用外部图片文件"
+    assert "url(" not in css, "不引任何图片，包括内联 data URI —— 图案和棋子太像"
     assert "<img" not in html
     # 面板要半透明，否则整页被不透明卡片盖住，等于没有背景
     assert "backdrop-filter" in css, "面板要半透明，否则背景透不出来"
     assert re.search(r"background: rgba\([\d, .]+\)", css)
+
+
+def test_background_glows_are_inside_the_viewport():
+    """色晕的圆心必须落在视口之内。
+
+    第一版放在 6%/-14%、106%/4%、48%/120%，全在屏幕外，
+    进到画面里的只剩最淡的尾巴 —— 等于没画。
+    """
+    css = _front("style.css")
+    body = css[css.index("body {"):css.index("}", css.index("body {"))]
+    centers = re.findall(r"radial-gradient\([^)]*?at\s+(-?\d+)%\s+(-?\d+)%", body)
+    assert len(centers) >= 3, f"应有三团色晕，实得 {centers}"
+    for x, y in centers:
+        assert 0 <= int(x) <= 100, f"圆心横坐标 {x}% 在视口外"
+        assert 0 <= int(y) <= 100, f"圆心纵坐标 {y}% 在视口外"
 
 
 def test_tray_is_seven_by_three():
