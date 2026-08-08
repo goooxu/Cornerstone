@@ -14,11 +14,23 @@
 
 * { box-sizing: border-box; }
 
+/* 背景全部用 CSS 画，不引外部图片 —— 这个工具没有构建步骤，
+   也不该为了一张背景图多一个要部署的文件。四层叠出来：
+   两团角落的色晕（用双方的颜色，很淡）、一层棋盘格、一层斜向纹理。
+   透明度压得很低，卡片是不透明面板，正文可读性不受影响。 */
 body {
   margin: 0;
-  background: var(--bg);
   color: var(--text);
   font: 16px/1.6 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background:
+    radial-gradient(1100px 780px at 8% -12%, rgba(45, 212, 191, .10), transparent 62%),
+    radial-gradient(950px 720px at 104% 8%, rgba(251, 146, 60, .09), transparent 60%),
+    radial-gradient(700px 700px at 50% 120%, rgba(129, 140, 248, .07), transparent 65%),
+    repeating-linear-gradient(0deg, rgba(255,255,255,.022) 0 1px, transparent 1px 48px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.022) 0 1px, transparent 1px 48px),
+    var(--bg);
+  background-attachment: fixed;
+  min-height: 100vh;
 }
 
 header {
@@ -39,6 +51,7 @@ header .spacer { flex: 1; }
 
 main {
   display: flex;
+  overflow: visible;
   gap: 20px;
   padding: 20px;
   align-items: flex-start;
@@ -73,7 +86,8 @@ canvas { display: block; border-radius: 6px; cursor: pointer; }
 /* 侧栏比原来宽不少：棋子托盘的朝向圈要往格子外面撑，
    窄栏里圈会盖住半个面板，看着就是一团。 */
 .side-col { flex: 1 1 480px; min-width: 440px; max-width: 680px; display: flex; flex-direction: column; gap: 16px; }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+        padding: 16px; overflow: visible; }
 .card.hidden { display: none; }
 .card h2 { margin: 0 0 12px; font-size: 17px; font-weight: 600; }
 .card h2 small { color: var(--muted); font-weight: 400; margin-left: 8px; font-size: 14px; }
@@ -193,7 +207,7 @@ button.gone, .row.gone { display: none; }
    --r 由 JS 按朝向个数设置（个数越多圈越大）。 */
 .ring::before {
   content: ''; position: absolute; left: 50%; top: 50%;
-  width: calc(var(--r) * 2 + 52px); height: calc(var(--r) * 2 + 52px);
+  width: calc(var(--r) * 2 + 86px); height: calc(var(--r) * 2 + 86px);
   transform: translate(-50%, -50%);
   border-radius: 50%;
   background: #0b0e15f2; border: 1px solid var(--line);
@@ -202,7 +216,7 @@ button.gone, .row.gone { display: none; }
 .ring .ori-btn {
   position: absolute; transform: translate(-50%, -50%);
   background: var(--panel-2); border: 1px solid var(--line);
-  border-radius: 6px; padding: 4px; cursor: pointer;
+  border-radius: 8px; padding: 7px; cursor: pointer;
   pointer-events: auto;
   display: flex; align-items: center; justify-content: center;
 }

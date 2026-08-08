@@ -303,9 +303,17 @@ function orientRing(p, me) {
   ring.className = 'ring';
   const oris = p.orientations;
   const k = oris.length;
-  const radius = k <= 2 ? 38 : k <= 4 ? 48 : 58;   // 7 列后格子变窄，圈跟着收一点
+  // 圈是**浮层**，不受托盘格子大小限制（一路 overflow: visible，z-index 抬到最上）。
+  // 之前按格子宽度去收半径纯属多虑 —— 底下有暗底盖着，压住邻居没关系，
+  // 反倒是圈太小、缩略图太挤才真的难选。
+  const radius = k <= 2 ? 62 : k <= 4 ? 80 : 100;
   // 圆形暗底的大小跟着半径走，由 CSS 用 calc 加上按钮尺寸
   ring.style.setProperty('--r', radius + 'px');
+
+  // 靠边那几列把圈整体往中间挪一点，否则最右一列的圈会顶出页面、
+  // 逼出一条横向滚动条。7 列，第 3 列居中不动。
+  const col = p.id % 7;
+  ring.style.transform = `translateX(${((3 - col) / 3 * radius * 0.6).toFixed(0)}px)`;
 
   oris.forEach((o, i) => {
     const ang = -Math.PI / 2 + (i * 2 * Math.PI) / k;
@@ -313,7 +321,7 @@ function orientRing(p, me) {
     btn.className = 'ori-btn' + (S.piece === p.id && S.ori === o.id ? ' sel' : '');
     btn.style.left = `calc(50% + ${(radius * Math.cos(ang)).toFixed(1)}px)`;
     btn.style.top = `calc(50% + ${(radius * Math.sin(ang)).toFixed(1)}px)`;
-    btn.appendChild(miniCanvas(o.cells, 9, seatColor(me)));
+    btn.appendChild(miniCanvas(o.cells, 13, seatColor(me)));
     btn.onclick = (ev) => {
       ev.stopPropagation();
       S.piece = p.id; S.ori = o.id;

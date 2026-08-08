@@ -797,6 +797,31 @@ def test_end_banner_shows_which_game():
     assert re.search(r"第 \$\{s\.played\} / \$\{s\.total\} 局", js)
 
 
+def test_orientation_ring_is_not_limited_by_the_cell():
+    """朝向圈是浮层，尺寸不该被托盘格子宽度绑住。
+
+    一路 overflow: visible + z-index 抬到最上，底下还有暗底盖着，
+    压住邻居没关系；圈太小、缩略图太挤才真的难选。
+    """
+    js, css = _code("app.js"), _front("style.css")
+    m = re.search(r"radius = k <= 2 \? (\d+) : k <= 4 \? (\d+) : (\d+)", js)
+    assert m, "找不到半径设置"
+    assert int(m.group(3)) >= 90, f"最大半径 {m.group(3)} 太小"
+    # 卡片和主区都不能裁剪，否则圈会被切掉
+    assert re.search(r"\.card \{[^}]*overflow: visible", css, re.S)
+    assert "overflow: visible" in css
+    # 靠边的列要往中间挪，否则最右一列会顶出页面
+    assert "translateX" in js and "(3 - col) / 3" in js
+
+
+def test_background_is_css_only():
+    """背景用 CSS 画，不引外部图片 —— 没有构建步骤，也不该多一个要部署的文件。"""
+    css, html = _front("style.css"), _front("index.html")
+    assert "radial-gradient" in css and "background-attachment: fixed" in css
+    assert "url(" not in css, "不该引用外部图片"
+    assert "<img" not in html
+
+
 def test_tray_is_seven_by_three():
     """21 枚正好 7 列 3 排，比 6 列紧凑，也不留半排空格。"""
     css = _front("style.css")
