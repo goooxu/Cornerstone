@@ -775,9 +775,15 @@ def test_series_alternates_sides():
 
 
 def test_series_reports_per_side_records():
-    """执先胜/执后胜要分开报 —— 换边之后这两个数才看得出先手优势有多大。"""
+    """执先胜/执后胜要**显示出来**，不只是记在内存里。
+
+    换边之后这两个数才看得出先手优势有多大，也用来验证换边确实在起作用
+    （两边执先次数应该各占一半）。
+    """
     js = _code("app.js")
     assert "firstWins" in js and "secondWins" in js
+    assert re.search(r"执先胜[\s\S]{0,120}s\.firstWins\[0\]", js), "执先胜要进表格"
+    assert re.search(r"执后胜[\s\S]{0,120}s\.secondWins\[0\]", js), "执后胜要进表格"
 
 
 def test_model_label_includes_simulation_count():

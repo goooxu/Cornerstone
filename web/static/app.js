@@ -778,6 +778,11 @@ function renderSeries() {
     '<td title="' + esc(s.names[1]) + '">' + esc(s.names[1]) + '</td></tr>' +
     '<tr><td>胜</td><td>' + s.wins[0] + '</td><td>' + s.wins[1] + '</td></tr>' +
     '<tr><td>和</td><td colspan="2">' + s.draws + '</td></tr>' +
+    // 「执先/执后」说的是这一局谁先走，不是在给某一方起名字 ——
+    // 自动换边之后双方都会轮到执先，这两个数正好用来看先手优势有多大，
+    // 也用来验证换边确实在起作用（两边执先次数应该各占一半）。
+    '<tr><td>执先胜</td><td>' + s.firstWins[0] + '</td><td>' + s.firstWins[1] + '</td></tr>' +
+    '<tr><td>执后胜</td><td>' + s.secondWins[0] + '</td><td>' + s.secondWins[1] + '</td></tr>' +
     '<tr><td>平均占格</td><td>' + (s.squares[0] / n).toFixed(1) + '</td>' +
     '<td>' + (s.squares[1] / n).toFixed(1) + '</td></tr></table>' +
     '<div class="hint">' +
