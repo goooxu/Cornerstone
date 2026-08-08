@@ -716,7 +716,13 @@ def test_series_counts_each_game_once():
     assert "S.series.lastSid === S.sid" in js, "要按 sid 去重"
 
 
-def test_series_requires_no_human():
-    js = _code("app.js")
-    assert re.search(r"if \(!bothAi\)[\s\S]{0,120}sc\.value = '1'", js), \
-        "有人在座时局数要锁回 1"
+def test_series_row_hidden_when_not_applicable():
+    """条件不满足就把整行藏掉，而不是摆个灰控件再配一句「为什么不能用」。
+
+    后者只是把界面弄复杂，并没有多给出信息。
+    """
+    js, html, css = _code("app.js"), _front("index.html"), _front("style.css")
+    assert 'id="series-row"' in html
+    assert "$('series-row').classList.toggle('gone', !bothAi)" in js
+    assert ".row.gone" in css, "整行隐藏要有对应样式"
+    assert "series-hint" not in js and "series-hint" not in html, "解释性提示应已删除"

@@ -531,18 +531,12 @@ function syncBackendUi() {
     ? '两边都不用网络，模拟数不起作用（规则基线不搜索）'
     : '右侧数字 = 该座位每步的 MCTS 模拟数，越大越强也越慢';
 
-  // 连续对战要求双方都不是人 —— 一局完自动开下一局，中间不能停下来等人
-  const sc = $('series-count');
-  if (!bothAi) {
-    sc.value = '1';
-    sc.disabled = true;
-    $('series-hint').textContent = '（双方都不是人类时才能连打）';
-  } else {
-    sc.disabled = S.phase !== 'idle';
-    const n = seriesCount();
-    $('series-hint').textContent = n > 1
-      ? `（一局完自动开下一局，共 ${n} 局；棋盘照常逐手显示）` : '';
-  }
+  // 连续对战要求双方都不是人（一局完要立刻开下一局，不能停下来等人）。
+  // 条件不满足就把整行藏掉 —— 摆一个灰着的控件再配一句「为什么不能用」，
+  // 只是把界面弄复杂，并没有多给出信息。
+  $('series-row').classList.toggle('gone', !bothAi);
+  if (!bothAi) $('series-count').value = '1';
+  $('series-count').disabled = S.phase !== 'idle';
 }
 
 // 配置改动只留在本地，等「开始对局」时一次性提交给 /api/new。
@@ -629,7 +623,7 @@ function recordResult(st) {
 function renderSeries() {
   const s = S.series;
   const card = $('series-card');
-  if (!s || s.total <= 1 && !s.played) { card.classList.add('gone'); return; }
+  if (!s || s.total <= 1) { card.classList.add('gone'); return; }   // 单局不用摆战绩
   card.classList.remove('gone');
   $('series-progress').textContent =
     `${s.played} / ${s.total} 局` + (S.phase === 'idle' ? '（已结束）' : '');

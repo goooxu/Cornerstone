@@ -126,7 +126,7 @@ button.icon svg {
   stroke-linecap: round; stroke-linejoin: round;
 }
 button.icon svg .fill { fill: currentColor; stroke: currentColor; stroke-width: 1.5; }
-button.gone { display: none; }
+button.gone, .row.gone { display: none; }
 
 /* 图形本身由 JS 换（见 ICONS 表），CSS 只管颜色 —— 不再有
    「两个 svg 靠 display 挑一个」这种一旦样式没生效就双双显示的写法。 */

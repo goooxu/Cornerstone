@@ -84,11 +84,20 @@ cmd_start() {
   # 第一次跑 CUDA 初始化。原先固定 sleep 12 之后只检查进程存活，
   # 于是「已启动」经常先于「能用」—— 紧接着发请求就是 connection refused，
   # 而日志里明明已经打印了「监听 ...」，非常容易误判成服务坏了。
-  local ok=""
+  # alive() 靠 /proc/<pid>/cmdline 认人，而 `nohup ... &` 之后有个短暂窗口：
+  # 子进程已经 fork 出来、但还没 exec 成 python，cmdline 还是 shell 的。
+  # 这时候查会判成「没起来」——实测就误报过一次「启动失败」，
+  # 而服务其实好好地在跑。所以给一小段宽限期，别第一拍就下结论。
+  local ok="" misses=0
   for _ in $(seq 60); do
-    if ! alive; then break; fi
-    if curl -s -o /dev/null -m 3 "http://127.0.0.1:$PORT/" 2>/dev/null; then ok=1; break; fi
     sleep 2
+    if ! alive; then
+      misses=$((misses + 1))
+      [ "$misses" -ge 3 ] && break     # 连着 3 次（约 6s）才认定真的没起来
+      continue
+    fi
+    misses=0
+    if curl -s -o /dev/null -m 3 "http://127.0.0.1:$PORT/" 2>/dev/null; then ok=1; break; fi
   done
 
   if [ -n "$ok" ]; then

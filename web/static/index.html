@@ -47,9 +47,9 @@
           </span>
         </label>
       </div>
-      <div class="row">
+      <!-- 双方都不是人时才出现；不满足条件就整行隐藏，不留提示占地方 -->
+      <div class="row gone" id="series-row">
         <label>连续对战 <select id="series-count"></select></label>
-        <span id="series-hint" class="hint inline"></span>
       </div>
       <div id="backend-hint" class="hint"></div>
       <div id="lock-hint" class="hint lock"></div>
