@@ -86,6 +86,7 @@ class TrainConfig:
     milestone_every_steps: int = 10_000   # 里程碑 checkpoint 永久保留
     snapshot_every_iters: int = 20
     eval_every_iters: int = 10
+    fp8_check_every_iters: int = 10   # FP8 静默降级只能靠反复测，不能挂在评测上
     eval_games: int = 200
     eval_opponent: str = "greedy-area"
     eval_simulations: int = 64
