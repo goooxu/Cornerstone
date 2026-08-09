@@ -96,6 +96,13 @@ struct SelfPlayEngine::Impl {
         : cfg(c), eval(ev), threads(std::max(1, th)) {
         if (num_games <= 0) throw std::invalid_argument("num_games 必须为正");
         if (cfg.top_k < 1 || cfg.top_k > MAX_TOPK) throw std::invalid_argument("top_k 越界");
+        // 当场崩，别等到 replay 回放时 Board::play 抛异常 —— 那时离根因已经很远
+        if (ev.training_records && !ev.net_opponent)
+            throw std::invalid_argument("training_records 需要 net_opponent："
+                                        "规则对手那一侧的手不进记录，序列无法回放");
+        if (ev.training_records && ev.opening_plies != 0)
+            throw std::invalid_argument("training_records 需要 opening_plies=0："
+                                        "随机开局的手不进记录，序列无法回放");
         games.resize(size_t(num_games));
         for (int i = 0; i < num_games; ++i) {
             GameState& g = games[size_t(i)];
@@ -596,7 +603,7 @@ struct SelfPlayEngine::Impl {
         rec.score0 = int16_t(g.board.score(0));
         rec.score1 = int16_t(g.board.score(1));
         rec.net_player = g.net_player;
-        rec.selfplay = !eval.enabled;
+        rec.selfplay = !eval.enabled || eval.training_records;
         done.push_back(std::move(rec));
         ++finished;
 

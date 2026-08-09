@@ -57,8 +57,12 @@ class SelfPlayDriver:
         compile_model: bool = False,
         fixed_batch: bool = True,
         engine_threads: int = 1,
+        opponent_model: CornerNet | None = None,
     ):
         self.model = model
+        # 对手池自博弈：一个批次里两方各用各的网络。engine.prepare 会写回
+        # which_net（0 = 主网络，1 = 对手），照 tag 分两次前向再合并。
+        self.opponent_model = opponent_model
         self.device = torch.device(device)
         self.dtype = dtype
         self.mcts = mcts or E.MctsConfig()
@@ -85,6 +89,7 @@ class SelfPlayDriver:
         self.wdl_host = torch.empty((num_games, 3), dtype=torch.float32, pin_memory=pin)
         self.logit_np = self.logit_host.numpy()
         self.wdl_np = self.wdl_host.numpy()
+        self.which = np.zeros(num_games, dtype=np.int8) if opponent_model is not None else None
 
     def _device_ctx(self):
         """把当前 CUDA 设备设成本驱动所在的卡。
@@ -102,6 +107,9 @@ class SelfPlayDriver:
     def _evaluate(self, n: int) -> None:
         # 走 autocast 而不是手工转 dtype：权重保持 fp32 主副本，
         # 与训练路径完全一致，否则推理和训练看到的是两个不同的模型
+        if self.opponent_model is not None:
+            self._evaluate_two_nets(n)
+            return
         m = self.planes.shape[0] if self.fixed_batch else n
         with self._device_ctx():
             p = self.planes_t[:m].to(self.device, non_blocking=True)
@@ -113,6 +121,22 @@ class SelfPlayDriver:
         self.wdl_host[:n].copy_(wdl[:n].float().softmax(dim=-1), non_blocking=True)
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
+
+    def _evaluate_two_nets(self, n: int) -> None:
+        """按 which_net 分组前向。这里不做定长补齐 —— 两组的大小逐批都在变，
+        补齐反而会让 torch.compile 为每种组合重编译；对手池模式本来也不开 compile。"""
+        with self._device_ctx():
+            for tag, model in ((0, self.fwd), (1, self.opponent_model)):
+                idx = np.flatnonzero(self.which[:n] == tag)
+                if idx.size == 0:
+                    continue
+                p = torch.from_numpy(self.planes[idx]).to(self.device, non_blocking=True)
+                s = torch.from_numpy(self.scalars[idx]).to(self.device, non_blocking=True)
+                with torch.autocast(self.device.type, dtype=self.dtype,
+                                    enabled=self.device.type == "cuda"):
+                    pol, wdl, _ = model(p, s)
+                self.logit_np[idx] = pol.float().cpu().numpy()
+                self.wdl_np[idx] = wdl.float().softmax(dim=-1).cpu().numpy()
 
     @torch.no_grad()
     def warmup(self) -> None:
@@ -145,7 +169,9 @@ class SelfPlayDriver:
                     break
                 if should_stop is not None and should_stop():
                     break
-                n = self.engine.prepare(self.planes, self.scalars)
+                n = (self.engine.prepare(self.planes, self.scalars, self.which)
+                     if self.which is not None
+                     else self.engine.prepare(self.planes, self.scalars))
                 if n == 0:
                     done = self.engine.advance()
                     if done:
