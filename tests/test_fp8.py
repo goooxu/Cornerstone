@@ -296,3 +296,36 @@ def test_fp8_adamw_handles_mixed_quantized_and_plain_params():
     w_before = plain.weight.detach().clone()
     opt.step()
     assert not torch.equal(plain.weight.detach(), w_before), "非量化参数也应该被更新"
+
+
+def test_pool_state_dict_strips_te_extra_state(tmp_path):
+    """池对手是**非量化**模型，载入 FP8 checkpoint 前必须滤掉 TE 的 _extra_state。
+
+    不滤的话 load_state_dict 严格模式会抛 "Unexpected key(s) in state_dict"，
+    而这只在「FP8 那条腿 + 对手池」的组合下才触发 —— BF16 的 checkpoint 没有
+    这些键。真实训练里它把 pool-fp8 跑挂了：前一万步池还没启用，一到第一次
+    采样对手就崩。
+    """
+    import os
+    import types
+
+    import torch
+    from cornerstone.train import Trainer
+
+    ckpt = tmp_path / "ckpt"
+    ckpt.mkdir()
+    sd = {"blocks.0.mlp.up.weight": torch.zeros(4, 4),
+          "blocks.0.mlp.up._extra_state": torch.zeros(1),
+          "norm_out.weight": torch.zeros(4)}
+    torch.save({"model": sd}, ckpt / "step00000100.pt")
+
+    # ckpt_dir 是只读属性，由 cfg.run_dir 推出来，所以只塞一个最小的 cfg
+    tr = Trainer.__new__(Trainer)          # 只测这一个方法，不建整个 Trainer
+    tr.cfg = types.SimpleNamespace(run_dir=str(tmp_path))
+    assert tr.ckpt_dir == os.path.join(str(tmp_path), "ckpt")
+
+    got = Trainer.load_pool_state_dict(tr, 100)
+    assert not any(k.endswith("_extra_state") for k in got), \
+        f"_extra_state 没滤掉：{[k for k in got if k.endswith('_extra_state')]}"
+    assert set(got) == {"blocks.0.mlp.up.weight", "norm_out.weight"}
+    assert all(v.dtype == torch.float32 for v in got.values())
