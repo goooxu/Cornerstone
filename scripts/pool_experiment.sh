@@ -54,12 +54,11 @@ COMMON=(
   --seed 1
 )
 
+# 重复执行即续训（train.sh start 会自动从 checkpoint 恢复）。
+# **这里不能加「已有 checkpoint 就拒绝」的护栏** —— 守护恢复训练走的正是这条路，
+# 加了护栏开发机一回收训练就被搁浅，而日志里只会看到「恢复失败，下一轮重试」。
+# 要从零重来请先手动清掉 runs/<exp>。
 start_one() {   # $1 = 实验名, $2 = fp8 true/false
-  if [ -e "$RUNS/$1/ckpt/latest" ]; then
-    echo "$RUNS/$1 已有 checkpoint —— 首次启动必须从零开始。" >&2
-    echo "要重来请先手动清掉该目录；要续训请重复同一条命令。" >&2
-    exit 1
-  fi
   bash "$REPO/scripts/train.sh" start "$1" --fp8 "$2" \
     --device "${POOL_DEVICES%%,*}" --selfplay-devices "$POOL_DEVICES" \
     --engine-threads "$ENGINE_THREADS" "${COMMON[@]}"

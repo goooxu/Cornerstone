@@ -268,8 +268,12 @@ class Trainer:
         path = os.path.join(self.ckpt_dir, f"step{step:08d}.pt")
         blob = torch.load(path, map_location="cpu", weights_only=False)
         sd = blob["model"] if "model" in blob else blob
+        # 滤掉 TE 的 _extra_state：FP8 的 checkpoint 每个 te.Linear 都带一个，
+        # 而池对手是**非量化**的普通 CornerNet，没有这些键 ——
+        # 不滤的话 load_state_dict 严格模式直接抛 "Unexpected key(s)"。
+        # 保持 strict=True，这样真正的结构不匹配仍然会暴露出来。
         return {k: (v.dequantize() if hasattr(v, "dequantize") else v).float()
-                for k, v in sd.items()}
+                for k, v in sd.items() if not k.endswith("_extra_state")}
 
     def make_pool_driver(self):
         """跑「主网络 vs 池中对手」的驱动。
