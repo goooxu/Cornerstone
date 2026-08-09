@@ -225,9 +225,13 @@ def main() -> None:
     # 这段就整体跳过，等于没有自检。改成两条无论怎么组队都成立的不变量。
     nets_sorted = sorted((p for p in parts if p.is_net), key=lambda q: q.step)
     checks = []
-    if len(nets_sorted) >= 2:
+    # 「晚的打得过早的」只在步数跨度够大时才是有效不变量。参赛者全是顶尖档时
+    # （比如拿两条腿各自最强的几档来对比），彼此实力本就相当、次序也未必随步数单调，
+    # 这条会误报。跨度不足 10 万步就不施加，改由下面规则基线那条兜底。
+    SPAN = 100_000
+    if len(nets_sorted) >= 2 and nets_sorted[-1].step - nets_sorted[0].step >= SPAN:
         checks.append((nets_sorted[-1].name, nets_sorted[0].name, 0.5,
-                       "训练了 20 万步的网络不可能打不过最早那一档"))
+                       "步数跨度超过 10 万，晚的那一档不该打不过最早那一档"))
     for strong, weak in (("greedy-mobility", "random"), ("greedy-area", "random"),
                          ("flat-mcts-1k", "random")):
         if strong in idx and weak in idx:
