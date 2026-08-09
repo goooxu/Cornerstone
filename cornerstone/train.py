@@ -10,6 +10,7 @@ replay 热数据写本地盘、快照回写工作目录，`resume()` 能从任�
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -49,6 +50,13 @@ class TrainConfig:
     max_considered: int = 16
     temperature_plies: int = 12
     games_per_iter: int = 2048
+
+    # 对手池：一部分自博弈对局的对手，从本次运行自己已落盘的里程碑里采样。
+    # 纯自博弈时对手只有当前的自己，网络往哪儿漂对手就跟着漂，没有外部参照；
+    # 有了池，每一轮都要重新打赢自己的过去，漂弱了会立刻表现为胜率下降。
+    pool_frac: float = 0.0        # >0 才启用。0.5 = 一半的对局用池对手
+    pool_window: int = 8          # 从最近 N 个里程碑里均匀采样
+    pool_opponents_per_iter: int = 2   # 池对局拆成几段，各用一个不同的对手
 
     # 训练
     batch_size: int = 1024
@@ -221,6 +229,80 @@ class Trainer:
         return MultiGpuSelfPlay(self.model, devices, num_games=c.parallel_games,
                                 mcts=mcts, seed=seed, compile_model=c.compile_model,
                                 engine_threads=max(1, c.engine_threads // len(devices)))
+
+    # ---- 对手池 ----
+
+    def pool_milestones(self) -> list[int]:
+        """本次运行已落盘、可以当对手的里程碑步数（每 milestone_every_steps 一档）。"""
+        every = max(1, self.cfg.milestone_every_steps)
+        steps = []
+        for f in os.listdir(self.ckpt_dir):
+            if f.startswith("step") and f.endswith(".pt"):
+                try:
+                    steps.append(int(f[4:-3]))
+                except ValueError:
+                    pass
+        # 与 _prune_checkpoints 同一套「每跨过一个区间留第一个」的判定，
+        # 免得这里挑到的档随后被裁掉
+        seen, out = set(), []
+        for st in sorted(steps):
+            b = st // every
+            if b not in seen and st >= every:      # 跳过第 0 个区间（太弱，没意义）
+                seen.add(b)
+                out.append(st)
+        return out
+
+    def sample_pool_opponents(self, k: int) -> list[int]:
+        """从最近 pool_window 个里程碑里**不放回**地采 k 个。不足就有多少用多少。"""
+        ms = self.pool_milestones()
+        if not ms:
+            return []
+        window = ms[-max(1, self.cfg.pool_window):]
+        k = min(k, len(window))
+        idx = self.rng.choice(len(window), size=k, replace=False)
+        return [window[int(i)] for i in sorted(idx)]
+
+    def load_pool_state_dict(self, step: int) -> dict:
+        """读一份历史 checkpoint 的权重，反量化成普通张量（对手不需要 FP8）。"""
+        path = os.path.join(self.ckpt_dir, f"step{step:08d}.pt")
+        blob = torch.load(path, map_location="cpu", weights_only=False)
+        sd = blob["model"] if "model" in blob else blob
+        return {k: (v.dequantize() if hasattr(v, "dequantize") else v).float()
+                for k, v in sd.items()}
+
+    def make_pool_driver(self):
+        """跑「主网络 vs 池中对手」的驱动。
+
+        net_opponent=True 让两方都建树、两方的手都记录，序列因此**可以回放**，
+        记录能进 replay buffer；training_records=True 把它标成自博弈数据。
+        opening_plies 必须是 0 —— 随机开局的手不进 history，带上序列就不完整了。
+        """
+        from .multigpu import MultiGpuSelfPlay, visible_devices
+        c = self.cfg
+        mcts = E.MctsConfig(simulations=c.simulations, max_considered=c.max_considered,
+                            temperature_plies=c.temperature_plies)
+        ev = E.EvalConfig(enabled=True, net_opponent=True, opening_plies=0,
+                          training_records=True)
+        seed = int(self.rng.integers(1 << 30))
+        devices = visible_devices(c.selfplay_devices)
+        if len(devices) <= 1:
+            import dataclasses
+            with torch.cuda.device(self.device) if self.device.type == "cuda" \
+                    else contextlib.nullcontext():
+                opp = CornerNet(dataclasses.replace(self.model.cfg, fp8=False)).to(self.device)
+            opp.eval()
+            d = SelfPlayDriver(self.model, self.device, num_games=c.parallel_games,
+                               mcts=mcts, seed=seed, eval_cfg=ev,
+                               compile_model=False, engine_threads=c.engine_threads,
+                               opponent_model=opp)
+            d.opponents = [opp]
+            d.load_opponent = lambda sd: (opp.load_state_dict(
+                {k: v.to(self.device) for k, v in sd.items()}), opp.eval())
+            return d
+        return MultiGpuSelfPlay(self.model, devices, num_games=c.parallel_games,
+                                mcts=mcts, seed=seed, compile_model=False,
+                                engine_threads=max(1, c.engine_threads // len(devices)),
+                                eval_cfg=ev, with_opponent=True)
 
     def steps_for_iteration(self) -> int:
         """按 replay 里现有的数据量给本轮的训练步数限流。

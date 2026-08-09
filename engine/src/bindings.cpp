@@ -259,20 +259,23 @@ PYBIND11_MODULE(_engine, m) {
 
     py::class_<EvalConfig>(m, "EvalConfig")
         .def(py::init([](bool enabled, const AgentConfig& opponent, bool net_opponent,
-                         int opening_plies) {
+                         int opening_plies, bool training_records) {
                  EvalConfig c;
                  c.enabled = enabled;
                  c.opponent = opponent;
                  c.net_opponent = net_opponent;
                  c.opening_plies = opening_plies;
+                 c.training_records = training_records;
                  return c;
              }),
              py::arg("enabled") = false, py::arg("opponent") = AgentConfig{},
-             py::arg("net_opponent") = false, py::arg("opening_plies") = 2)
+             py::arg("net_opponent") = false, py::arg("opening_plies") = 2,
+             py::arg("training_records") = false)
         .def_readwrite("enabled", &EvalConfig::enabled)
         .def_readwrite("opponent", &EvalConfig::opponent)
         .def_readwrite("net_opponent", &EvalConfig::net_opponent)
-        .def_readwrite("opening_plies", &EvalConfig::opening_plies);
+        .def_readwrite("opening_plies", &EvalConfig::opening_plies)
+        .def_readwrite("training_records", &EvalConfig::training_records);
 
     py::class_<SelfPlayEngine>(m, "SelfPlayEngine")
         .def(py::init<int, const MctsConfig&, uint64_t, const EvalConfig&, int>(),

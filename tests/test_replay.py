@@ -224,3 +224,69 @@ def test_save_and_load_roundtrip(games, tmp_path):
         assert np.array_equal(a.actions, b.actions)
         assert np.array_equal(a.top_probs, b.top_probs)
         assert (a.result0, a.score0, a.score1) == (b.result0, b.score0, b.score1)
+
+
+# ---- 对手池：只训练主网络那一方的手 ------------------------------------
+#
+# 池对局里两方都是网络，两方的手都要记录（否则从空盘回放会得到非法序列），
+# 但只有主网络那一方的手能当训练目标 —— 另一方来自更弱的历史 checkpoint，
+# 拿它的搜索结果训练等于向弱教师学习。
+
+def _pool_record(n_plies=8, net_player=0):
+    """造一条「两方都记录」的对局，交替行棋。"""
+    import numpy as np
+    from cornerstone import _engine as E
+    b = E.Board()
+    acts, players = [], []
+    for _ in range(n_plies):
+        mv = b.legal_moves()
+        if len(mv) == 0:
+            break
+        players.append(int(b.current_player))
+        acts.append(int(mv[0]))
+        b.play(int(mv[0]))
+    T = len(acts)
+    return {
+        "actions": np.array(acts, np.int32), "players": np.array(players, np.int8),
+        "n_legal": np.full(T, 100, np.int32), "n_top": np.full(T, 1, np.uint8),
+        "rest_prob": np.zeros(T, np.float32),
+        "top_actions": np.tile(np.array(acts, np.int32)[:, None], (1, 32)),
+        "top_probs": np.concatenate([np.ones((T, 1), np.float32),
+                                     np.zeros((T, 31), np.float32)], axis=1),
+        "result0": 1, "score0": 50, "score1": 40,
+        "net_player": net_player, "selfplay": True,
+    }
+
+
+def test_pool_record_only_main_player_is_trainable():
+    from cornerstone.replay import Game
+    d = _pool_record(net_player=0)
+    g = Game.from_record(d, main_player_only=True)
+    assert g.trainable is not None
+    assert g.n_trainable < len(g), "应当只有一半左右的手可训练"
+    assert (g.players[g.trainable_plies()] == 0).all(), "取到的必须都是主网络那一方"
+
+
+def test_pool_trainable_follows_net_player_not_seat_zero():
+    """net_player=1 时取的是另一侧 —— 过滤不能写死成 player==0。"""
+    from cornerstone.replay import Game
+    g = Game.from_record(_pool_record(net_player=1), main_player_only=True)
+    assert (g.players[g.trainable_plies()] == 1).all()
+
+
+def test_pool_record_is_replayable_and_samplable():
+    """池对局必须能进 buffer 并采样出来 —— 记录含双方的手才回放得了。"""
+    import numpy as np
+    from cornerstone.replay import ReplayBuffer
+    buf = ReplayBuffer(capacity_positions=10_000)
+    buf.add_records([_pool_record() for _ in range(6)], main_player_only=True)
+    assert len(buf) > 0
+    batch = buf.sample(16, np.random.default_rng(0), threads=2)
+    assert batch["planes"].shape[0] == 16
+
+
+def test_selfplay_records_unaffected():
+    """纯自博弈路径必须一字不变：全部手都可训练。"""
+    from cornerstone.replay import Game
+    g = Game.from_record(_pool_record(), main_player_only=False)
+    assert g.trainable is None and g.n_trainable == len(g)

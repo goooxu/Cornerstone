@@ -213,3 +213,52 @@ def test_engine_rejects_bad_shapes():
                  np.zeros((n, 2), dtype=np.float32))
     with pytest.raises(ValueError):
         eng.prepare(np.zeros((1, cs.NUM_PLANES, 14, 14), dtype=np.float32), scal)
+
+
+# ---- 对手池的记录必须可回放 --------------------------------------------
+
+def test_training_records_requires_net_opponent_and_no_opening():
+    """记录不可回放要当场崩，别拖到 replay 里 Board::play 抛异常。
+
+    随机开局那几手是直接落在盘上、不进 history 的；规则对手那一侧的手同理。
+    两种情况下着法序列都不完整，从空盘回放会得到非法序列 —— 而那时候离根因已经很远。
+    """
+    import pytest
+    from cornerstone import _engine as E
+    mc = E.MctsConfig(simulations=4)
+    with pytest.raises(Exception):     # 规则对手：另一侧的手没记录
+        E.SelfPlayEngine(2, mc, 0, E.EvalConfig(
+            enabled=True, net_opponent=False, opening_plies=0, training_records=True), 1)
+    with pytest.raises(Exception):     # 随机开局：那几手没记录
+        E.SelfPlayEngine(2, mc, 0, E.EvalConfig(
+            enabled=True, net_opponent=True, opening_plies=2, training_records=True), 1)
+    # 正确组合不该崩
+    E.SelfPlayEngine(2, mc, 0, E.EvalConfig(
+        enabled=True, net_opponent=True, opening_plies=0, training_records=True), 1)
+
+
+def test_training_records_are_marked_selfplay():
+    """training_records 的记录要标成 selfplay，否则 ReplayBuffer 直接拒收。"""
+    import numpy as np
+    from cornerstone import _engine as E
+    from cornerstone.model import ACTIONS, BOARD, PLANES, SCALARS
+    ev = E.EvalConfig(enabled=True, net_opponent=True, opening_plies=0,
+                      training_records=True)
+    eng = E.SelfPlayEngine(2, E.MctsConfig(simulations=2, temperature_plies=0), 5, ev, 1)
+    pl = np.zeros((2, PLANES, BOARD, BOARD), np.float32)
+    sc = np.zeros((2, SCALARS), np.float32)
+    w = np.zeros(2, np.int8)
+    lg = np.zeros((2, ACTIONS), np.float32)
+    wd = np.full((2, 3), 1 / 3, np.float32)
+    recs = []
+    while len(recs) < 2:
+        n = eng.prepare(pl, sc, w)
+        if n:
+            eng.feed(lg[:n], wd[:n])
+        else:
+            recs.extend(eng.advance())
+    assert all(r["selfplay"] for r in recs)
+    # 双方的手都在，序列可以从空盘回放
+    b = E.Board()
+    for a in recs[0]["actions"]:
+        b.play(int(a))
