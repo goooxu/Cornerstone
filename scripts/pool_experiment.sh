@@ -48,7 +48,7 @@ COMMON=(
   --lr 0.002 --warmup-steps 500 --total-steps 200000
   --compile-model false          # 两边都关，消掉这个变量
   --milestone-every-steps 10000
-  --pool-frac 0.5 --pool-window 8 --pool-opponents-per-iter 2
+  --pool-frac 0.5 --pool-window 8 --pool-opponents-per-iter 2   # window = 采样权重半衰期
   --eval-every-iters 0           # 规则基线在训练走完 5% 时就被打穿了，
                                  # 真正的进度信号是 pool_score_rate
   --seed 1
