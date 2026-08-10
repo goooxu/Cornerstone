@@ -55,7 +55,7 @@ class TrainConfig:
     # 纯自博弈时对手只有当前的自己，网络往哪儿漂对手就跟着漂，没有外部参照；
     # 有了池，每一轮都要重新打赢自己的过去，漂弱了会立刻表现为胜率下降。
     pool_frac: float = 0.0        # >0 才启用。0.5 = 一半的对局用池对手
-    pool_window: int = 8          # 从最近 N 个里程碑里均匀采样
+    pool_window: int = 8          # 采样权重的**半衰期**（多少档之后权重减半），不是硬截断
     pool_opponents_per_iter: int = 2   # 池对局拆成几段，各用一个不同的对手
 
     # 训练
@@ -254,14 +254,28 @@ class Trainer:
         return out
 
     def sample_pool_opponents(self, k: int) -> list[int]:
-        """从最近 pool_window 个里程碑里**不放回**地采 k 个。不足就有多少用多少。"""
+        """从**全部**已落盘的里程碑里不放回地采 k 个，按新近度指数加权。
+
+        权重 0.5^(名次/pool_window)，名次 0 = 最新，所以 pool_window 是「半衰期」
+        （多少档之后权重减半），不是硬截断。
+
+        原先用的是硬窗口「只取最近 N 档」，那样有个洞：训练一旦见顶回落，
+        窗口滑过峰值之后，池里就全是比当前网络更弱的版本 ——
+        恰恰在最需要外部参照的那一段把锚丢了。上一轮两条腿的峰值分别在第 9 万 /
+        8 万步，硬窗口会让它们从第 17 万步起彻底掉出池子。
+
+        指数加权之后没有任何一档会被完全排除：20 档时最老的那档仍有约 2% 的概率
+        被选中，而「老的那一半」合计占三成多 —— 足够当锚，又不至于把大部分对局
+        浪费在早期的弱版本上。
+        """
         ms = self.pool_milestones()
         if not ms:
             return []
-        window = ms[-max(1, self.cfg.pool_window):]
-        k = min(k, len(window))
-        idx = self.rng.choice(len(window), size=k, replace=False)
-        return [window[int(i)] for i in sorted(idx)]
+        k = min(k, len(ms))
+        rank = np.arange(len(ms) - 1, -1, -1)      # 0 = 最新
+        w = 0.5 ** (rank / max(1, self.cfg.pool_window))
+        idx = self.rng.choice(len(ms), size=k, replace=False, p=w / w.sum())
+        return [ms[int(i)] for i in sorted(idx)]
 
     def load_pool_state_dict(self, step: int) -> dict:
         """读一份历史 checkpoint 的权重，反量化成普通张量（对手不需要 FP8）。"""

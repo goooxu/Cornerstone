@@ -329,3 +329,64 @@ def test_pool_state_dict_strips_te_extra_state(tmp_path):
         f"_extra_state 没滤掉：{[k for k in got if k.endswith('_extra_state')]}"
     assert set(got) == {"blocks.0.mlp.up.weight", "norm_out.weight"}
     assert all(v.dtype == torch.float32 for v in got.values())
+
+
+def test_pool_sampling_never_drops_old_milestones(tmp_path):
+    """采样必须覆盖**全部**里程碑，不能有硬窗口把老的彻底排除。
+
+    这是修过的一个洞：原先只从最近 N 档采样，训练一旦见顶回落，窗口滑过峰值后
+    池里就全是更弱的版本 —— 恰恰在最需要外部参照的那一段把锚丢了。
+    上一轮两条腿的峰值在第 9 万 / 8 万步，硬窗口会让它们从第 17 万步起掉出池子。
+    """
+    import types
+
+    import numpy as np
+    from cornerstone.train import Trainer
+
+    ckpt = tmp_path / "ckpt"
+    ckpt.mkdir()
+    steps = [10000 * i for i in range(1, 21)]          # 20 档里程碑
+    for s in steps:
+        (ckpt / f"step{s:08d}.pt").write_bytes(b"x")
+
+    tr = Trainer.__new__(Trainer)
+    tr.cfg = types.SimpleNamespace(run_dir=str(tmp_path), milestone_every_steps=10000,
+                                   pool_window=8)
+    tr.rng = np.random.default_rng(0)
+    assert Trainer.pool_milestones(tr) == steps
+
+    seen = set()
+    for _ in range(400):
+        picked = Trainer.sample_pool_opponents(tr, 2)
+        assert len(picked) == 2 and len(set(picked)) == 2, "同一轮里不该重复采到同一个对手"
+        seen.update(picked)
+    # 最老那几档也必须出现过 —— 有硬窗口的话它们永远不会被选中
+    assert steps[0] in seen and steps[1] in seen, f"老的里程碑没被采到：{sorted(seen)[:4]}"
+    assert seen == set(steps), f"有里程碑从未被采到：{sorted(set(steps) - seen)}"
+
+
+def test_pool_sampling_prefers_recent(tmp_path):
+    """加权要真的偏向新近 —— 否则大量对局会浪费在早期的弱版本上。"""
+    import types
+
+    import numpy as np
+    from cornerstone.train import Trainer
+
+    ckpt = tmp_path / "ckpt"
+    ckpt.mkdir()
+    steps = [10000 * i for i in range(1, 21)]
+    for s in steps:
+        (ckpt / f"step{s:08d}.pt").write_bytes(b"x")
+
+    tr = Trainer.__new__(Trainer)
+    tr.cfg = types.SimpleNamespace(run_dir=str(tmp_path), milestone_every_steps=10000,
+                                   pool_window=8)
+    tr.rng = np.random.default_rng(1)
+
+    cnt = {s: 0 for s in steps}
+    for _ in range(2000):
+        for s in Trainer.sample_pool_opponents(tr, 1):
+            cnt[s] += 1
+    newest_half = sum(cnt[s] for s in steps[10:])
+    assert newest_half > sum(cnt.values()) * 0.55, "新近档的权重不够"
+    assert min(cnt.values()) > 0, "有里程碑一次都没被采到"
