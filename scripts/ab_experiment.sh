@@ -18,11 +18,11 @@
 # 所以这次把变量锁死：
 #
 #   * 除 --fp8 外全部配置逐字相同，种子相同，都从零开始
-#   * **两边都关掉 torch.compile** —— 它会改变算子融合与数值细节。
-#     注意理由已经变了：原先是"FP8 根本不能 compile，开着就只有 BF16 吃得到"；
-#     现在两条腿都能编（FP8 按 block、BF16 整模型，见 docs/06 第四条），
-#     但**编法本身不同**，开着仍然是一个变量。代价是自博弈慢 2.4 倍 ——
-#     要提速就得让两边都用按 block 编译，那需要一个新开关，还没做。
+#   * **torch.compile 两边都开**，各走各最快的编法（BF16 整模型、
+#     FP8 只能按 block，整模型会 SIGSEGV，见 docs/06 第四条）。
+#     **这是一个已知的不对称**：两边的算子融合不同，严格说多了一个变量。
+#     接受它是因为影响比 FP8 量化本身小（compile 换 eager 改 4.3% 的 argmax，
+#     FP8 量化改 9.2%），而换来的是自博弈 2.4 倍。读结论时心里有数即可。
 #   * 每 10000 步留一个永久里程碑 checkpoint，供后续头对头
 #   * 各占两张卡，engine_threads 对半分
 #
@@ -53,9 +53,7 @@ COMMON=(
   --simulations 64 --max-considered 16 --temperature-plies 12
   --batch-size 1024 --steps-per-iter 400
   --lr 0.002 --warmup-steps 500 --total-steps 200000
-  --compile-model false          # 两边都关，消掉这个变量
   --milestone-every-steps 10000
-  --eval-opponent flat-mcts-4k --eval-simulations 128 --eval-every-iters 10
   --seed 1
 )
 
