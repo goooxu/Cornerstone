@@ -164,3 +164,31 @@ def test_total_loss_reports_all_parts():
     assert set(parts) == {"loss", "policy", "value", "score", "wdl_acc", "policy_entropy"}
     # 策略熵不会超过 log(合法着法数)
     assert parts["policy_entropy"] <= np.log(int(batch["n_legal"][0])) + 1e-4
+
+
+def test_to_param_dtype_preserves_parameter_objects():
+    """降精度必须原地改 `param.data`，不能替换 Parameter 对象。
+
+    换了对象的话，优化器持有的那批 fp32 master 就和模型脱钩了 —— 不报错，
+    只是训练照跑而权重永远不动。这是低精度训练里最难查的一类失效。
+    """
+    net = CornerNet(SMALL)
+    before = [p for p in net.parameters()]
+    net.to_param_dtype()
+    assert all(a is b for a, b in zip(before, net.parameters()))
+    assert all(p.dtype is torch.bfloat16 for p in net.parameters())
+
+
+def test_bf16_model_accepts_fp32_input_without_autocast():
+    """CPU 上 autocast 是关的，而 web 有真实的 CPU 回退路径。
+
+    没有 forward 入口那条 dtype 护栏的话，这里会直接报
+    `Input type (float) and bias type (c10::BFloat16) should be the same`。
+    """
+    net = CornerNet(SMALL).eval().to_param_dtype()
+    p = torch.randn(4, cs.NUM_PLANES, 14, 14)          # fp32 输入
+    s = torch.randn(4, cs.NUM_SCALARS)
+    with torch.no_grad():
+        pol, wdl, sc = net(p, s)
+    assert pol.shape == (4, ACTIONS)
+    assert torch.isfinite(pol.float()).all()
