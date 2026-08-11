@@ -82,7 +82,7 @@ def torch_extra(t):
     if t.cuda.is_available():
         cap = t.cuda.get_device_capability(0)
         print(f"{'':<24}   device0={t.cuda.get_device_name(0)} sm_{cap[0]}{cap[1]} count={t.cuda.device_count()}")
-        # FP8 dtype 支持（真·FP8 主权重方案依赖这两个 dtype）
+        # FP8 dtype 支持（MXFP8 的 GEMM 依赖这两个 dtype）
         for name in ("float8_e4m3fn", "float8_e5m2"):
             print(f"{'':<24}   torch.{name}: {'yes' if hasattr(t, name) else 'NO'}")
     print(f"{'':<24}   cmake_prefix={t.utils.cmake_prefix_path}")
