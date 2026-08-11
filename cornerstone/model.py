@@ -43,25 +43,45 @@ class ModelConfig:
     attn_every: int = 4          # 每隔几个 block 插一层全局注意力，0 表示不插
     heads: int = 8
     dw_kernel: int = 5           # 深度可分离卷积核大小
-    fp8: bool = False            # M4 打开：把 MLP/注意力的 Linear 换成 FP8
-    fp8_first_last_bf16: bool = True   # 首尾 block 保持高精度
+    fp8: bool = False            # 打开：把 MLP/注意力的 Linear 换成走 FP8 GEMM
+    fp8_first_last_bf16: bool = True   # 首尾 block 不走 FP8
+    # 计算权重的精度。**一切推理都用它**，fp32 主权重只服务优化器。
+    # 老 checkpoint 的 model_config 里没有这个字段，加载时走的也是这个默认值。
+    param_dtype: str = "bf16"
 
     @property
     def hidden(self) -> int:
         return self.dim * self.mlp_ratio
 
+    @property
+    def torch_param_dtype(self) -> torch.dtype:
+        return {"fp32": torch.float32, "bf16": torch.bfloat16}[self.param_dtype]
+
 
 def make_linear(cfg: ModelConfig, in_f: int, out_f: int, bias: bool = False,
                 force_bf16: bool = False) -> nn.Module:
-    """MLP / 注意力投影用的线性层。
+    """MLP / 注意力投影用的线性层 —— FP8 与否的唯一切换点。
 
-    M4 会在这里返回 transformer_engine 的 FP8 Linear；现在统一是 nn.Linear，
-    但结构上已经把切换点收敛到这一个函数里。
+    **两条腿的初始权重必须逐位相同**，否则 A/B 里就混进了一个隐藏变量。
+    `te.Linear` 默认用 `normal(0, 0.023)` 初始化，而 `nn.Linear` 用 kaiming_uniform，
+    分布本身就不一样；更麻烦的是两者消耗的 RNG 流长度不同，会让**后面所有层**
+    （包括不含 TE 的卷积和位置嵌入）跟着错位。实测同一 seed 下 126 个参数张量里
+    有 75 个不同。所以这里无条件先建一个 fp32 的 nn.Linear 当初始化参考，
+    FP8 路径把它的权重拷进去 —— RNG 消耗和初值就都对齐了。
+
+    te.Linear 也以 fp32 构造：全模型统一在 fp32 下初始化，优化器取走 fp32 master
+    之后再由 `CornerNet.to_param_dtype()` 整体降到 bf16。
     """
-    if cfg.fp8 and not force_bf16:
-        from .fp8 import fp8_linear
-        return fp8_linear(in_f, out_f, bias=bias)
-    return nn.Linear(in_f, out_f, bias=bias)
+    ref = nn.Linear(in_f, out_f, bias=bias)
+    if not (cfg.fp8 and not force_bf16):
+        return ref
+    from .fp8 import fp8_linear
+    lin = fp8_linear(in_f, out_f, bias=bias, params_dtype=torch.float32)
+    with torch.no_grad():
+        lin.weight.copy_(ref.weight)
+        if bias:
+            lin.bias.copy_(ref.bias)
+    return lin
 
 
 class SwiGLU(nn.Module):
@@ -153,7 +173,7 @@ class CornerNet(nn.Module):
             PolyBlock(
                 cfg,
                 with_attn=(cfg.attn_every > 0 and (i + 1) % cfg.attn_every == 0),
-                # 首尾 block 对精度最敏感，FP8 时保持 BF16
+                # 首尾 block 对精度最敏感，FP8 时不走 FP8 GEMM
                 force_bf16=(cfg.fp8_first_last_bf16 and i in (0, last)),
             )
             for i in range(cfg.blocks)
@@ -174,6 +194,19 @@ class CornerNet(nn.Module):
         # 策略头零初始化 -> 训练一开始策略就是均匀分布，不会给 MCTS 一个随机的强先验
         nn.init.zeros_(self.policy.weight)
         nn.init.zeros_(self.policy.bias)
+
+    def to_param_dtype(self) -> "CornerNet":
+        """把参数降到 `cfg.param_dtype`（计算权重）。
+
+        **必须在优化器取走 fp32 master 之后调用** —— 反过来的话 master 是从
+        bf16 值回填的，等于一开始就丢掉一半精度，而且训练看不出任何异常。
+
+        这里依赖 `nn.Module._apply` 的默认行为：它做的是 `param.data = param.data.to()`，
+        **Parameter 对象本身不变**，所以优化器按对象持有的引用仍然有效。
+        真要哪天不成立，表现是「训练不报错、权重永远不动」——
+        `tests/test_optim.py` 里那条 `is` 断言就是守这个的。
+        """
+        return self.to(self.cfg.torch_param_dtype)
 
     def trunk(self, planes: torch.Tensor, scalars: torch.Tensor) -> torch.Tensor:
         b = planes.shape[0]
@@ -220,6 +253,16 @@ class CornerNet(nn.Module):
             return self._forward(planes, scalars)
 
     def _forward(self, planes: torch.Tensor, scalars: torch.Tensor):
+        # 参数是 bf16 而输入是 fp32 时，没有 autocast 的路径会直接报
+        # `Input type (float) and bias type (c10::BFloat16) should be the same`。
+        # 全仓 4 个推理点都包了 autocast，但它们的 `enabled=` 都挂着
+        # `device.type == "cuda"` —— CPU 上 autocast 是关的，而 web 有真实的
+        # CPU 回退路径，单测也直接在 CPU 上调 forward。护栏放在唯一入口，
+        # 比指望每条调用路径都记得转 dtype 可靠。
+        dt = self.pos.dtype
+        if not torch.is_autocast_enabled() and planes.dtype != dt:
+            planes, scalars = planes.to(dt), scalars.to(dt)
+
         b0 = planes.shape[0]
         if self.cfg.fp8:
             # MXFP8 要求 GEMM 的两维都是 32 的倍数，token 维是 B*196 且 196%32==4，
@@ -246,12 +289,32 @@ class CornerNet(nn.Module):
         return sum(p.numel() for p in self.parameters())
 
 
-def load_checkpoint(path: str, device="cuda") -> tuple["CornerNet", object]:
-    """从 checkpoint 建模型。FP8 与非 FP8 的 checkpoint 都能读。
+def load_weights(model: "CornerNet", sd: dict) -> None:
+    """装载权重，顺手剥掉 TE 的 `*._extra_state`。
 
-    统一走这里，别在各处自己 torch.load + load_state_dict —— FP8 模型的参数是
-    MXFP8 张量，必须在目标设备的上下文里构造、并走重量化路径装载，
-    否则会得到 `cublas_gemm: failed to launch on the GPU` 这种离根因很远的错。
+    那些键是 FP8 的元数据（amax 历史等），既不是 parameter 也不是 buffer，
+    下一次前向会自己重建；而老 checkpoint 里那份来自已经废弃的量化权重路径，
+    装进来只会是误导。dtype 由 `load_state_dict` 自动转成参数的 dtype，
+    所以老的 fp32 checkpoint 直接就落到 bf16 计算权重上。
+    """
+    clean = {k: v for k, v in sd.items() if not k.endswith("_extra_state")}
+    missing, unexpected = model.load_state_dict(clean, strict=False)
+    if unexpected:
+        raise KeyError(f"checkpoint 里有模型上不存在的键: {list(unexpected)[:5]}")
+    stray = [k for k in missing if not k.endswith("_extra_state")]
+    if stray:
+        raise KeyError(f"checkpoint 缺少这些键: {stray[:5]}")
+
+
+def load_checkpoint(path: str, device="cuda") -> tuple["CornerNet", object]:
+    """从 checkpoint 建模型做**推理**。FP8 与非 FP8 的 checkpoint 都能读。
+
+    统一走这里，别在各处自己 torch.load + load_state_dict —— FP8 模型必须在
+    目标设备的上下文里构造（TE 按当前设备取 cuBLAS 句柄），否则会得到
+    `cublas_gemm: failed to launch on the GPU` 这种离根因很远的错。
+
+    checkpoint 里存的是 fp32 主权重，但**推理一律用计算权重**（`to_param_dtype()`），
+    这样推理和训练看到的是同一个模型 —— 否则两边的权重差一次舍入。
     """
     blob = torch.load(path, map_location="cpu", weights_only=False)
     mc = blob.get("model_config") or {}
@@ -260,14 +323,9 @@ def load_checkpoint(path: str, device="cuda") -> tuple["CornerNet", object]:
     dev = torch.device(device)
     ctx = torch.cuda.device(dev) if dev.type == "cuda" else contextlib.nullcontext()
     with ctx:
-        model = CornerNet(cfg)
-        if cfg.fp8:
-            from .fp8 import load_state_dict_into
-            model = model.to(dev)
-            load_state_dict_into(model, blob["model"])
-        else:
-            model.load_state_dict(blob["model"])
-            model = model.to(dev)
+        model = CornerNet(cfg).to(dev)
+        load_weights(model, blob["model"])
+        model.to_param_dtype()
     return model.eval(), blob.get("step", "?")
 
 

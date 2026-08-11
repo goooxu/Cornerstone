@@ -22,7 +22,8 @@ import torch
 from . import _engine as E
 from .evaluate import evaluate_vs_baseline
 from .losses import total_loss
-from .model import CornerNet, ModelConfig
+from .model import CornerNet, ModelConfig, load_weights
+from .optim import MasterWeightAdamW
 from .replay import ReplayBuffer
 from .selfplay import SelfPlayDriver
 
@@ -38,7 +39,6 @@ class TrainConfig:
     blocks: int = 16
     attn_every: int = 4
     fp8: bool = False
-    stochastic_rounding: bool = True   # FP8 主权重下关掉它是对照实验用的
 
     # 自博弈
     parallel_games: int = 8192    # 多卡时按卡均分（4 卡 -> 每卡 2048，实测该点最优）
@@ -107,11 +107,14 @@ class Trainer:
         self.rng = np.random.default_rng(cfg.seed)
         self.device = torch.device(cfg.device)
 
+        # 这三行的顺序是硬的：模型在 fp32 下初始化 -> 优化器取走 fp32 master ->
+        # 参数降到计算权重精度。写反的话 master 是从 bf16 值回填的，
+        # 等于一开始就丢一半精度，而训练看不出任何异常。
         self.model = CornerNet(ModelConfig(
             dim=cfg.dim, blocks=cfg.blocks, attn_every=cfg.attn_every, fp8=cfg.fp8
         )).to(self.device)
-
         self.opt = self._make_optimizer()
+        self.model.to_param_dtype()
         self.buffer = ReplayBuffer(cfg.replay_capacity)
         self.step = 0
         self.iteration = 0
@@ -140,21 +143,19 @@ class Trainer:
     def snapshot_dir(self) -> str:
         return os.path.join(self.cfg.run_dir, "replay_snapshot")
 
-    def _make_optimizer(self) -> torch.optim.Optimizer:
+    def _make_optimizer(self) -> MasterWeightAdamW:
+        """两条腿用同一个优化器 —— FP8 与否只影响 GEMM，不影响主权重与更新。"""
         # Norm / bias / 位置嵌入不做权重衰减
         decay, no_decay = [], []
         for name, p in self.model.named_parameters():
             if not p.requires_grad:
                 continue
-            (no_decay if p.ndim <= 1 or name.endswith("pos") else decay).append(p)
-        groups = [{"params": decay, "weight_decay": self.cfg.weight_decay},
-                  {"params": no_decay, "weight_decay": 0.0}]
-        if self.cfg.fp8:
-            # 主权重就是 FP8，没有高精度副本，更新必须走随机舍入
-            from .fp8 import Fp8AdamW
-            return Fp8AdamW(groups, lr=self.cfg.lr, betas=(0.9, 0.95), eps=1e-8,
-                            stochastic_rounding=self.cfg.stochastic_rounding)
-        return torch.optim.AdamW(groups, lr=self.cfg.lr, betas=(0.9, 0.95), eps=1e-8)
+            (no_decay if p.ndim <= 1 or name.endswith("pos") else decay).append((name, p))
+        groups = [{"params": [p for _, p in decay], "names": [n for n, _ in decay],
+                   "weight_decay": self.cfg.weight_decay},
+                  {"params": [p for _, p in no_decay], "names": [n for n, _ in no_decay],
+                   "weight_decay": 0.0}]
+        return MasterWeightAdamW(groups, lr=self.cfg.lr, betas=(0.9, 0.95), eps=1e-8)
 
     def lr_at(self, step: int) -> float:
         c = self.cfg
@@ -167,36 +168,28 @@ class Trainer:
     def verify_fp8_compute(self, tag: str = "") -> bool | None:
         """跑一次前向，确认 FP8 层**确实在用 FP8 计算**，并把结论写进日志。
 
-        TE 在「权重是量化的、但计算没走量化」时只发一条 UserWarning，
-        淹在日志里很容易被忽略 —— 而这种情况下模型看着在训练、
-        实际上 FP8 名存实亡。
+        TE 在「该量化却没量化」时是静默的：模型照常训练，只是 FP8 名存实亡。
+        与其去追一次性的告警，不如把「FP8 是否真的在算」做成一个**可反复测量**
+        的性质：启动时、建完驱动后、以及每个自检周期各查一次。
 
-        而且那条警告只发一次、还找不到确切来源（多条路径都可能触发）。
-        与其去追一次性的告警，不如把「FP8 是否真的在算」变成一个**可反复测量**
-        的性质：启动时、建完驱动后、以及每个评测周期各查一次。
-
-        返回 None 表示**这条跑本来就没开 FP8**，与「开了且正常」(True) 必须区分开：
+        返回 None 有两种含义，调用方都据此**不写** `fp8_active` 字段：
+        「这条跑本来就没开 FP8」，以及「TE 换了内部 API，查不到」。
         BF16 对照组以前在这里返回 True，写进 metrics 就成了 `fp8_active: true` ——
         照着日志看会得出「对照组也在跑 FP8」的结论，而这恰好是整个 A/B
-        唯一要区分的那个变量。调用方据此决定要不要记这个字段。
+        唯一要区分的那个变量。把「查不到」记成 False 是同一个错误的反方向。
         """
         if not self.cfg.fp8:
             return None
-        import warnings
-        hits: list[str] = []
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            with torch.no_grad(), torch.cuda.device(self.device), \
-                    torch.autocast("cuda", dtype=torch.bfloat16):
-                self.model(
-                    torch.zeros(8, E.NUM_PLANES, E.BOARD_N, E.BOARD_N, device=self.device),
-                    torch.zeros(8, E.NUM_SCALARS, device=self.device))
-            hits = [str(w.message) for w in caught
-                    if "quantized compute" in str(w.message)]
-        ok = not hits
+        from .fp8 import fp8_gemm_active
+        with torch.cuda.device(self.device), torch.autocast("cuda", dtype=torch.bfloat16):
+            ok = fp8_gemm_active(
+                self.model,
+                torch.zeros(8, E.NUM_PLANES, E.BOARD_N, E.BOARD_N, device=self.device),
+                torch.zeros(8, E.NUM_SCALARS, device=self.device))
         where = f"（{tag}）" if tag else ""
-        print(f"[自检]{where} FP8 计算"
-              f"{'已启用' if ok else '未启用 —— 权重是量化的但 GEMM 没走 FP8！'}", flush=True)
+        verdict = {True: "已启用", False: "未启用 —— GEMM 没走 FP8！",
+                   None: "查不到（TE 内部 API 变了，探针需要更新）"}[ok]
+        print(f"[自检]{where} FP8 计算{verdict}", flush=True)
         return ok
 
     # ---- 自博弈 ----
@@ -263,8 +256,9 @@ class Trainer:
 
             self.opt.zero_grad(set_to_none=True)
             loss.backward()
-            gnorm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), c.grad_clip)
-            self.opt.step()
+            # 裁剪在 fp32 主权重的梯度上做，由 step 内部完成 ——
+            # 累加永远要比乘法精度高，而 bf16 梯度直接求范数会丢有效数字
+            gnorm = self.opt.step(grad_clip=c.grad_clip)
             self.step += 1
 
             parts["grad_norm"] = gnorm.detach()
@@ -284,15 +278,17 @@ class Trainer:
         name = tag or f"step{self.step:08d}"
         path = os.path.join(self.ckpt_dir, f"{name}.pt")
         tmp = path + ".tmp"
-        # 量化参数反量化后再存：MXFP8 张量跨设备/跨进程加载会失败，
-        # 而 FP8 只是训练期主权重的格式，不必也不该是序列化格式
-        model_sd = self.model.state_dict()
-        if self.cfg.fp8:
-            from .fp8 import dequantized_state_dict
-            model_sd = dequantized_state_dict(self.model)
+        # `"model"` 存的是 **fp32 主权重**，不是 bf16 计算权重：主权重才是真值，
+        # 计算权重精确等于 master.bfloat16()，随时可重建。这样存还有两个好处：
+        # 键名/dtype/结构与历史 checkpoint 完全一致，所有读者不用改；
+        # 而且 master 只有一份 —— torch 的优化器从不序列化 params。
+        model_sd = self.model.state_dict()          # 参数 + buffers + TE 的 _extra_state
+        model_sd.update(self.opt.master_state_dict())
         torch.save({
             "model": model_sd,
             "optimizer": self.opt.state_dict(),
+            # 显式标记优化器状态的格式，比事后嗅探键名可靠
+            "opt_format": "master-adamw-v1",
             "step": self.step,
             "iteration": self.iteration,
             "games_played": self.games_played,
@@ -363,13 +359,10 @@ class Trainer:
 
     def load_checkpoint(self, path: str) -> None:
         blob = torch.load(path, map_location="cpu", weights_only=False)
-        if self.cfg.fp8:
-            from .fp8 import load_state_dict_into
-            load_state_dict_into(self.model, blob["model"])
-        else:
-            self.model.load_state_dict(
-                {k: v.to(self.device) for k, v in blob["model"].items()})
-        self.opt.load_state_dict(blob["optimizer"])
+        # 先把 buffers 之类装好（参数会被下面的 master 覆盖成同一份值）
+        load_weights(self.model, blob["model"])
+        # master 与 bf16 参数由这一次调用一起同步，不给「顺序写反」留空间
+        self.opt.load_state_dict(blob["optimizer"], master=blob["model"])
         self.step = blob["step"]
         self.last_ckpt_step = self.step
         self.iteration = blob["iteration"]

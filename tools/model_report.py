@@ -26,15 +26,13 @@ from cornerstone.model import (  # noqa: E402
 MX_BLOCK = 32
 
 
-def is_quant(t) -> bool:
-    return hasattr(t, "_rowwise_data")
+def is_fp8_layer(mod) -> bool:
+    """这个模块的 GEMM 走不走 FP8。看类型而不是看权重 ——
+    权重是普通 bf16 张量，FP8 只发生在计算里，从存储上分辨不出来。"""
+    return type(mod).__module__.startswith("transformer_engine")
 
 
 def storage_bytes(t) -> int:
-    """参数实际占多少字节。MXFP8 要算上行/列两套数据与两套块缩放。"""
-    if is_quant(t):
-        return sum(x.numel() for x in (t._rowwise_data, t._columnwise_data,
-                                       t._rowwise_scale_inv, t._columnwise_scale_inv))
     return t.numel() * t.element_size()
 
 
@@ -92,28 +90,30 @@ class _Null:
 
 
 def classify(model: CornerNet) -> list[tuple[str, str, int, int, bool]]:
-    """(名字, 归属模块类型, 元素数, 字节数, 是否量化)"""
-    kind_of = {}
+    """(名字, 归属模块类型, 元素数, 字节数, GEMM 是否走 FP8)"""
+    kind_of, fp8_of = {}, {}
     for name, mod in model.named_modules():
         for pn, _ in mod.named_parameters(recurse=False):
-            kind_of[f"{name}.{pn}" if name else pn] = type(mod).__name__
-    return [(n, kind_of.get(n, "?"), p.numel(), storage_bytes(p), is_quant(p))
+            full = f"{name}.{pn}" if name else pn
+            kind_of[full] = type(mod).__name__
+            fp8_of[full] = is_fp8_layer(mod)
+    return [(n, kind_of.get(n, "?"), p.numel(), storage_bytes(p), fp8_of.get(n, False))
             for n, p in model.named_parameters()]
 
 
 def report(cfg: ModelConfig, device: str) -> dict:
     model = build(cfg, device)
     rows = classify(model)
-    quant = [r for r in rows if r[4]]
+    fp8_rows = [r for r in rows if r[4]]
     plain = [r for r in rows if not r[4]]
     fl = analytic_flops(cfg)
     return {
         "cfg": cfg, "model": model, "rows": rows,
-        "n_tensors": len(rows), "n_quant": len(quant),
-        "p_quant": sum(r[2] for r in quant), "p_plain": sum(r[2] for r in plain),
-        "b_quant": sum(r[3] for r in quant), "b_plain": sum(r[3] for r in plain),
+        "n_tensors": len(rows), "n_fp8": len(fp8_rows),
+        "p_fp8": sum(r[2] for r in fp8_rows), "p_plain": sum(r[2] for r in plain),
+        "bytes": sum(r[3] for r in rows),
         "flops": fl,
-        "quant_kinds": sorted({r[1] for r in quant}),
+        "fp8_kinds": sorted({r[1] for r in fp8_rows}),
     }
 
 
@@ -131,19 +131,20 @@ def main() -> None:
 
     print(f"配置 dim={args.dim} blocks={args.blocks} attn_every={args.attn_every}\n")
 
-    print("== 参数张量 ==")
+    print("== 参数与训练期显存 ==")
+    print("（两条腿的存储完全相同 —— FP8 只发生在 GEMM 里，不是存储格式）")
     print(f"{'':<22}{'BF16 配置':>16}{'FP8 配置':>16}")
-    for label, key in [("参数张量总数", "n_tensors"), ("其中 MXFP8 存储", "n_quant")]:
+    for label, key in [("参数张量总数", "n_tensors"), ("其中 GEMM 走 FP8", "n_fp8")]:
         print(f"{label:<22}{a[key]:>16,}{b[key]:>16,}")
-    print(f"{'参数量（量化部分）':<20}{a['p_quant']:>16,}{b['p_quant']:>16,}")
-    print(f"{'参数量（高精度部分）':<19}{a['p_plain']:>16,}{b['p_plain']:>16,}")
-    print(f"{'参数总量':<24}{a['p_quant']+a['p_plain']:>16,}{b['p_quant']+b['p_plain']:>16,}")
-    print(f"{'权重占用 (MB)':<22}"
-          f"{(a['b_quant']+a['b_plain'])/1e6:>16.1f}{(b['b_quant']+b['b_plain'])/1e6:>16.1f}")
-    if b["p_quant"]:
-        print(f"{'  量化部分字节/参数':<19}{'—':>16}"
-              f"{b['b_quant']/b['p_quant']:>16.3f}")
-    print(f"被量化的模块类型: {b['quant_kinds'] or '（无）'}")
+    print(f"{'参数量（走 FP8）':<21}{a['p_fp8']:>16,}{b['p_fp8']:>16,}")
+    print(f"{'参数量（走高精度）':<20}{a['p_plain']:>16,}{b['p_plain']:>16,}")
+    n_param = a["p_fp8"] + a["p_plain"]
+    print(f"{'参数总量':<24}{n_param:>16,}{b['p_fp8']+b['p_plain']:>16,}")
+    print(f"{'计算权重 bf16 (MB)':<20}{a['bytes']/1e6:>16.1f}{b['bytes']/1e6:>16.1f}")
+    print(f"{'fp32 主权重 (MB)':<21}{n_param*4/1e6:>16.1f}{n_param*4/1e6:>16.1f}")
+    print(f"{'AdamW m+v fp32 (MB)':<20}{n_param*8/1e6:>16.1f}{n_param*8/1e6:>16.1f}")
+    print(f"{'合计字节/参数':<22}{'16':>16}{'16':>16}")
+    print(f"GEMM 走 FP8 的模块类型: {b['fp8_kinds'] or '（无）'}")
 
     print("\n== 每局面前向 FLOPs（196 token）==")
     fa, fb = a["flops"], b["flops"]
@@ -157,9 +158,10 @@ def main() -> None:
 
     print("\n== 结构约束 ==")
     print(f"{'批大小要求':<22}{'任意':>16}{'8 的倍数':>16}")
-    print(f"{'优化器':<24}{'AdamW':>16}{'Fp8AdamW(随机舍入)':>16}")
+    print(f"{'优化器':<24}{'master-AdamW':>16}{'master-AdamW':>16}")
+    print(f"{'主权重 / 动量':<22}{'fp32 / fp32':>16}{'fp32 / fp32':>16}")
     print(f"{'torch.compile':<21}{'可用(约 1.8x)':>16}{'不可用':>16}")
-    print(f"{'同进程多卡':<22}{'可以':>16}{'不行':>16}")
+    print(f"{'同进程多卡':<22}{'可以':>16}{'可以':>16}")
 
     print("\n== FP8 配置里逐层的精度归属 ==")
     cfg_b = b["cfg"]

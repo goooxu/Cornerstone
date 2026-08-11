@@ -44,12 +44,12 @@ class MultiGpuSelfPlay:
             if dev == next(model.parameters()).device:
                 rep = model
             else:
-                # 必须在**目标设备的上下文里**构造。FP8 模式下 te.Linear 的
-                # MXFP8 权重会在当时的当前设备上分配，先在 cuda:0 建好再 .to(dev)
-                # 搬不过去（量化张量的数据与缩放是分开的几块），
-                # 运行时表现为 cuDNN kernel 里的非法访存，且报错位置离根因很远。
+                # 必须在**目标设备的上下文里**构造：TE 按当前 CUDA 设备取 cuBLAS
+                # 句柄，不匹配时表现为 cuDNN kernel 里的非法访存，报错位置离根因很远。
+                # `to_param_dtype()` 不能漏 —— 漏了副本是 fp32 而源是 bf16，
+                # `copy_` 照样成功，只是白占一倍显存，唯一的症状在显存曲线上。
                 with torch.cuda.device(dev):
-                    rep = CornerNet(model.cfg).to(dev)
+                    rep = CornerNet(model.cfg).to(dev).to_param_dtype()
             rep.eval()
             self.replicas.append(rep)
             self.drivers.append(SelfPlayDriver(
@@ -68,34 +68,21 @@ class MultiGpuSelfPlay:
     def sync_weights(self) -> None:
         """把训练权重推给各卡的副本。
 
-        FP8 参数不能直接跨卡 copy_ / load_state_dict，但原因**不是**「量化张量搬不过去」——
-        实测 `.to(dev)` 会把 MXFP8Tensor 的四块数据（行/列两套 E4M3 数据 + 各自的
-        E8M0 块缩放）全部正确搬走。真正的原因是 TE 按**当前 CUDA 设备**取 cuBLAS 句柄
-        （见 docs/06 第五条）：跨卡 copy_ 天然要同时碰两张卡上的张量，无论把当前设备
-        设成哪一边，另一边都不匹配，于是非法访存。
-        走「反量化 -> 传普通张量 -> 重量化」就没这个问题：每个 TE 操作都待在自己那张卡上，
-        中间搬运的是不带 TE 语义的普通张量。慢一点但正确。
-        这里的重量化用确定性舍入 —— 它只是把主权重复制过去，不是优化器更新，
-        不需要随机舍入的无偏性。
-        """
-        try:
-            from .fp8 import is_quantized, write_weight_
-        except ImportError:            # 没装 transformer_engine 时不可能有量化参数
-            def is_quantized(_t):
-                return False
-            write_weight_ = None
+        权重是普通的 bf16 张量（FP8 只发生在 GEMM 里，不是存储格式），所以直接
+        跨卡 `copy_` 就行。早先 FP8 主权重方案下这里必须走「反量化 -> 传普通张量
+        -> 重量化」，因为 TE 按**当前 CUDA 设备**取 cuBLAS 句柄（见 docs/06），
+        而跨卡 copy_ 天然要同时碰两张卡上的张量。那一层开销随主权重方案一起没了。
 
+        传输本身从来不是瓶颈：实测开发机 P2P 单向 263 GB/s，
+        整个模型 27 MiB 过一次只要 0.1 ms。省掉的是两头的量化计算。
+        """
         src_params = dict(self.source.named_parameters())
         src_buffers = dict(self.source.named_buffers())
         for rep, dev in zip(self.replicas, self.devices):
             if rep is self.source:
                 continue
             for name, p in rep.named_parameters():
-                s = src_params[name]
-                if is_quantized(s) or is_quantized(p):
-                    write_weight_(p, s.dequantize().to(dev).float(), stochastic=False)
-                else:
-                    p.data.copy_(s.data.to(dev, non_blocking=True))
+                p.data.copy_(src_params[name].data.to(dev, non_blocking=True))
             for name, b in rep.named_buffers():
                 if name in src_buffers:
                     b.data.copy_(src_buffers[name].data.to(dev, non_blocking=True))
