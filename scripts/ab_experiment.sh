@@ -24,7 +24,9 @@
 #     接受它是因为影响比 FP8 量化本身小（compile 换 eager 改 4.3% 的 argmax，
 #     FP8 量化改 9.2%），而换来的是自博弈 2.4 倍。读结论时心里有数即可。
 #   * 每 10000 步留一个永久里程碑 checkpoint，供后续头对头
-#   * 各占两张卡；每卡的引擎线程数用 TrainConfig 的默认值（8），不再另外指定
+#   * 每卡的引擎线程数用 TrainConfig 的默认值（8），不再另外指定
+#   * **卡数是唯一没锁死的一项**：A 腿 4 卡、B 腿 2 卡，因为 FP8 多卡不扩展
+#     （见下面 B_PARALLEL 处的实测）。每卡并行局数与 games_per_iter 仍然相同。
 #
 # 结论只认**头对头胜负**，不认 loss 曲线：策略目标是网络自己搜索出来的，
 # 网络变强目标就变尖，跨实验比 loss 得不出棋力结论。
@@ -44,6 +46,18 @@ B_EXP="${B_EXP:-ab-fp8}"
 # **两条腿的卡数必须一致**，否则每卡的并行局数不同，就多了一个变量。
 A_DEVICES="${A_DEVICES:-cuda:0,cuda:1}"
 B_DEVICES="${B_DEVICES:-cuda:2,cuda:3}"
+
+# **FP8 那条腿只用两张卡，这是实测逼出来的。** FP8 自博弈在多卡下不扩展 ——
+# 1/2/4 卡分别是 36k / 65k / 36k 评估/s，4 卡比 2 卡还慢，是典型的争用特征。
+# 根因在 TE 的全局 FP8 状态（同进程多线程共享），两个假设已排除：不是编译粒度
+# （按 block 47k vs 整个循环一个区 38k），也不是 fp8_autocast 上下文的进出开销
+# （提到驱动层仍是 1.01×）。真正的解法是每卡一个进程，那是 docs/08 里的
+# "异步自博弈"，没做。
+# BF16 不受影响，4 卡扩展 3.34×。
+#
+# 为保持对照，B 腿把 parallel_games 减半：**每卡并行局数（1024）和
+# games_per_iter（2048）与 A 腿完全相同**，数据管线一致，只有墙钟不同。
+B_PARALLEL="${B_PARALLEL:-2048}"
 
 # 除 --fp8 与设备外，两边逐字相同
 COMMON=(
@@ -76,7 +90,7 @@ case "${1:-}" in
   start-b)
     bash "$REPO/scripts/train.sh" start "$B_EXP" --fp8 true \
       --device "${B_DEVICES%%,*}" --selfplay-devices "$B_DEVICES" \
-      "${COMMON[@]}"
+      "${COMMON[@]}" --parallel-games "$B_PARALLEL"
     ;;
   stop)
     bash "$REPO/scripts/train.sh" stop "$A_EXP"
