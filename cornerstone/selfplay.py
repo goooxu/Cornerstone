@@ -44,6 +44,32 @@ class SelfPlayStats:
         return self.evals / self.nn_calls if self.nn_calls else 0.0
 
 
+def compile_for_inference(model: CornerNet):
+    """编译推理前向。**FP8 只能按 block 编译，不能整模型编译。**
+
+    整模型编译会把 `CornerNet.trunk` 里的 `_fp8_scope()`（TE 的 `fp8_autocast`
+    上下文）一起包进图里，而 TE 的 FP8 状态是**全局**的。多卡多线程下各驱动
+    并发跑起编译后的图，就会 **SIGSEGV** —— 崩在第一轮自博弈里，两次自检都还是
+    「FP8 计算已启用」。三个因素缺一都不炸（单卡不炸、不编译不炸、BF16 不炸），
+    所以孤立的单卡基准完全测不到。
+
+    按 block 编译把那个上下文留在 eager，实测速度几乎没差
+    （batch=1024 前向：按 block 15.97 ms，整模型 16.05 ms，eager 37.49 ms），
+    而双卡驱动能稳定跑。
+
+    BF16 没有这个问题，整模型编译更快（13.46 vs 15.50 ms），保持不变。
+
+    幂等：重复调用不会叠加编译（driver 0 与训练循环共用同一个模型对象）。
+    """
+    if not getattr(model.cfg, "fp8", False):
+        return torch.compile(model, dynamic=False)
+    if not getattr(model, "_blocks_compiled", False):
+        for blk in model.blocks:
+            blk.compile(dynamic=False)      # 原地，不动 state_dict 的键
+        model._blocks_compiled = True
+    return model
+
+
 class SelfPlayDriver:
     def __init__(
         self,
@@ -77,7 +103,7 @@ class SelfPlayDriver:
         # 一旦 NaN 通过 RMSNorm 之类的规约算子传染到整批就查不出来了
         self.planes = np.zeros((num_games, PLANES, BOARD, BOARD), dtype=np.float32)
         self.scalars = np.zeros((num_games, SCALARS), dtype=np.float32)
-        self.fwd = torch.compile(model, dynamic=False) if compile_model else model
+        self.fwd = compile_for_inference(model) if compile_model else model
         pin = self.device.type == "cuda"
         self.planes_t = torch.from_numpy(self.planes)
         self.scalars_t = torch.from_numpy(self.scalars)

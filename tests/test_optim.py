@@ -230,3 +230,20 @@ def test_unrecognized_optimizer_state_is_dropped_loudly(capsys):
     opt2.load_state_dict(junk)
     assert "警告" in capsys.readouterr().out
     _drive(lin2, opt2, 1, 0.02)
+
+
+def test_compiling_a_submodule_in_place_keeps_state_dict_keys():
+    """`nn.Module.compile()` 原地编译，**不能**换成 `mod = torch.compile(mod)`。
+
+    后者返回 `OptimizedModule`，state_dict 的键会变成 `..._orig_mod...` ——
+    checkpoint 当场对不上，而且这是训练跑完几小时后存盘时才炸的那种。
+    """
+    lin = torch.nn.Linear(8, 8)
+    holder = torch.nn.Sequential(lin)
+    before = set(holder.state_dict())
+
+    holder[0].compile()                       # 原地：键不变
+    assert set(holder.state_dict()) == before
+
+    holder[0] = torch.compile(holder[0])      # 赋值：键被污染
+    assert any("_orig_mod" in k for k in holder.state_dict())
