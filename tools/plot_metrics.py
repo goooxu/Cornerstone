@@ -160,6 +160,10 @@ def fig_timeline(rows, plt, np, out: str, dpi: int) -> None:
 
     重点是让「评测那一段有多长」一眼可见 —— 它比自博弈加训练还长一个数量级，
     而这不是「测得勤」，是评测走了单线程（见报告 §7.3）。
+
+    周期性评测已经从训练循环里移除（规则基线量不了这个网络，见
+    `evaluate.evaluate_vs_baseline` 的注释），所以**新的 metrics 里没有评测轮**。
+    这个图仍然读得了历史 metrics；没有评测轮时自动退化成三段。
     """
     import matplotlib.patches as mpatches
 
@@ -170,8 +174,10 @@ def fig_timeline(rows, plt, np, out: str, dpi: int) -> None:
     tr = np.array([r.get("planned_steps", 400) / r["train_steps_per_s"] for r in rows])[1:]
     other = dt - sp - tr
 
-    SP, TR, OT = (float(np.median(x)) for x in (sp, tr, other[~is_ev]))
-    EV = float(np.median(other[is_ev]))
+    SP, TR = (float(np.median(x)) for x in (sp, tr))
+    # 没有评测轮时 other[is_ev] 是空数组，np.median 会给 nan 并告警
+    OT = float(np.median(other[~is_ev])) if (~is_ev).any() else float(np.median(other))
+    EV = float(np.median(other[is_ev])) if is_ev.any() else 0.0
     n_ev, n_pl = int(is_ev.sum()), int((~is_ev).sum())
 
     C = {"sp": "#2f7fd1", "tr": "#2f9e6f", "ev": "#c0392b", "ot": "#9aa5b1"}

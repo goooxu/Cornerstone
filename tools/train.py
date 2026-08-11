@@ -19,7 +19,6 @@ import torch
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-from cornerstone.evaluate import evaluate_vs_baseline  # noqa: E402
 from cornerstone.train import TrainConfig, Trainer      # noqa: E402
 
 
@@ -50,7 +49,6 @@ def build_config(argv=None) -> tuple[TrainConfig, argparse.Namespace]:
         cfg.min_positions = 3000
         cfg.replay_capacity = 300_000
         cfg.warmup_steps, cfg.total_steps = 100, 4000
-        cfg.eval_every_iters, cfg.eval_games = 4, 120
         cfg.ckpt_every_steps = 500
     return cfg.resolve(REPO), args
 
@@ -135,8 +133,8 @@ def main() -> int:
 
         trainer.iteration += 1
 
-        # FP8 自检**不能挂在评测上**。原来两者在同一个 if 里，一旦把评测关掉
-        # （eval_every_iters=0），自检也跟着没了 —— 而 FP8 是会**静默**降级的：
+        # FP8 自检曾经和周期性评测挂在同一个 if 里，一旦把评测关掉自检也跟着没了 ——
+        # 而 FP8 是会**静默**降级的：
         # 模型看着在训练，FP8 已经名存实亡（docs/06 第五条）。
         # 返回 None 有两种含义（没开 FP8 / TE 换了内部 API 查不到），
         # 两种都**不写这个字段**：记成 false 会读作「FP8 掉了」，
@@ -146,19 +144,6 @@ def main() -> int:
             fp8_ok = trainer.verify_fp8_compute(f"iter {trainer.iteration}")
             if fp8_ok is not None:
                 row["fp8_active"] = fp8_ok
-
-        if cfg.eval_every_iters and trainer.iteration % cfg.eval_every_iters == 0 and not _STOP:
-            res = evaluate_vs_baseline(
-                trainer.model, trainer.device, opponent=cfg.eval_opponent,
-                games=cfg.eval_games, simulations=cfg.eval_simulations,
-                parallel_games=min(cfg.parallel_games, cfg.eval_games),
-                seed=trainer.iteration,
-                # 不传的话会退到单线程，评测能吃掉大半墙钟（见 evaluate_vs_baseline 的注释）
-                engine_threads=cfg.engine_threads,
-            )
-            print("  " + str(res))
-            row.update({"eval_opponent": res.opponent, "eval_score_rate": res.score_rate,
-                        "eval_elo_diff": res.elo_diff, "eval_elo_abs": res.elo_abs})
 
         trainer.log(row)
         loss_s = f" loss={row['loss']:.4f} pol={row['policy']:.4f} val={row['value']:.4f}" \
