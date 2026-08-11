@@ -1,6 +1,6 @@
 """训练循环。
 
-M3 阶段是同步的：自博弈一批 -> 塞进 replay -> 训若干步 -> 周期性评测。
+同步循环：自博弈一批 -> 塞进 replay -> 训若干步。
 M5 会把自博弈和训练拆成独立进程各占各的 GPU；但先把「能学起来」这件事坐实，
 异步化是性能问题，不是正确性问题。
 
@@ -20,12 +20,11 @@ import numpy as np
 import torch
 
 from . import _engine as E
-from .evaluate import evaluate_vs_baseline
 from .losses import total_loss
 from .model import CornerNet, ModelConfig, load_weights
 from .optim import MasterWeightAdamW
 from .replay import ReplayBuffer
-from .selfplay import SelfPlayDriver
+from .selfplay import SelfPlayDriver, compile_for_inference
 
 
 @dataclass
@@ -43,7 +42,12 @@ class TrainConfig:
     # 自博弈
     parallel_games: int = 8192    # 多卡时按卡均分（4 卡 -> 每卡 2048，实测该点最优）
     compile_model: bool = True    # torch.compile 实测 2.4-2.5x，首次编译约 60s
-    engine_threads: int = 128     # C++ 侧树搜索的总线程数，多卡时按卡均分
+    # C++ 侧树搜索的总线程数，多卡时按卡均分。**32 是 4 卡实测的最优点**（每卡 8）——
+    # 别照单卡基准去调：`parallel_games` / `feed` 每次调用都现建现销 std::thread，
+    # 单卡上 32 线程只比 8 差 10%，4 卡上却差 1.81×（99,815 vs 180,554 评估/s）。
+    # 曲线在每卡 6~8 之间是平的，两侧都掉。最优点绑在**每卡并行局数**上，
+    # `parallel_games` 一改就要重测。
+    engine_threads: int = 32
     selfplay_devices: str = ""    # 逗号分隔，空则用全部可见 GPU
     simulations: int = 64
     max_considered: int = 16
@@ -69,7 +73,7 @@ class TrainConfig:
     min_positions: int = 20_000     # 攒够这么多局面才开始训练
     max_epochs_per_iter: float = 4.0  # 单轮最多把 replay 过几遍，防止小 buffer 上过拟合
 
-    # checkpoint / 评测
+    # checkpoint
     # 开发机每 8 小时过期一次（容器被回收，训练进程随之消失且来不及优雅收尾），
     # 所以丢失量由这两个阈值决定。取 400 = 一轮的步数，即每轮都落盘。
     ckpt_every_steps: int = 400
@@ -77,11 +81,7 @@ class TrainConfig:
     keep_last: int = 3
     milestone_every_steps: int = 10_000   # 里程碑 checkpoint 永久保留
     snapshot_every_iters: int = 20
-    eval_every_iters: int = 10
-    fp8_check_every_iters: int = 10   # FP8 静默降级只能靠反复测，不能挂在评测上
-    eval_games: int = 200
-    eval_opponent: str = "greedy-area"
-    eval_simulations: int = 64
+    fp8_check_every_iters: int = 10   # FP8 会静默降级，只能靠反复测
 
     seed: int = 1
     device: str = "cuda"
@@ -91,12 +91,9 @@ class TrainConfig:
             self.run_dir = os.path.join(os.path.dirname(repo_root), "runs", self.exp)
         if not self.hot_dir:
             self.hot_dir = os.path.join("/tmp", "cornerstone", self.exp)
-        if self.fp8 and self.compile_model:
-            # TE 的 FP8 自定义算子和 Dynamo 不兼容：先是 graph break 告警，
-            # 随后编译出来的图会撞 CUDA 非法访存。两者只能二选一。
-            # 代价是 FP8 跑拿不到 compile 的约 1.8x —— 这也算 FP8 的隐性成本之一。
-            print("[配置] fp8 与 torch.compile 不兼容，本次自动关闭 compile")
-            self.compile_model = False
+        # 这里曾经强制关掉 FP8 那条腿的 compile。**现在不需要了** ——
+        # 真正的限制是「FP8 不能整模型编译」，而不是「FP8 不能编译」，
+        # 按 block 编译既安全又几乎一样快（见 selfplay.compile_for_inference）。
         return self
 
 
@@ -115,6 +112,7 @@ class Trainer:
         )).to(self.device)
         self.opt = self._make_optimizer()
         self.model.to_param_dtype()
+        self._compile_hot_modules()
         self.buffer = ReplayBuffer(cfg.replay_capacity)
         self.step = 0
         self.iteration = 0
@@ -142,6 +140,41 @@ class Trainer:
     @property
     def snapshot_dir(self) -> str:
         return os.path.join(self.cfg.run_dir, "replay_snapshot")
+
+    def _compile_hot_modules(self) -> None:
+        """只编译 SwiGLU —— 训练步唯一值得编译的地方。
+
+        训练步此前完全没走过 `torch.compile`（它只包了自博弈的前向）。
+        而按模块拆开看，**SwiGLU 占前向 74%，其中 78% 是 `silu(g)*v` 这一个逐元素算子**：
+        `h.chunk(2, -1)` 产生的是非连续视图，PyTorch 于是退回非向量化的逐元素核，
+        实测只跑到 1.28 TB/s，而连续张量能到 3.73。
+
+        为什么是「只编译 SwiGLU」而不是别的两种做法（都实测过）：
+
+        - **整模型 compile 只值 1.13×**。带 autograd 时前向必须为反向保存中间量，
+          融合空间比推理路径小得多；只编译热点反而让 inductor 在前反向都能融合掉
+          那个逐元素算子，实测 **1.38×**（FP8 1.34×）。
+        - **把 SwiGLU 拆成 gate/val 两个 Linear** 也能绕开非连续视图（1.24×），
+          但要改 checkpoint 键名，而且 FP8 下等于把同一个输入量化两次、
+          跑两个更小的 GEMM —— 自博弈的编译前向反而慢 15%。
+
+        必须用 `nn.Module.compile()` 原地编译，**不能写 `blk.mlp = torch.compile(blk.mlp)`**：
+        后者返回 `OptimizedModule`，会把 state_dict 的键变成 `..._orig_mod...`，
+        当场破坏 checkpoint 契约（实测多出 32 个键）。
+
+        自博弈那条路径会再把整个模型 compile 一次，形成嵌套 —— 实测中性
+        （BF16 0.997×、FP8 1.000×）。
+        """
+        if not self.cfg.compile_model or self.device.type != "cuda":
+            return
+        if self.cfg.fp8:
+            # FP8 有更强的约束：只能按 block 编译，不能整模型编译，否则多卡自博弈
+            # 会段错误。这里直接走那条路径 —— 自博弈驱动复用同一个模型对象，
+            # 而它是幂等的，不会叠加编译。
+            compile_for_inference(self.model)
+        else:
+            for blk in self.model.blocks:
+                blk.mlp.compile(dynamic=False)
 
     def _make_optimizer(self) -> MasterWeightAdamW:
         """两条腿用同一个优化器 —— FP8 与否只影响 GEMM，不影响主权重与更新。"""
