@@ -51,7 +51,7 @@ COMMON=(
   --parallel-games 4096 --games-per-iter 2048
   --simulations 64 --max-considered 16 --temperature-plies 12
   --batch-size 1024 --steps-per-iter 400
-  --lr 0.002 --warmup-steps 500 --total-steps 200000
+  --lr 0.002 --warmup-steps 500 --total-steps 150000
   --milestone-every-steps 10000
   --seed 1
 )
