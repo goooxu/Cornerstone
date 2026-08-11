@@ -84,10 +84,6 @@ struct EvalConfig {
     AgentConfig opponent;
     bool net_opponent = false;
     int opening_plies = 2;    // 开局随机手数（双方各 1 手），打散重复对局
-    // 对手池自博弈：两方都是网络、两方的手都记录，产出的记录**可以回放**，
-    // 因此可以进 replay buffer 当训练数据。仅在 net_opponent 且 opening_plies==0
-    // 时成立 —— 随机开局那几手是直接落在盘上、不进 history 的，带上就不完整了。
-    bool training_records = false;
 };
 
 class SelfPlayEngine {

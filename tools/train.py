@@ -94,16 +94,6 @@ def main() -> int:
     # 这些路径都可能把 FP8 的状态搞坏。启动时那条找不到源头的
     # "quantized weights without quantized compute" 警告就出现在这一段。
     trainer.verify_fp8_compute("建驱动后")
-
-    # 对手池：另起一个「主网络 vs 历史 checkpoint」的驱动。两方都建树、两方的手
-    # 都记录，所以记录可以回放、能进 replay buffer；但只有主网络那一方的手参与训练。
-    pool_driver = trainer.make_pool_driver() if cfg.pool_frac > 0 else None
-    if pool_driver is not None:
-        print(f"对手池已启用：{cfg.pool_frac:.0%} 的对局对手从最近 "
-              f"{cfg.pool_window} 个里程碑里采样，每轮 {cfg.pool_opponents_per_iter} 个对手")
-        # 池驱动会在每张卡上再建一份对手副本，正是容易把 FP8 计算通路碰坏的地方
-        trainer.verify_fp8_compute("建对手池驱动后")
-
     t_start = time.time()
 
     while True:
@@ -120,36 +110,9 @@ def main() -> int:
             break
 
         driver.sync_weights()      # 把上一轮训好的权重推给各卡的副本
-
-        # 池里还没有可用的里程碑时（训练最初的一万步）自动退化成纯自博弈
-        opps = trainer.sample_pool_opponents(cfg.pool_opponents_per_iter) \
-            if pool_driver is not None else []
-        pool_games = int(cfg.games_per_iter * cfg.pool_frac) if opps else 0
-        self_games = cfg.games_per_iter - pool_games
-
-        recs, sp = driver.run(self_games, should_stop=should_stop)
+        recs, sp = driver.run(cfg.games_per_iter, should_stop=should_stop)
         trainer.buffer.add_records(recs)
         trainer.games_played += len(recs)
-
-        pool_rate, pool_n = None, 0
-        if pool_games:
-            pool_driver.sync_weights()
-            per = max(2, pool_games // len(opps))
-            wins = 0.0
-            for st in opps:
-                pool_driver.load_opponent(trainer.load_pool_state_dict(st))
-                prec, psp = pool_driver.run(per, should_stop=should_stop)
-                # 只训练主网络那一方的手
-                trainer.buffer.add_records(prec, main_player_only=True)
-                trainer.games_played += len(prec)
-                for r in prec:
-                    res = r["result0"] if r["net_player"] == 0 else -r["result0"]
-                    wins += 1.0 if res > 0 else (0.5 if res == 0 else 0.0)
-                pool_n += len(prec)
-                sp.games += psp.games
-                sp.evals += psp.evals
-                sp.seconds += psp.seconds
-            pool_rate = wins / max(1, pool_n)
 
         row = {
             "selfplay_games": sp.games,
@@ -165,11 +128,6 @@ def main() -> int:
             "draw_rate": sum(1 for r in recs if r["result0"] == 0) / max(1, len(recs)),
             "p0_win_rate": sum(1 for r in recs if r["result0"] > 0) / max(1, len(recs)),
         }
-        if pool_rate is not None:
-            # 主网络对池中对手的得分率。这是不会饱和的进度信号 —— 对手也在变强。
-            row["pool_score_rate"] = pool_rate
-            row["pool_games"] = pool_n
-            row["pool_opponents"] = list(opps)
 
         if len(trainer.buffer) >= cfg.min_positions:
             steps = trainer.steps_for_iteration()
@@ -205,10 +163,9 @@ def main() -> int:
         trainer.log(row)
         loss_s = f" loss={row['loss']:.4f} pol={row['policy']:.4f} val={row['value']:.4f}" \
             if "loss" in row else " （攒数据中）"
-        pool_s = f" 池 {pool_rate:.3f}" if pool_rate is not None else ""
         print(f"[iter {trainer.iteration:4d} step {trainer.step:7d}] "
               f"自博弈 {sp.games_per_s:.1f} 局/s 批均 {sp.mean_batch:.0f} | "
-              f"replay {len(trainer.buffer):,}" + loss_s + pool_s, flush=True)
+              f"replay {len(trainer.buffer):,}" + loss_s, flush=True)
 
         if trainer.maybe_checkpoint():
             pass
