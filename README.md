@@ -71,6 +71,17 @@ $D python3 tools/run_arena.py --games 400 --threads 128   # 规则基线阶梯 E
 $D python3 tools/model_report.py                          # BF16/FP8 的结构差异
 $D bash scripts/monitor.sh 15                             # CPU/GPU 利用率
 
+# 棋力评测：把 checkpoint 和规则基线放进同一场单循环，联合拟合 Elo。
+# --simulations 0 是纯策略（一次前向、落 argmax(prior)，不做搜索）——
+# 想量模型本身就用它；带搜索测的是「网络 + 搜索」的合力。
+$D python3 tools/net_arena.py --rules random greedy-area corner-min \
+      greedy-mobility flat-mcts-1k --nets <ckpt...> \
+      --games 400 --simulations 0 --engine-threads 128 --out ../runs/arena/x.json
+$D python3 tools/arena_best.py ../runs/arena/x.json --plot reports/图表/曲线.png
+      # 回答「哪一档最强」并给出把握（自举出的最大值分布），顺带画增长曲线
+$D python3 tools/plot_metrics.py --kind loss     --exp <exp>   # 损失曲线
+$D python3 tools/plot_metrics.py --kind timeline --exp <exp>   # 一轮的墙钟去向
+
 $D bash scripts/web.sh start               # 试玩服务，浏览器开 <开发机>:8080
 ```
 
