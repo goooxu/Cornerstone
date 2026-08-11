@@ -65,13 +65,21 @@ def evaluate_vs_baseline(
     compile_model: bool = False,
     engine_threads: int = 16,
 ) -> EvalResult:
-    """网络 vs 规则基线。
+    """网络 vs 规则基线。**离线用**，训练循环里不再调它（见下）。
 
     `engine_threads` 一定要给够。这个参数是补上去的 —— 之前这里根本没有它，
     于是 `SelfPlayDriver` 吃默认值 1，在 144 核的机器上**单线程**跑树搜索。
     对手是 `flat-mcts-4k` 这种每手 4096 次 rollout 的基线时，
-    200 局要跑 25 分钟；BF16 那条正式训练里 50 次周期评测因此吃掉了
+    200 局要跑 25 分钟；早先训练循环里的 50 次周期评测因此吃掉了
     21 小时墙钟，比训练加自博弈加起来还多。
+
+    那个周期性评测已经移除，因为**规则基线量不了这个网络**：阶梯最强的
+    `flat-mcts-4k` 是 991.6 Elo，而网络峰值 1622.5 —— 峰值网络对整条阶梯的
+    期望得分率只从 0.9988（random）走到 0.9742（flat-mcts-4k），整段宽 0.0246，
+    而 200 局在这一带的标准误就有 ±0.011，噪声比信号还宽。
+    实际后果比"没分辨率"更糟：`ab-bf16` 的真实棋力在 90,230 步见顶、
+    终点低 35.9 Elo，而周期评测的得分率一路从 0.975 单调涨到终点的 **1.000**。
+    棋力判断改为事后用 `tools/net_arena.py` 做（那才给出了正确的峰值）。
     """
     if opponent not in BASELINES:
         raise KeyError(f"未知基线 {opponent}，可选 {list(BASELINES)}")
