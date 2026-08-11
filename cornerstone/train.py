@@ -14,7 +14,7 @@ import json
 import math
 import os
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 
 import numpy as np
 import torch

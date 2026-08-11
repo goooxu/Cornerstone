@@ -131,13 +131,6 @@ def evaluate_vs_baseline(
     )
 
 
-def evaluate_ladder(model, device, opponents=("random", "greedy-area", "greedy-mobility"),
-                    games: int = 200, **kw) -> list[EvalResult]:
-    return [evaluate_vs_baseline(model, device, opponent=o, games=games, **kw)
-            for o in opponents]
-
-
-@torch.no_grad()
 def evaluate_vs_network(
     model_a,
     model_b,
