@@ -91,8 +91,7 @@ def main() -> int:
     trainer.verify_fp8_compute("启动")
     driver = trainer.make_driver()
     # 再查一次：构建自博弈驱动会创建副本、同步权重、做预热，
-    # 这些路径都可能把 FP8 的状态搞坏。启动时那条找不到源头的
-    # "quantized weights without quantized compute" 警告就出现在这一段。
+    # 这些路径都可能把 FP8 的状态搞坏 —— 而 TE 的降级是静默的。
     trainer.verify_fp8_compute("建驱动后")
     t_start = time.time()
 
@@ -137,10 +136,11 @@ def main() -> int:
         trainer.iteration += 1
 
         # FP8 自检**不能挂在评测上**。原来两者在同一个 if 里，一旦把评测关掉
-        # （eval_every_iters=0），自检也跟着没了 —— 而 FP8 是会静默降级的：
-        # 只发一条 UserWarning，模型看着在训练，FP8 已经名存实亡（docs/06 第五条）。
-        # 没开 FP8 的跑返回 None，这时**不写这个字段**：记成 false 会读作
-        # 「FP8 掉了」，记成 true 更糟（对照组看着像实验组）。
+        # （eval_every_iters=0），自检也跟着没了 —— 而 FP8 是会**静默**降级的：
+        # 模型看着在训练，FP8 已经名存实亡（docs/06 第五条）。
+        # 返回 None 有两种含义（没开 FP8 / TE 换了内部 API 查不到），
+        # 两种都**不写这个字段**：记成 false 会读作「FP8 掉了」，
+        # 记成 true 更糟（对照组看着像实验组）。
         if cfg.fp8_check_every_iters and \
                 trainer.iteration % cfg.fp8_check_every_iters == 0 and not _STOP:
             fp8_ok = trainer.verify_fp8_compute(f"iter {trainer.iteration}")

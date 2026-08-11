@@ -100,8 +100,9 @@ class SelfPlayDriver:
 
     @torch.no_grad()
     def _evaluate(self, n: int) -> None:
-        # 走 autocast 而不是手工转 dtype：权重保持 fp32 主副本，
-        # 与训练路径完全一致，否则推理和训练看到的是两个不同的模型
+        # 推理用的就是训练那份计算权重（bf16），fp32 主权重只服务优化器 ——
+        # 否则推理和训练看到的是差一次舍入的两个模型。autocast 在这里管的是
+        # 激活：把 fp32 的输入和 RMSNorm 的输出接到 bf16 的算子上
         m = self.planes.shape[0] if self.fixed_batch else n
         with self._device_ctx():
             p = self.planes_t[:m].to(self.device, non_blocking=True)
