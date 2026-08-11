@@ -41,7 +41,9 @@ class TrainConfig:
 
     # 自博弈
     parallel_games: int = 8192    # 多卡时按卡均分（4 卡 -> 每卡 2048，实测该点最优）
-    compile_model: bool = True    # torch.compile 实测 2.4-2.5x，首次编译约 60s
+    # torch.compile 不做成开关：一律开，每条腿各走各最快的编法
+    # （BF16 整模型 13.46 ms、FP8 按 block 15.97 ms，eager 是 37 ms）。
+    # CPU 上自动跳过。
     # C++ 侧树搜索的总线程数，多卡时按卡均分。**32 是 4 卡实测的最优点**（每卡 8）——
     # 别照单卡基准去调：`parallel_games` / `feed` 每次调用都现建现销 std::thread，
     # 单卡上 32 线程只比 8 差 10%，4 卡上却差 1.81×（99,815 vs 180,554 评估/s）。
@@ -165,7 +167,7 @@ class Trainer:
         自博弈那条路径会再把整个模型 compile 一次，形成嵌套 —— 实测中性
         （BF16 0.997×、FP8 1.000×）。
         """
-        if not self.cfg.compile_model or self.device.type != "cuda":
+        if self.device.type != "cuda":
             return
         if self.cfg.fp8:
             # FP8 有更强的约束：只能按 block 编译，不能整模型编译，否则多卡自博弈
@@ -243,10 +245,10 @@ class Trainer:
         devices = visible_devices(c.selfplay_devices)
         if len(devices) <= 1:
             return SelfPlayDriver(self.model, self.device, num_games=c.parallel_games,
-                                  mcts=mcts, seed=seed, compile_model=c.compile_model,
+                                  mcts=mcts, seed=seed, compile_model=True,
                                   engine_threads=c.engine_threads)
         return MultiGpuSelfPlay(self.model, devices, num_games=c.parallel_games,
-                                mcts=mcts, seed=seed, compile_model=c.compile_model,
+                                mcts=mcts, seed=seed, compile_model=True,
                                 engine_threads=max(1, c.engine_threads // len(devices)))
 
     def steps_for_iteration(self) -> int:
