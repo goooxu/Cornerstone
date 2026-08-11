@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """对比两条（或多条）训练曲线。
 
-主要用途是 FP8 主权重 vs BF16 的对照实验 —— 没有这条对比，
+主要用途是 FP8 vs BF16 的对照实验 —— 没有这条对比，
 「FP8 无损」就是没有依据的说法。
 
+注意 loss 跨实验不可比（策略目标是网络自己的搜索结果，网络变强目标就变），
+这里的曲线只用来看「训练有没有跑飞」，棋力结论一律以
+`tools/net_arena.py` 的头对头为准。
+
     python3 tools/compare_runs.py bf16 fp8
-    python3 tools/compare_runs.py bf16 fp8 --metric policy value eval_elo_abs
+    python3 tools/compare_runs.py bf16 fp8 --metric policy value policy_entropy
 """
 
 import argparse
@@ -17,7 +21,10 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUNS = os.path.join(os.path.dirname(REPO), "runs")
 
 DEFAULT_METRICS = ["loss", "policy", "value", "score", "policy_entropy",
-                   "wdl_acc", "eval_score_rate", "eval_elo_abs"]
+                   "wdl_acc"]
+# 只在历史 metrics 里存在：训练期的周期性评测已经移除（规则基线量不了这个网络，
+# 见 docs/08）。留着是为了还能读 ab-* 那两条跑的日志；缺字段时自动跳过。
+LEGACY_METRICS = ["eval_score_rate", "eval_elo_abs"]
 
 
 def load(exp: str) -> list[dict]:
@@ -75,7 +82,7 @@ def main() -> None:
         rows = data[e]
         steps = rows[-1].get("step", 0) if rows else 0
         print(f"{e}: {len(rows)} 轮，step {steps}")
-        for m in ("loss", "eval_elo_abs"):
+        for m in ["loss", *LEGACY_METRICS]:
             s = sparkline([r.get(m) for r in rows])
             if s:
                 print(f"  {m:<14} {s}")
@@ -83,7 +90,7 @@ def main() -> None:
     if len(args.exps) == 2:
         a, b = args.exps
         print()
-        for m in ("loss", "policy", "value", "eval_elo_abs"):
+        for m in ["loss", "policy", "value", *LEGACY_METRICS]:
             va, vb = tail_mean(data[a], m, args.tail), tail_mean(data[b], m, args.tail)
             if va is None or vb is None:
                 continue
