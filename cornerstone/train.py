@@ -25,6 +25,7 @@ from .model import CornerNet, ModelConfig, load_weights
 from .optim import MasterWeightAdamW
 from .replay import ReplayBuffer
 from .selfplay import SelfPlayDriver, compile_for_inference
+from .pool import WorkerPool
 
 
 @dataclass
@@ -103,6 +104,30 @@ class TrainConfig:
         return self
 
 
+class _Sampler:
+    """给工作池的批次来源。`peek()` 让它先看一批以确定共享缓冲的形状与 dtype。"""
+
+    def __init__(self, tr: "Trainer"):
+        self.tr = tr
+        self._first = None
+
+    def _draw(self) -> dict:
+        c = self.tr.cfg
+        return self.tr.buffer.sample(c.batch_size, self.tr.rng,
+                                     threads=c.loader_threads, augment=c.augment)
+
+    def peek(self) -> dict:
+        if self._first is None:
+            self._first = self._draw()
+        return self._first
+
+    def __call__(self) -> dict:
+        if self._first is not None:
+            b, self._first = self._first, None
+            return b
+        return self._draw()
+
+
 class Trainer:
     def __init__(self, cfg: TrainConfig):
         self.cfg = cfg
@@ -119,6 +144,7 @@ class Trainer:
         self.opt = self._make_optimizer()
         self.model.to_param_dtype()
         self._compile_hot_modules()
+        self.pool = None
         self.buffer = ReplayBuffer(cfg.replay_capacity)
         self.step = 0
         self.iteration = 0
@@ -248,12 +274,14 @@ class Trainer:
         seed = int(self.rng.integers(1 << 30))
         devices = visible_devices(c.selfplay_devices)
         if len(devices) <= 1:
+            self.pool = None
             return SelfPlayDriver(self.model, self.device, num_games=c.parallel_games,
                                   mcts=mcts, seed=seed, compile_model=True,
                                   engine_threads=c.engine_threads_per_gpu)
-        return MultiGpuSelfPlay(self.model, devices, num_games=c.parallel_games,
-                                mcts=mcts, seed=seed, compile_model=True,
-                                engine_threads=c.engine_threads_per_gpu)
+        # 多卡走每卡一个进程的工作池：自博弈与训练都在里面做。
+        # 注意此后**权重的真身在工作进程**，self.model 只是镜像（见 WorkerPool.sync_weights）
+        self.pool = WorkerPool(self.model, devices, c, mcts, seed)
+        return self.pool
 
     def steps_for_iteration(self) -> int:
         """按 replay 里现有的数据量给本轮的训练步数限流。
@@ -270,6 +298,18 @@ class Trainer:
     # ---- 训练 ----
     def train_steps(self, n: int, should_stop=None) -> dict:
         c = self.cfg
+        if getattr(self, "pool", None) is not None:
+            t0 = time.perf_counter()
+            rows = self.pool.train_steps(n, _Sampler(self),
+                                         lambda i: self.lr_at(self.step + i),
+                                         should_stop=should_stop)
+            self.step += len(rows)
+            if not rows:
+                return {"lr": self.lr_at(self.step), "train_steps_per_s": 0.0}
+            out = {k: sum(r[k] for r in rows) / len(rows) for k in rows[0]}
+            out["lr"] = self.lr_at(self.step)
+            out["train_steps_per_s"] = len(rows) / (time.perf_counter() - t0)
+            return out
         self.model.train()
         agg: dict[str, float] = {}
         t0 = time.perf_counter()
@@ -321,6 +361,27 @@ class Trainer:
         # 计算权重精确等于 master.bfloat16()，随时可重建。这样存还有两个好处：
         # 键名/dtype/结构与历史 checkpoint 完全一致，所有读者不用改；
         # 而且 master 只有一份 —— torch 的优化器从不序列化 params。
+        meta = {
+            "step": self.step,
+            "iteration": self.iteration,
+            "games_played": self.games_played,
+            "opt_format": "master-adamw-v1",
+            "config": asdict(self.cfg),
+            "model_config": asdict(self.model.cfg),
+            "rng": self.rng.bit_generator.state,
+            "torch_rng": torch.get_rng_state(),
+        }
+        if getattr(self, "pool", None) is not None:
+            # 权重与优化器状态都在工作进程里，由 rank 0 自己落盘 ——
+            # 把 170 MB 的优化器状态传回父进程再写，纯属绕远
+            self.pool.save_checkpoint(path, meta)
+            self.last_ckpt_time = time.time()
+            self.last_ckpt_step = self.step
+            self._prune_checkpoints()
+            with open(os.path.join(self.ckpt_dir, "latest"), "w") as f:
+                f.write(os.path.basename(path))
+            return path
+
         model_sd = self.model.state_dict()          # 参数 + buffers + TE 的 _extra_state
         model_sd.update(self.opt.master_state_dict())
         torch.save({
@@ -398,10 +459,14 @@ class Trainer:
 
     def load_checkpoint(self, path: str) -> None:
         blob = torch.load(path, map_location="cpu", weights_only=False)
-        # 先把 buffers 之类装好（参数会被下面的 master 覆盖成同一份值）
-        load_weights(self.model, blob["model"])
+        if getattr(self, "pool", None) is not None:
+            self.pool.load_checkpoint(path)         # 各 rank 各自读，不经父进程转发
+            self.pool.pull_weights()                # 父进程的镜像也跟上
+        else:
+            # 先把 buffers 之类装好（参数会被下面的 master 覆盖成同一份值）
+            load_weights(self.model, blob["model"])
         # master 与 bf16 参数由这一次调用一起同步，不给「顺序写反」留空间
-        self.opt.load_state_dict(blob["optimizer"], master=blob["model"])
+            self.opt.load_state_dict(blob["optimizer"], master=blob["model"])
         self.step = blob["step"]
         self.last_ckpt_step = self.step
         self.iteration = blob["iteration"]
