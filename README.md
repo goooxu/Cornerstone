@@ -8,7 +8,8 @@
 
 1. **不使用任何棋谱**。训练数据全部由引擎自博弈产生；评测基线也只能由规则本身构造（随机 / 贪心 / 纯 rollout MCTS），不能拿棋谱当测试集。
 2. **不复用开源 Blokus AI 的模型结构**。网络结构自研。
-3. **模型主权重是 FP8**，采用混合精度训练。
+3. **采用 FP8 混合精度训练**：GEMM 输入是 FP8（前向 E4M3 / 反向 E5M2），
+   主权重 fp32、优化器状态 fp32、累加 fp32。
 4. **压满 CPU 与 GPU**：CPU 跑 MCTS 与着法生成，GPU 跑批量推理与训练，两者流水重叠。
 
 ## 规则（本项目采用的版本）
@@ -97,8 +98,8 @@ $D bash scripts/web.sh start               # 试玩服务，浏览器开 <开发
 - [docs/03-基线与评测.md](docs/03-基线与评测.md) —— 规则基线阶梯、arena、Elo 拟合
 - [docs/04-网络与自博弈训练.md](docs/04-网络与自博弈训练.md) —— CornerNet、Gumbel-AZ、replay
 - [docs/05-web试玩工具.md](docs/05-web试玩工具.md) —— 试玩工具的接口与前端
-- [docs/06-FP8主权重.md](docs/06-FP8主权重.md) —— MXFP8 主权重、随机舍入、踩过的坑
+- [docs/06-低精度训练.md](docs/06-低精度训练.md) —— 各项精度的分工、为什么主权重必须 fp32、踩过的坑
 - [docs/07-性能调优.md](docs/07-性能调优.md) —— 瓶颈三次转移、单卡 4.2×、四卡 22.7×
 - [docs/08-已知问题与后续.md](docs/08-已知问题与后续.md) —— 当前限制、优先级、经验教训
 - [reports/BF16训练报告.md](reports/BF16训练报告.md) —— 首个完整模型的结构、训练方法与棋力评测
-- [reports/FP8训练报告.md](reports/FP8训练报告.md) —— FP8 主权重那条腿，以及与 BF16 的 A/B 结论
+- [reports/FP8训练报告.md](reports/FP8训练报告.md) —— FP8 那条腿，以及与 BF16 的 A/B 结论

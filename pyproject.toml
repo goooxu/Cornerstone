@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cornerstone"
 version = "0.1.0"
-description = "从零自博弈的 Blokus Duo 模型（FP8 主权重）"
+description = "从零自博弈的 Blokus Duo 模型（FP8 混合精度）"
 requires-python = ">=3.10"
 dependencies = ["numpy"]
 
