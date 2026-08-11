@@ -15,16 +15,11 @@ from __future__ import annotations
 import threading
 import time
 
-import contextlib
 import torch
 
 from . import _engine as E
 from .model import CornerNet
 from .selfplay import SelfPlayDriver, SelfPlayStats
-
-
-def _null():
-    return contextlib.nullcontext()
 
 
 class MultiGpuSelfPlay:
@@ -38,11 +33,8 @@ class MultiGpuSelfPlay:
         compile_model: bool = True,
         engine_threads: int = 8,
         dtype: torch.dtype = torch.bfloat16,
-        eval_cfg: "E.EvalConfig | None" = None,
-        with_opponent: bool = False,
     ):
         self.source = model
-        self.opponents: list[CornerNet] = []
         self.devices = [torch.device(d) for d in devices]
         self.replicas: list[CornerNet] = []
         self.drivers: list[SelfPlayDriver] = []
@@ -60,22 +52,9 @@ class MultiGpuSelfPlay:
                     rep = CornerNet(model.cfg).to(dev)
             rep.eval()
             self.replicas.append(rep)
-
-            opp = None
-            if with_opponent:
-                # 池中对手只做推理，一律用**非量化**模型：既不需要 FP8，
-                # 也顺带绕开 TE「当前 CUDA 设备必须与张量设备一致」那一堆坑。
-                import dataclasses
-                ocfg = dataclasses.replace(model.cfg, fp8=False)
-                with torch.cuda.device(dev):
-                    opp = CornerNet(ocfg).to(dev)
-                opp.eval()
-            self.opponents.append(opp)
-
             self.drivers.append(SelfPlayDriver(
                 rep, dev, num_games=per_gpu, mcts=mcts, seed=seed + 1000 * i,
-                compile_model=compile_model, engine_threads=engine_threads, dtype=dtype,
-                eval_cfg=eval_cfg, opponent_model=opp))
+                compile_model=compile_model, engine_threads=engine_threads, dtype=dtype))
 
         # 副本是空初始化的，先同步一次权重再预热
         self.sync_weights()
@@ -84,16 +63,6 @@ class MultiGpuSelfPlay:
         # 放到工作线程里并发编译会直接报错（表现为 Dynamo 内部的 weakref 异常）。
         for d in self.drivers:
             d.warmup()
-
-    @torch.no_grad()
-    def load_opponent(self, state_dict: dict) -> None:
-        """把采样到的历史 checkpoint 载进各卡的对手副本。"""
-        for opp, dev in zip(self.opponents, self.devices):
-            if opp is None:
-                continue
-            with torch.cuda.device(dev) if dev.type == "cuda" else _null():
-                opp.load_state_dict({k: v.to(dev) for k, v in state_dict.items()})
-            opp.eval()
 
     @torch.no_grad()
     def sync_weights(self) -> None:

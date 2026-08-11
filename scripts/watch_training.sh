@@ -59,33 +59,21 @@ is_training() {
 # 第一次 A/B 就是毁在两条腿 games_per_iter 不一致（1024 vs 2048）上，
 # 而且从日志表面完全看不出来，只有把两边的启动命令逐字比对才会发现。
 # 现在配置只有 ab_experiment.sh 里那一份。
-# 实验名决定用哪个启动脚本。**必须按名字分派**：pool-* 那两条如果被
-# ab_experiment.sh 拉起来，超参就全变了（没有对手池、games_per_iter 也不同），
-# 而日志表面完全看不出来 —— 恢复出来的就是另一个实验。
-script_for() {
-  case "$1" in
-    pool-*) echo "pool_experiment.sh" ;;
-    *)      echo "ab_experiment.sh" ;;
-  esac
-}
-
 start_training() {
   local host="$1" exp="$2" devs="$3" arm vars
   case "$exp" in
-    pool-*fp8*)  arm="start-fp8";  vars="FP8_EXP=$exp POOL_DEVICES=$devs" ;;
-    pool-*)      arm="start-bf16"; vars="BF16_EXP=$exp POOL_DEVICES=$devs" ;;
-    *fp8*)       arm="start-b";    vars="B_EXP=$exp B_DEVICES=$devs" ;;
-    *)           arm="start-a";    vars="A_EXP=$exp A_DEVICES=$devs" ;;
+    *fp8*) arm="start-b"; vars="B_EXP=$exp B_DEVICES=$devs" ;;
+    *)     arm="start-a"; vars="A_EXP=$exp A_DEVICES=$devs" ;;
   esac
   rexec "$host" "bash $REPO/scripts/devbox.sh exec \
     env $vars ENGINE_THREADS=$ENGINE_THREADS \
-    bash scripts/$(script_for "$exp") $arm 2>&1 | tail -2"
+    bash scripts/ab_experiment.sh $arm 2>&1 | tail -2"
 }
 
 # 配置里的总步数。从 ab_experiment.sh 里取，而不是在这儿再抄一份 ——
 # 抄一份就迟早对不上（这个教训在启动参数上已经吃过一次）。
 total_steps() {
-  sed -n 's/.*--total-steps \([0-9]\+\).*/\1/p' "$REPO/scripts/$(script_for "${1:-}")" | head -1
+  sed -n 's/.*--total-steps \([0-9]\+\).*/\1/p' "$REPO/scripts/ab_experiment.sh" | head -1
 }
 
 # 训练是不是已经跑满了。
@@ -96,7 +84,7 @@ total_steps() {
 # 「恢复失败，下一轮重试」刷满 —— 而它根本不是失败。
 finished() {
   local exp="$1" f="$RUNS/$exp/logs/metrics.jsonl" total step
-  total="$(total_steps "$exp")"
+  total="$(total_steps)"
   [ -n "$total" ] && [ -f "$f" ] || return 1
   step="$(tail -1 "$f" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("step",0))' 2>/dev/null)"
   [ -n "$step" ] || return 1
@@ -137,7 +125,7 @@ check_once() {
     if finished "$exp"; then
       # 只记一条就够，别每 3 分钟往日志里刷一遍
       if [ ! -f "$RUNS/$exp/.done" ]; then
-        log "[$exp] 已跑满 $(total_steps "$exp") 步，训练完成，不再拉起（$(progress "$exp")）"
+        log "[$exp] 已跑满 $(total_steps) 步，训练完成，不再拉起（$(progress "$exp")）"
         : >"$RUNS/$exp/.done"
       fi
       continue
