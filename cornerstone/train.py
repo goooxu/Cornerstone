@@ -44,12 +44,16 @@ class TrainConfig:
     # torch.compile 不做成开关：一律开，每条腿各走各最快的编法
     # （BF16 整模型 13.46 ms、FP8 按 block 15.97 ms，eager 是 37 ms）。
     # CPU 上自动跳过。
-    # C++ 侧树搜索的总线程数，多卡时按卡均分。**32 是 4 卡实测的最优点**（每卡 8）——
-    # 别照单卡基准去调：`parallel_games` / `feed` 每次调用都现建现销 std::thread，
-    # 单卡上 32 线程只比 8 差 10%，4 卡上却差 1.81×（99,815 vs 180,554 评估/s）。
-    # 曲线在每卡 6~8 之间是平的，两侧都掉。最优点绑在**每卡并行局数**上，
-    # `parallel_games` 一改就要重测。
-    engine_threads: int = 32
+    # C++ 侧树搜索**每张卡**用多少 CPU 线程。名字里带 per_gpu 是因为这里踩过坑：
+    # 它原先叫 engine_threads、语义是"总数、多卡均分"，而 `docs/07` 里那个
+    # "32 线程最优"是**单卡**基准测的（单卡下总数就等于每卡）。照抄成多卡的
+    # 每卡值就是 128 总数 —— 实测最差的一档。
+    #
+    # 8 是 4 卡实测的最优点：`parallel_games`/`feed` 每次调用都现建现销
+    # std::thread，线程一多 spawn 开销就压过并行收益。每卡 8 给 180,554 评估/s，
+    # 每卡 32 只有 99,815（差 1.81×）。曲线在 6~8 之间是平的，两侧都掉。
+    # 注意最优点绑在**每卡并行局数**上（这里 1024），`parallel_games` 一改就要重测。
+    engine_threads_per_gpu: int = 8
     selfplay_devices: str = ""    # 逗号分隔，空则用全部可见 GPU
     simulations: int = 64
     max_considered: int = 16
@@ -246,10 +250,10 @@ class Trainer:
         if len(devices) <= 1:
             return SelfPlayDriver(self.model, self.device, num_games=c.parallel_games,
                                   mcts=mcts, seed=seed, compile_model=True,
-                                  engine_threads=c.engine_threads)
+                                  engine_threads=c.engine_threads_per_gpu)
         return MultiGpuSelfPlay(self.model, devices, num_games=c.parallel_games,
                                 mcts=mcts, seed=seed, compile_model=True,
-                                engine_threads=max(1, c.engine_threads // len(devices)))
+                                engine_threads=c.engine_threads_per_gpu)
 
     def steps_for_iteration(self) -> int:
         """按 replay 里现有的数据量给本轮的训练步数限流。

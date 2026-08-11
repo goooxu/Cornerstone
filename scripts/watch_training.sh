@@ -24,8 +24,6 @@ RUNS="$WORKDIR/runs"
 HOSTS_FILE="${CORNERSTONE_HOSTS:-$REPO/.devhosts}"
 SSH="${CORNERSTONE_SSH:-$HOME/.local/bin/sshx}"
 INTERVAL="${CORNERSTONE_WATCH_INTERVAL:-180}"
-# 每条腿独占一台机器，引擎线程数按整机给。恢复时要和首次启动用的值一致。
-ENGINE_THREADS="${CORNERSTONE_ENGINE_THREADS:-128}"
 
 LOG="$RUNS/watchdog.log"
 PIDFILE="$RUNS/watchdog.pid"
@@ -66,7 +64,7 @@ start_training() {
     *)     arm="start-a"; vars="A_EXP=$exp A_DEVICES=$devs" ;;
   esac
   rexec "$host" "bash $REPO/scripts/devbox.sh exec \
-    env $vars ENGINE_THREADS=$ENGINE_THREADS \
+    env $vars \
     bash scripts/ab_experiment.sh $arm 2>&1 | tail -2"
 }
 

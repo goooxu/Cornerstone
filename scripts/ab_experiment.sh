@@ -24,7 +24,7 @@
 #     接受它是因为影响比 FP8 量化本身小（compile 换 eager 改 4.3% 的 argmax，
 #     FP8 量化改 9.2%），而换来的是自博弈 2.4 倍。读结论时心里有数即可。
 #   * 每 10000 步留一个永久里程碑 checkpoint，供后续头对头
-#   * 各占两张卡，engine_threads 对半分
+#   * 各占两张卡；每卡的引擎线程数用 TrainConfig 的默认值（8），不再另外指定
 #
 # 结论只认**头对头胜负**，不认 loss 曲线：策略目标是网络自己搜索出来的，
 # 网络变强目标就变尖，跨实验比 loss 得不出棋力结论。
@@ -44,7 +44,6 @@ B_EXP="${B_EXP:-ab-fp8}"
 # **两条腿的卡数必须一致**，否则每卡的并行局数不同，就多了一个变量。
 A_DEVICES="${A_DEVICES:-cuda:0,cuda:1}"
 B_DEVICES="${B_DEVICES:-cuda:2,cuda:3}"
-ENGINE_THREADS="${ENGINE_THREADS:-64}"
 
 # 除 --fp8 与设备外，两边逐字相同
 COMMON=(
@@ -72,12 +71,12 @@ case "${1:-}" in
   start-a)
     bash "$REPO/scripts/train.sh" start "$A_EXP" --fp8 false \
       --device "${A_DEVICES%%,*}" --selfplay-devices "$A_DEVICES" \
-      --engine-threads "$ENGINE_THREADS" "${COMMON[@]}"
+      "${COMMON[@]}"
     ;;
   start-b)
     bash "$REPO/scripts/train.sh" start "$B_EXP" --fp8 true \
       --device "${B_DEVICES%%,*}" --selfplay-devices "$B_DEVICES" \
-      --engine-threads "$ENGINE_THREADS" "${COMMON[@]}"
+      "${COMMON[@]}"
     ;;
   stop)
     bash "$REPO/scripts/train.sh" stop "$A_EXP"
