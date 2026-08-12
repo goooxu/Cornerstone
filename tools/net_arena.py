@@ -2,9 +2,10 @@
 """把**网络和规则基线放进同一场循环赛**，联合拟合 Elo。
 
     python3 tools/net_arena.py \
-        --nets ../runs/ab-bf16/ckpt/step00000630.pt ../runs/ab-bf16/ckpt/step00200230.pt \
-        --rules random greedy-area greedy-mobility flat-mcts-4k \
-        --games 400 --engine-threads 128 --out ../runs/arena/bf16_arena.json
+        --nets ../runs/v2-bf16/ckpt/step*.pt \
+        --rules random greedy-area flat-mcts-256 flat-mcts-1k greedy-mobility \
+        --games 400 --simulations 0 --engine-threads 8 \
+        --out ../runs/arena_v2_bf16.json
 
 为什么需要这个：网络强过全部规则基线之后，`evaluate_vs_baseline` 的得分率会钉在
 1.0，换算出来的 Elo 只是钳位假数（`elo_from_score_rate` 把胜率钳到 1−1e-9，
@@ -125,7 +126,8 @@ def main() -> None:
     ap.add_argument("--opening-plies", type=int, default=2)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--seed", type=int, default=1)
-    ap.add_argument("--anchor", default="random", help="Elo 零点锚定在谁身上")
+    ap.add_argument("--anchor", default="random",
+                    help="Elo 零点锚定在谁身上；给 none 表示不锚定（只比相对高低时用）")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -138,8 +140,8 @@ def main() -> None:
     print(f"载入 {len(args.nets)} 份 checkpoint …", flush=True)
     parts = [Participant(s, args.device) for s in args.rules + args.nets]
     idx = {p.name: i for i, p in enumerate(parts)}
-    if args.anchor not in idx:
-        raise SystemExit(f"锚点 {args.anchor} 不在参赛者里")
+    if args.anchor not in ("", "none") and args.anchor not in idx:
+        raise SystemExit(f"锚点 {args.anchor} 不在参赛者里（不需要锚点就给 --anchor none）")
 
     bridge = {step_of(b) for b in args.bridge}
     # 网络按步数排序后的名次，用来限制「只打相邻的几档」
@@ -185,7 +187,11 @@ def main() -> None:
         rows.append({"a": a.name, "b": b.name, "games": g,
                      "score_a": sa, "rate_a": rate})
 
-    anchor_i = idx[args.anchor]
+    # 不锚定时把零点放在第一个参赛者身上：BT 只定到一个相加常数，
+    # 只比相对高低（比如同一套配置的两种实现）时锚点是什么无所谓。
+    # 但**跨拟合的绝对 Elo 依然不可比** —— 换了对手池，数值就换了一把尺子。
+    no_anchor = args.anchor in ("", "none")
+    anchor_i = 0 if no_anchor else idx[args.anchor]
     elo = fit_elo(scores, games, anchor=anchor_i)
 
     # ± 用参数自举，不用 elo_stderr。后者是按「总得分率服从二项分布」估的，

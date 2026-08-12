@@ -59,7 +59,7 @@ D="bash scripts/devbox.sh exec"
 
 $D python3 tools/train.py --smoke              # 小配置端到端自检，几分钟出结果
 
-# 首对模型：FP8 与 BF16 的受控对照，各占两张卡
+# FP8 与 BF16 的受控对照（v2-bf16 / v2-fp8），各占两张卡
 $D bash scripts/ab_experiment.sh start
 $D bash scripts/ab_experiment.sh status
 $D bash scripts/ab_experiment.sh compare 20000   # 在对齐步数处头对头
@@ -99,7 +99,7 @@ $D bash scripts/web.sh start               # 试玩服务，浏览器开 <开发
 - [docs/04-网络与自博弈训练.md](docs/04-网络与自博弈训练.md) —— CornerNet、Gumbel-AZ、replay
 - [docs/05-web试玩工具.md](docs/05-web试玩工具.md) —— 试玩工具的接口与前端
 - [docs/06-低精度训练.md](docs/06-低精度训练.md) —— 各项精度的分工、为什么主权重必须 fp32、踩过的坑
-- [docs/07-性能调优.md](docs/07-性能调优.md) —— 瓶颈三次转移、单卡 4.2×、四卡 22.7×
+- [docs/07-性能调优.md](docs/07-性能调优.md) —— 瓶颈三次转移、单卡 4.2×、每卡一进程 + DDP
 - [docs/08-已知问题与后续.md](docs/08-已知问题与后续.md) —— 当前限制、优先级、经验教训
 - [reports/BF16训练报告.md](reports/BF16训练报告.md) —— 首个完整模型的结构、训练方法与棋力评测
 - [reports/FP8训练报告.md](reports/FP8训练报告.md) —— FP8 那条腿，以及与 BF16 的 A/B 结论

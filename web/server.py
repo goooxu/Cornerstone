@@ -2,7 +2,7 @@
 """Web 试玩工具后端。
 
     python3 web/server.py                          # 默认对手 greedy-mobility
-    python3 web/server.py --checkpoint runs/ab-fp8/ckpt/step00031452.pt
+    python3 web/server.py --checkpoint runs/v2-fp8/ckpt/step00031452.pt
 
 规则判定全部走 C++ 引擎（`cornerstone._engine`），和训练用的是同一份实现 ——
 前端只负责画和收集点击，任何合法性判断都不在 JS 里重写，否则迟早两边对不上。
@@ -184,7 +184,7 @@ class NetBrain:
         self.device = torch.device(device)
         self.step = step
         self.path = path
-        # 精度写进标签：ab-fp8 / ab-bf16 两条腿的 checkpoint 混在一个下拉里，
+        # 精度写进标签：v2-fp8 / v2-bf16 两条腿的 checkpoint 混在一个下拉里，
         # 光看 step 分不出是哪一条。这个标志来自 checkpoint 自带的 model_config，
         # 不是从跑名猜的 —— 跑名可以随便起，模型配置不会骗人。
         self.fp8 = bool(getattr(model.cfg, "fp8", False))
@@ -683,7 +683,7 @@ def main() -> None:
     ap.add_argument("--checkpoint", default=None,
                     help="默认对手用哪个 checkpoint；界面上仍可随时换")
     ap.add_argument("--backend", default=None,
-                    help="默认后端 ID，如 rule:greedy-mobility 或 net:ab-fp8/latest")
+                    help="默认后端 ID，如 rule:greedy-mobility 或 net:v2-fp8/latest")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8080)
