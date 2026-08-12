@@ -234,7 +234,8 @@ PYBIND11_MODULE(_engine, m) {
 
     py::class_<MctsConfig>(m, "MctsConfig")
         .def(py::init([](int simulations, int max_considered, double c_visit, double c_scale,
-                         int temperature_plies, int top_k, double value_from_score) {
+                         int temperature_plies, int top_k, double value_from_score,
+                         double random_opening_prob, int random_opening_max_plies) {
                  MctsConfig c;
                  c.simulations = simulations;
                  c.max_considered = max_considered;
@@ -243,19 +244,25 @@ PYBIND11_MODULE(_engine, m) {
                  c.temperature_plies = temperature_plies;
                  c.top_k = top_k;
                  c.value_from_score = value_from_score;
+                 c.random_opening_prob = random_opening_prob;
+                 c.random_opening_max_plies = random_opening_max_plies;
                  return c;
              }),
              py::arg("simulations") = 128, py::arg("max_considered") = 16,
              py::arg("c_visit") = 50.0, py::arg("c_scale") = 1.0,
              py::arg("temperature_plies") = 12, py::arg("top_k") = MAX_TOPK,
-             py::arg("value_from_score") = 0.0)
+             py::arg("value_from_score") = 0.0,
+             py::arg("random_opening_prob") = 0.0,
+             py::arg("random_opening_max_plies") = 0)
         .def_readwrite("simulations", &MctsConfig::simulations)
         .def_readwrite("max_considered", &MctsConfig::max_considered)
         .def_readwrite("c_visit", &MctsConfig::c_visit)
         .def_readwrite("c_scale", &MctsConfig::c_scale)
         .def_readwrite("temperature_plies", &MctsConfig::temperature_plies)
         .def_readwrite("top_k", &MctsConfig::top_k)
-        .def_readwrite("value_from_score", &MctsConfig::value_from_score);
+        .def_readwrite("value_from_score", &MctsConfig::value_from_score)
+        .def_readwrite("random_opening_prob", &MctsConfig::random_opening_prob)
+        .def_readwrite("random_opening_max_plies", &MctsConfig::random_opening_max_plies);
 
     py::class_<EvalConfig>(m, "EvalConfig")
         .def(py::init([](bool enabled, const AgentConfig& opponent, bool net_opponent,

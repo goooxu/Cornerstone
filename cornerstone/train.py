@@ -61,6 +61,44 @@ class TrainConfig:
     temperature_plies: int = 12
     games_per_iter: int = 2048
 
+    # 自博弈的**状态分布**旋钮。注意 temperature_plies 不是 ——
+    # 它只在「SH 胜者（带 Gumbel）」和「改进策略 argmax」之间二选一，
+    # 先验一尖锐两者就选同一手（实测把它从 12 延到 30，先手胜率不降反升）。
+    #
+    # 实测（tools/diag_diversity.py，v2-bf16）：训练到第 8 万步时 512 局自博弈的
+    # **首手全部相同**（首手有 414 种合法着法），15 万步时只剩 5 种前两手、
+    # 15 种前四手，三分之一的对局逐手重复。replay 名义压着 300 万个局面，
+    # 有效多样性远小于此。这两个旋钮直接治那个。
+    random_opening_prob: float = 0.0
+    random_opening_max_plies: int = 0
+
+    # 以下三个此前只在 C++ 里有默认值、没暴露出来。不改默认值，只是让它们可调：
+    #   c_visit / c_scale —— sigma(q) = (c_visit + max_N) * c_scale，本项目约 50~66。
+    #     它是 Gumbel-AZ 里 q 相对先验的放大倍数，也是 policy churn 的放大器
+    #     （实测相邻两档 checkpoint 之间 25~39% 的局面最优着法整个换了，而 loss 不动）
+    #   value_from_score —— >0 时把终局占格差按此权重混进价值目标。
+    #     占格差是连续量，胜负塌缩（先手胜率 0.965）之后它仍有分辨率
+    c_visit: float = 50.0
+    c_scale: float = 1.0
+    value_from_score: float = 0.0
+
+    # 门控冠军：自博弈的生成器是**被实测出来的**最强档，而不是「最新即最强」。
+    #
+    # 裸自博弈里没有任何机制保证生成数据的那份权重不比历史最优差 —— 实测两条腿
+    # 都在训练量的 73~80% 处见顶，之后终点比峰值低 19~22 Elo，而那 20~27% 的
+    # 训练数据全是由一个正在退化的策略产出的。门控给这条链加一个棘轮。
+    #
+    # 期望要放对：门控保证的是「不变差」，不是「继续变强」——
+    # AlphaZero 正是砍掉 AlphaGo Zero 的门控之后才更强的。
+    # 它值得做是因为评测在这个项目里便宜到离谱（纯策略 400 局 2 秒），
+    # 而且顺手补上了训练期**唯一不会饱和的**棋力信号。
+    gate_enabled: bool = False
+    gate_every_iters: int = 4
+    gate_games: int = 800
+    gate_simulations: int = 64      # 与自博弈同口径；纯策略(0)测的是另一件事
+    gate_opening_plies: int = 2
+    gate_threshold: float = 0.55
+
     # 训练
     batch_size: int = 1024
     steps_per_iter: int = 400
@@ -145,6 +183,9 @@ class Trainer:
         self.model.to_param_dtype()
         self._compile_hot_modules()
         self.pool = None
+        self._champ = None          # 门控的冠军副本，只在单卡路径下由 make_driver 建
+        self.champion_step = 0      # 当前冠军是哪一步的权重（0 = 初值）
+        self.rounds_since_promotion = 0
         self.buffer = ReplayBuffer(cfg.replay_capacity)
         self.step = 0
         self.iteration = 0
@@ -271,18 +312,66 @@ class Trainer:
             simulations=c.simulations,
             max_considered=c.max_considered,
             temperature_plies=c.temperature_plies,
+            c_visit=c.c_visit,
+            c_scale=c.c_scale,
+            value_from_score=c.value_from_score,
+            random_opening_prob=c.random_opening_prob,
+            random_opening_max_plies=c.random_opening_max_plies,
         )
         seed = int(self.rng.integers(1 << 30))
         devices = visible_devices(c.selfplay_devices)
         if len(devices) <= 1:
             self.pool = None
-            return SelfPlayDriver(self.model, self.device, num_games=c.parallel_games,
+            # 门控开着时自博弈的生成器是 champ 而不是 learner（多卡下同理，
+            # 只是那边 champ 住在工作进程里）。不开门控时两者是同一个对象。
+            gen = self.model
+            if c.gate_enabled:
+                self._champ = CornerNet(self.model.cfg).to(self.device)
+                self._champ.to_param_dtype()
+                self._champ.load_state_dict(self.model.state_dict())
+                self._champ.eval()
+                gen = self._champ
+            return SelfPlayDriver(gen, self.device, num_games=c.parallel_games,
                                   mcts=mcts, seed=seed, compile_model=True,
                                   engine_threads=c.engine_threads_per_gpu)
         # 多卡走每卡一个进程的工作池：自博弈与训练都在里面做。
         # 注意此后**权重的真身在工作进程**，self.model 只是镜像（见 WorkerPool.sync_weights）
         self.pool = WorkerPool(self.model, devices, c, mcts, seed)
         return self.pool
+
+    # ---- 门控冠军 ----
+    def gate(self, seed: int) -> tuple[float, int]:
+        """learner 挑战 champion，返回 (learner 得分率, 局数)。"""
+        c = self.cfg
+        if self.pool is not None:
+            return self.pool.gate(c.gate_games, c.gate_simulations, seed,
+                                  c.gate_opening_plies)
+        from .evaluate import evaluate_vs_network
+        n = c.gate_games + (c.gate_games % 2)      # 成对开局要求偶数
+        was = self.model.training
+        self.model.eval()
+        try:
+            r = evaluate_vs_network(self.model, self._champ, self.device, games=n,
+                                    parallel_games=max(2, n // 2),
+                                    simulations=c.gate_simulations, seed=seed,
+                                    engine_threads=c.engine_threads_per_gpu,
+                                    opening_plies=c.gate_opening_plies,
+                                    label="champion")
+        finally:
+            if was:
+                self.model.train()
+        return r.score_rate, r.games
+
+    def promote(self) -> None:
+        """把 learner 提升为 champion。
+
+        必须**原地**拷贝：重新赋值模块会让 champ 那份编译图失效
+        （下一轮自博弈重编译几十秒），并把 state_dict 的键变成 `_orig_mod.*`。
+        """
+        if self.pool is not None:
+            self.pool.promote()
+        elif getattr(self, "_champ", None) is not None:
+            self._champ.load_state_dict(self.model.state_dict())
 
     def steps_for_iteration(self) -> int:
         """按 replay 里现有的数据量给本轮的训练步数限流。

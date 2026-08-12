@@ -169,8 +169,16 @@ def _make_optimizer(model: CornerNet, weight_decay: float, lr: float) -> MasterW
 
 def _worker(rank: int, world: int, dev: str, spec: dict, flat: torch.Tensor, layout,
             req, rep, stop_ev) -> None:
-    """常驻工作进程。命令：selfplay / train / save / pull / stop。"""
-    model = opt = drv = None
+    """常驻工作进程。命令：slots / selfplay / train / gate / promote / hash / pull /
+    save / load / stop。
+
+    开了门控时进程里有**两份**模型：`model` 是被训练的 learner，`champ` 是自博弈的
+    生成器。晋升不需要跨进程传权重 —— DDP 保证各 rank 的 learner 逐位相同，
+    所以每个 rank 本地 `copy_` 一次就够了。这条前提有 `hash` 命令和单测盯着：
+    一旦不成立，四张卡的冠军会各走各的，而这**不报错**，只表现为
+    「自博弈数据来自四个不同的网络」。
+    """
+    model = opt = drv = champ = None
     try:
         os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
         os.environ["MASTER_PORT"] = str(spec["port"])
@@ -194,7 +202,18 @@ def _worker(rank: int, world: int, dev: str, spec: dict, flat: torch.Tensor, lay
                            dtype=next(model.parameters()).dtype, device=d)
         params = [p for _, p in model.named_parameters()]
 
-        drv = SelfPlayDriver(model, d, num_games=spec["games_per_gpu"],
+        # 门控：自博弈的生成器是 champ 而不是 learner。不开门控时两者是同一个对象，
+        # 于是行为与改动前逐位相同（没有多一次拷贝，也没有多编译一份图）
+        if spec.get("gate_enabled"):
+            with torch.cuda.device(d):
+                champ = CornerNet(ModelConfig(**spec["model_cfg"])).to(d)
+            champ.to_param_dtype()
+            champ.load_state_dict(model.state_dict())
+            champ.eval()
+        else:
+            champ = model
+
+        drv = SelfPlayDriver(champ, d, num_games=spec["games_per_gpu"],
                              mcts=_rebuild(E.MctsConfig, spec["mcts"]),
                              seed=spec["seed"] + 1000 * rank,
                              compile_model=True, engine_threads=spec["engine_threads"])
@@ -238,6 +257,38 @@ def _worker(rank: int, world: int, dev: str, spec: dict, flat: torch.Tensor, lay
                 gnorm = opt.step(grad_clip=spec["grad_clip"])
                 parts["grad_norm"] = gnorm
                 rep.put(("ok", {k: float(v) for k, v in parts.items()}))
+
+            elif cmd == "gate":                       # learner 挑战 champion
+                _, n_games, sims, gseed, opening_plies = msg
+                from .evaluate import evaluate_vs_network
+                # 每 rank 分一份，且必须是偶数 —— 成对开局要求同一开局双方各执先一次
+                n_local = max(2, n_games // world)
+                n_local += n_local % 2
+                model.eval()
+                try:
+                    r = evaluate_vs_network(
+                        model, champ, d, games=n_local,
+                        parallel_games=max(2, n_local // 2), simulations=sims,
+                        seed=gseed, engine_threads=spec["engine_threads"],
+                        opening_plies=opening_plies, label="champion")
+                finally:
+                    model.train()
+                rep.put(("ok", (r.wins, r.draws, r.games)))
+
+            elif cmd == "promote":
+                # 必须原地拷贝：重新赋值模块会让 champ 的编译图失效（下一轮自博弈
+                # 重编译几十秒），而且会把 state_dict 的键变成 _orig_mod.*
+                if champ is not model:
+                    champ.load_state_dict(model.state_dict())
+                rep.put(("ok", None))
+
+            elif cmd == "hash":                       # 守「各 rank 的 learner 逐位相同」
+                import hashlib
+                h = hashlib.blake2b(digest_size=16)
+                for name, p in sorted(model.named_parameters()):
+                    h.update(name.encode())
+                    h.update(p.detach().float().cpu().numpy().tobytes())
+                rep.put(("ok", h.hexdigest()))
 
             elif cmd == "pull":                       # rank 0 把主权重写回共享缓冲
                 if rank == 0:
@@ -308,6 +359,7 @@ class WorkerPool:
             games_per_gpu=max(1, cfg.parallel_games // self.world),
             engine_threads=cfg.engine_threads_per_gpu, weight_decay=cfg.weight_decay,
             lr=cfg.lr, grad_clip=cfg.grad_clip, w_value=cfg.w_value, w_score=cfg.w_score,
+            gate_enabled=bool(getattr(cfg, "gate_enabled", False)),
             port=port or (29500 + (os.getpid() % 2000)),
         )
         self.procs = []
@@ -386,6 +438,47 @@ class WorkerPool:
         工作进程自博弈时直接用自己刚更新过的权重，本来就不需要同步。
         父进程要看权重（落 checkpoint 之外的用途）走 `pull_weights()`。
         """
+
+    def gate(self, n_games: int, sims: int, seed: int,
+             opening_plies: int = 2) -> tuple[float, int]:
+        """learner 挑战 champion，返回 (learner 的得分率, 实际局数)。
+
+        每个 rank 用**本地**的两份权重打 n_games/world 局 —— 没有任何跨进程通信，
+        四张卡是四段独立的对局，合起来就是一场。
+        """
+        for i, q in enumerate(self.reqs):
+            q.put(("gate", n_games, sims, seed + 7919 * i, opening_plies))
+        w = dr = g = 0
+        for i in range(self.world):
+            kind, payload = self._recv(i, 1800.0)
+            if kind == "err":
+                raise RuntimeError(f"工作进程 {i} 门控出错：\n{payload}")
+            a, b, n = payload
+            w += a
+            dr += b
+            g += n
+        return (w + 0.5 * dr) / max(1, g), g
+
+    def promote(self) -> None:
+        """把 learner 提升为 champion。各 rank 本地做，不传权重。"""
+        for q in self.reqs:
+            q.put(("promote",))
+        for i in range(self.world):
+            kind, payload = self._recv(i, 300.0)
+            if kind == "err":
+                raise RuntimeError(f"工作进程 {i} 晋升出错：\n{payload}")
+
+    def weight_hashes(self) -> list[str]:
+        """各 rank 的 learner 权重哈希。**全都相同**是本地晋升成立的前提。"""
+        for q in self.reqs:
+            q.put(("hash",))
+        out = []
+        for i in range(self.world):
+            kind, payload = self._recv(i, 300.0)
+            if kind == "err":
+                raise RuntimeError(f"工作进程 {i} 取哈希出错：\n{payload}")
+            out.append(payload)
+        return out
 
     def run(self, target_games: int, max_seconds: float | None = None,
             should_stop=None) -> tuple[list[dict], SelfPlayStats]:

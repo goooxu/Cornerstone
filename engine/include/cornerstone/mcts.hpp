@@ -37,6 +37,21 @@ struct MctsConfig {
     int temperature_plies = 12;   // 前若干手按改进策略采样落子，之后取 argmax
     int top_k = MAX_TOPK;         // 稀疏策略目标保留多少项
     double value_from_score = 0.0;  // >0 时把终局占格差按此权重混进价值目标
+
+    // 自博弈的随机开局注入。**这是状态分布的旋钮，temperature_plies 不是。**
+    //
+    // 实测（tools/diag_diversity.py）：训练到第 8 万步时，512 局自博弈的**首手
+    // 全部相同**（首手有 414 种合法着法）；到 15 万步只剩 5 种前两手、15 种前四手，
+    // 三分之一的对局逐手重复。replay 名义压着 300 万个局面，有效多样性远小于此。
+    //
+    // 以 random_opening_prob 的概率给一局注入 k 手均匀随机着法，
+    // k 从 {2, 4, ..., random_opening_max_plies} 里均匀抽（**取偶数**，
+    // 这样两个座位各走一半，先后手不会被开局本身带偏）。
+    //
+    // 随机手照常进 history（否则从空盘回放会断），但 n_top = 0 当哨兵，
+    // 表示「没有搜索目标」—— Python 侧的 replay 靠这个把它们排除在训练之外。
+    double random_opening_prob = 0.0;
+    int random_opening_max_plies = 0;
 };
 
 // 一手的训练样本。特征不存 —— 回放着法序列就能重建，CPU 有的是。
