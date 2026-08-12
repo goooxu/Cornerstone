@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """把 metrics.jsonl 画成图。
 
-    python3 tools/plot_metrics.py --kind loss      --exp ab-bf16
-    python3 tools/plot_metrics.py --kind timeline  --exp ab-bf16
+    python3 tools/plot_metrics.py --kind loss      --exp v2-bf16
+    python3 tools/plot_metrics.py --kind timeline  --exp v2-bf16
 
 `loss` 画损失曲线，`timeline` 画一轮的时间线（各阶段按真实秒数等比例）。
 
@@ -41,7 +41,7 @@ def rolling(y, k: int):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--kind", choices=["loss", "timeline"], default="loss")
-    ap.add_argument("--exp", default="ab-bf16")
+    ap.add_argument("--exp", default="v2-bf16")
     ap.add_argument("--metrics", default=None, help="直接给 metrics.jsonl 路径")
     ap.add_argument("--out", default=None)
     ap.add_argument("--smooth", type=int, default=5, help="滑动平均窗口（0 = 不平滑）")
@@ -85,16 +85,26 @@ def main() -> None:
     a.plot(step, sm(val), color=C["val"], lw=1.4, label="value loss")
     a.axvline(step[lo], color="#888", ls="--", lw=1.0)
     rise = 100 * (total[-1] - total[lo]) / total[lo]
-    a.annotate(f"minimum {total[lo]:.4f}\n@ step {int(step[lo]):,}",
-               xy=(step[lo], total[lo]), xytext=(step[lo] - 62000, total[lo] + 0.95),
+    # 最低点落在最后 5% 里 = 这条腿的损失一路降到底，没有回升可标 ——
+    # 两个标注会叠在同一个点上糊成一团，标题也就说反了。
+    span = float(step[-1] - step[0])
+    tail = bool(step[lo] >= step[0] + 0.95 * span)
+    a.annotate(f"minimum {total[lo]:.4f}\n@ step {int(step[lo]):,}"
+               + ("  (the last iteration)" if tail else ""),
+               xy=(step[lo], total[lo]),
+               xytext=(step[lo] - 0.34 * span, total[lo] + 0.95),
                fontsize=9, color="#333",
                arrowprops=dict(arrowstyle="->", color="#888", lw=1.0))
-    a.annotate(f"then +{rise:.0f}% to {total[-1]:.4f}",
-               xy=(step[-1], total[-1]), xytext=(step[-1] - 46000, total[-1] + 1.15),
-               fontsize=9, color="#333",
-               arrowprops=dict(arrowstyle="->", color="#888", lw=1.0))
+    if not tail:
+        a.annotate(f"then +{rise:.0f}% to {total[-1]:.4f}",
+                   xy=(step[-1], total[-1]),
+                   xytext=(step[-1] - 0.25 * span, total[-1] + 1.15),
+                   fontsize=9, color="#333",
+                   arrowprops=dict(arrowstyle="->", color="#888", lw=1.0))
     a.set_ylabel("loss")
-    a.set_title("Total loss bottoms out, then rises — while the learning rate is still decaying",
+    a.set_title("Total loss keeps falling all the way to the end"
+                if tail else
+                "Total loss bottoms out, then rises — while the learning rate is still decaying",
                 fontsize=10.5, pad=8)
     a.legend(loc="upper right", fontsize=9, framealpha=0.9)
     a.grid(alpha=0.18)
@@ -135,7 +145,9 @@ def main() -> None:
     c.set_ylabel("value loss", color=C["val"])
     c.tick_params(axis="y", labelcolor=C["val"])
     c.set_xlabel("training step")
-    c.set_title("Meanwhile the value head keeps improving — opposite direction to the total loss",
+    c.set_title("The value head improves monotonically throughout"
+                if tail else
+                "Meanwhile the value head keeps improving — opposite direction to the total loss",
                 fontsize=10.5, pad=8)
     c.grid(alpha=0.18)
     c2 = c.twinx()
@@ -158,14 +170,15 @@ def main() -> None:
 def fig_timeline(rows, plt, np, out: str, dpi: int) -> None:
     """一轮的时间线：各阶段按真实秒数等比例画。
 
-    重点是让「评测那一段有多长」一眼可见 —— 它比自博弈加训练还长一个数量级，
-    而这不是「测得勤」，是评测走了单线程（见报告 §7.3）。
+    读出来的是「自博弈和训练各占一轮的多少」—— 两者严格交替、不重叠，
+    所以这张图也就是「哪一半值得先去优化」。
 
+    横轴尺度、每轮步数、要不要画评测那一条，**全部由数据推**。
     周期性评测已经从训练循环里移除（规则基线量不了这个网络，见
-    `evaluate.evaluate_vs_baseline` 的注释），所以**新的 metrics 里没有评测轮**。
-    这个图仍然读得了历史 metrics；没有评测轮时自动退化成三段。
+    `evaluate.evaluate_vs_baseline` 的注释），新的 metrics 里没有评测轮，
+    此时自动退化成一根三段的条子。历史 metrics 仍然读得了，会多画一条评测轮。
     """
-    import matplotlib.patches as mpatches
+    import matplotlib.ticker
 
     wall = np.array([r["wall"] for r in rows], float)
     dt = np.diff(wall)
@@ -173,6 +186,9 @@ def fig_timeline(rows, plt, np, out: str, dpi: int) -> None:
     sp = np.array([r["selfplay_games"] / r["selfplay_games_per_s"] for r in rows])[1:]
     tr = np.array([r.get("planned_steps", 400) / r["train_steps_per_s"] for r in rows])[1:]
     other = dt - sp - tr
+    # 每轮的训练步数也不写死：第 1 轮被数据量限流过，取众数才是「一轮训多少步」
+    steps = [int(r.get("planned_steps", 400)) for r in rows[1:]]
+    steps_per_iter = max(set(steps), key=steps.count)
 
     SP, TR = (float(np.median(x)) for x in (sp, tr))
     # 没有评测轮时 other[is_ev] 是空数组，np.median 会给 nan 并告警
@@ -186,13 +202,16 @@ def fig_timeline(rows, plt, np, out: str, dpi: int) -> None:
 
     # ── 上：一轮的时间线，两种轮次共用一条时间轴 ──────────────────
     a = ax[0]
-    bars = [("eval iteration\n(every 10th, ×%d)" % n_ev, 1,
-             [("sync + I/O", OT, C["ot"]), ("self-play", SP, C["sp"]),
-              ("train 400 steps", TR, C["tr"]), ("evaluation", EV, C["ev"])]),
-            ("typical iteration\n(×%d)" % n_pl, 0,
-             [("sync + I/O", OT, C["ot"]), ("self-play", SP, C["sp"]),
-              ("train 400 steps", TR, C["tr"])])]
-    XMAX = 1700.0
+    plain = [("sync + I/O", OT, C["ot"]), ("self-play", SP, C["sp"]),
+             ("train %d steps" % steps_per_iter, TR, C["tr"])]
+    bars = [("typical iteration\n(×%d)" % n_pl, 0, plain)]
+    if n_ev:
+        bars.insert(0, ("eval iteration\n(every 10th, ×%d)" % n_ev, 1,
+                        plain + [("evaluation", EV, C["ev"])]))
+    # 横轴尺度必须由数据定，不能写死：移除周期性评测后一轮从 1500s 降到 40s 量级，
+    # 写死的 1700 会把整根条子压成一根看不见的线。
+    span = SP + TR + OT + EV
+    XMAX = 1.30 * span
     seen = {}
     for label, y, segs in bars:
         x = 0.0
@@ -204,33 +223,40 @@ def fig_timeline(rows, plt, np, out: str, dpi: int) -> None:
                 a.text(x + w / 2, y, f"{name}\n{w:.0f}s", ha="center", va="center",
                        fontsize=9, color="white", fontweight="bold")
             x += w
-        a.text(-28, y, label, ha="right", va="center", fontsize=9)
-        a.text(x + 16, y, f"{x:.0f}s", ha="left", va="center", fontsize=9.5,
+        a.text(-0.017 * XMAX, y, label, ha="right", va="center", fontsize=9)
+        a.text(x + 0.01 * XMAX, y, f"{x:.0f}s", ha="left", va="center", fontsize=9.5,
                fontweight="bold", color="#333")
     # 窄段的数字放到条子下面，图上就不会有半截词
-    a.text(SP + TR + OT + 16, -0.34,
+    a.text(SP + TR + OT + 0.01 * XMAX, -0.34,
            f"self-play {SP:.0f}s  ·  train {TR:.0f}s  ·  sync + I/O {OT:.0f}s",
            ha="left", va="center", fontsize=8.5, color="#666")
-    a.legend([seen[k] for k in ("self-play", "train 400 steps", "evaluation", "sync + I/O")],
-             ["self-play", "train 400 steps", "evaluation", "sync + I/O"],
-             loc="upper right", fontsize=8.5, ncol=4, frameon=False,
-             bbox_to_anchor=(1.0, 1.22))
+    keys = [k for k in ("self-play", "train %d steps" % steps_per_iter,
+                        "evaluation", "sync + I/O") if k in seen]
+    a.legend([seen[k] for k in keys], keys, loc="upper right", fontsize=8.5,
+             ncol=len(keys), frameon=False, bbox_to_anchor=(1.0, 1.22))
     a.set_yticks([])
-    a.set_ylim(-0.62, 1.42)
-    a.set_xlim(-330, XMAX)
-    a.set_xticks([0, 250, 500, 750, 1000, 1250, 1500])   # 时间轴不该出现负刻度
+    a.set_ylim(-0.62, 1.42 if n_ev else 0.62)
+    a.set_xlim(-0.20 * XMAX, XMAX)
+    # 时间轴不该出现负刻度，左边那段是留给行标签的
+    a.xaxis.set_major_locator(matplotlib.ticker.MaxNLocator(6, steps=[1, 2, 2.5, 5, 10]))
+    a.set_xticks([t for t in a.get_xticks() if 0 <= t <= XMAX])
     a.set_xlabel("seconds (to scale)")
-    a.set_title(f"One iteration = self-play → train 400 steps. Every 10th also evaluates — "
-                f"that eval alone costs {EV/(SP+TR+OT):.0f}× the rest",
-                fontsize=10.5, pad=10)
+    a.set_title(
+        (f"One iteration = self-play → train {steps_per_iter} steps. "
+         f"Every 10th also evaluates — that eval alone costs {EV/(SP+TR+OT):.0f}× the rest")
+        if n_ev else
+        (f"One iteration = self-play → train {steps_per_iter} steps, "
+         f"strictly alternating ({span:.0f}s median)"),
+        fontsize=10.5, pad=10)
     a.spines[["left", "right", "top"]].set_visible(False)
     a.grid(axis="x", alpha=0.18)
 
     # ── 下：全程墙钟怎么分掉的 ───────────────────────────────────
     b = ax[1]
     tot = float(wall[-1] - wall[0])
-    parts = [("self-play", float(sp.sum()), C["sp"]), ("training", float(tr.sum()), C["tr"]),
-             ("evaluation", float(other[is_ev].sum()), C["ev"])]
+    parts = [("self-play", float(sp.sum()), C["sp"]), ("training", float(tr.sum()), C["tr"])]
+    if n_ev:
+        parts.append(("evaluation", float(other[is_ev].sum()), C["ev"]))
     parts.append(("other", tot - sum(p[1] for p in parts), C["ot"]))
     x = 0.0
     for name, v, col in parts:
@@ -243,10 +269,11 @@ def fig_timeline(rows, plt, np, out: str, dpi: int) -> None:
     b.set_xlim(0, tot)
     b.set_xlabel("total wall clock")
     b.set_title(f"Where the {tot/3600:.1f} hours went", fontsize=10.5, pad=8)
-    b.set_xticks([i * 3600 for i in range(0, int(tot / 3600) + 1, 6)])
-    b.set_xticklabels([f"{i}h" for i in range(0, int(tot / 3600) + 1, 6)])
+    # 刻度间隔跟着总时长走：4 小时的跑用 6h 一格只会画出一个「0h」
+    hstep = next(h for h in (1, 2, 3, 6, 12, 24) if tot / 3600 / h <= 8)
+    b.set_xticks([i * 3600 for i in range(0, int(tot / 3600) + 1, hstep)])
+    b.set_xticklabels([f"{i}h" for i in range(0, int(tot / 3600) + 1, hstep)])
     b.spines[["left", "right", "top"]].set_visible(False)
-    del mpatches
 
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     fig.savefig(out, dpi=dpi, bbox_inches="tight", facecolor="white")
