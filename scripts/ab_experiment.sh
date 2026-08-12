@@ -58,7 +58,24 @@ B_DEVICES="${B_DEVICES:-cuda:2,cuda:3}"
 # **教训：受控对照里不要留「只作用于一条腿」的默认值。** 它在手动启动时是显式的，
 # 在自动恢复时是隐式的，而自动恢复恰恰是最没人盯着的时刻。
 
-# 两条腿逐字共用这一份，除 --fp8 与设备外没有任何差别
+# 每条腿的额外旋钮，**按实验名分派、写死在脚本里**。
+#
+# 不用环境变量传：守护脚本自动恢复时只转交实验名与设备，任何靠 env 传进来的
+# 旋钮都会在那一刻悄悄消失或退回默认值 —— v2-fp8 的 parallel_games 就是这么
+# 在第 12.8 万步被从 4096 改成 2048 的，日志上只表现为「自博弈慢了一半」。
+# 配置跟着实验名走，恢复出来的就一定还是同一个实验。
+#
+#   *gate*     门控冠军：自博弈的生成器是被实测出来的最强档（见 docs/08）
+#   *rndopen*  自博弈随机开局注入：治开局塌缩（实测第 8 万步起每局同一首手）
+extra_for() {
+  case "$1" in
+    *gate*)    echo "--gate-enabled true" ;;
+    *rndopen*) echo "--random-opening-prob 0.5 --random-opening-max-plies 6" ;;
+    *)         echo "" ;;
+  esac
+}
+
+# 两条腿逐字共用这一份，除 --fp8、设备、extra_for 外没有任何差别
 COMMON=(
   --dim 256 --blocks 16 --attn-every 4
   --parallel-games 4096 --games-per-iter 2048
@@ -84,12 +101,12 @@ case "${1:-}" in
   start-a)
     bash "$REPO/scripts/train.sh" start "$A_EXP" --fp8 false \
       --device "${A_DEVICES%%,*}" --selfplay-devices "$A_DEVICES" \
-      "${COMMON[@]}"
+      "${COMMON[@]}" $(extra_for "$A_EXP")
     ;;
   start-b)
     bash "$REPO/scripts/train.sh" start "$B_EXP" --fp8 true \
       --device "${B_DEVICES%%,*}" --selfplay-devices "$B_DEVICES" \
-      "${COMMON[@]}"
+      "${COMMON[@]}" $(extra_for "$B_EXP")
     ;;
   stop)
     bash "$REPO/scripts/train.sh" stop "$A_EXP"

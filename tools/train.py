@@ -106,7 +106,9 @@ def main() -> int:
             print("到达总步数上限")
             break
 
-        driver.sync_weights()      # 把上一轮训好的权重推给各卡的副本
+        # 空操作，接口留着是为了单卡/多卡两条路径不用分支 ——
+        # 权重的真身在工作进程里，从父进程往下推等于覆盖掉刚训出来的结果
+        driver.sync_weights()
         recs, sp = driver.run(cfg.games_per_iter, should_stop=should_stop)
         trainer.buffer.add_records(recs)
         trainer.games_played += len(recs)
@@ -132,6 +134,38 @@ def main() -> int:
             row.update(trainer.train_steps(steps, should_stop=should_stop))
 
         trainer.iteration += 1
+
+        # 门控：learner 挑战 champion，赢够阈值才让它接管自博弈。
+        #
+        # 这也是训练期**唯一不会饱和的**棋力信号 —— 规则阶梯在训练走完 7% 时就被
+        # 打穿了，而 loss / value loss / WDL 准确率在真实棋力回落的那一段还全都
+        # 朝好的方向走（见 BF16 报告 §7.1）。gate_score 是对着一个会随训练一起
+        # 变强的对手测出来的，不会钉在 1.0。
+        if cfg.gate_enabled and cfg.gate_every_iters and not _STOP and \
+                trainer.iteration % cfg.gate_every_iters == 0:
+            t_gate = time.time()
+            score, n_gate = trainer.gate(seed=cfg.seed + 104729 * trainer.iteration)
+            promoted = score >= cfg.gate_threshold
+            if promoted:
+                trainer.promote()
+                trainer.champion_step = trainer.step
+                trainer.rounds_since_promotion = 0
+            else:
+                trainer.rounds_since_promotion += cfg.gate_every_iters
+            row.update(gate_score=score, gate_games=n_gate,
+                       gate_promoted=int(promoted),
+                       champion_step=trainer.champion_step,
+                       rounds_since_promotion=trainer.rounds_since_promotion,
+                       gate_seconds=time.time() - t_gate)
+            print(f"[门控] learner {score:.3f} / {n_gate} 局 -> "
+                  + ("**晋升**" if promoted else
+                     f"不晋升（已 {trainer.rounds_since_promotion} 轮）")
+                  + f"  {time.time() - t_gate:.1f}s", flush=True)
+            # 长期不晋升 = 数据完全静止、价值头会过拟合冠军棋路。
+            # 这不是崩溃，但它意味着「生成器劣化」这个假设被证伪了，值得刷一条日志
+            if trainer.rounds_since_promotion >= 20 * cfg.gate_every_iters:
+                print(f"[门控] 警告：已连续 {trainer.rounds_since_promotion} 轮没有晋升，"
+                      f"自博弈数据分布已经静止", flush=True)
 
         # FP8 自检曾经和周期性评测挂在同一个 if 里，一旦把评测关掉自检也跟着没了 ——
         # 而 FP8 是会**静默**降级的：

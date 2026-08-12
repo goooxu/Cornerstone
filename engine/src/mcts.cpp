@@ -61,6 +61,7 @@ struct GameState {
     int8_t net_player = 0;                              // 评测模式下网络执哪一方
     uint64_t pair_rng = 0;      // 本对开局用的 rng 快照
     bool paired_second = false; // 这一局是不是「同一开局的第二遍」
+    int random_plies = 0;       // 本局开头有几手是随机注入的（见 MctsConfig）
 };
 
 // 终局节点的价值，从 player 视角
@@ -115,9 +116,12 @@ struct SelfPlayEngine::Impl {
         g.path.clear();
     }
 
-    // 开新的一局：评测模式下先走随机开局，再把对手方走到网络该动为止
+    // 开新的一局：评测模式下先走随机开局，再把对手方走到网络该动为止；
+    // 自博弈模式下按 cfg.random_opening_* 注入随机开局
     void start_game(GameState& g) {
         g.board.reset();
+        g.random_plies = 0;
+        if (!eval.enabled) inject_random_opening(g);
         if (eval.enabled) {
             // 开局配对：第一遍先把 rng 存下来，第二遍恢复它，于是两局开局逐手相同，
             // 而 net_player 已经翻过边 —— 同一个随机开局双方各执先一次。
@@ -132,6 +136,36 @@ struct SelfPlayEngine::Impl {
             play_opponent_until_net_turn(g);
         }
         reset_tree(g);
+    }
+
+    // 自博弈的随机开局：以 prob 的概率走 k 手均匀随机着法，k 从
+    // {2, 4, ..., max_plies} 里均匀抽（偶数 —— 两个座位各走一半，
+    // 否则随机开局本身就会给某一方送先手）。
+    //
+    // 和评测那条随机开局路径（start_game 里 eval.enabled 的分支）的**关键区别**：
+    // 那条直接落在盘上、**不进 history**，所以带着它记录的着法序列从空盘回放会非法
+    // （GameRecord::selfplay 那个标记就是用来拦这种记录的）。
+    // 这里必须把随机手也 push 进 history，只是标成 n_top = 0。
+    void inject_random_opening(GameState& g) {
+        if (cfg.random_opening_prob <= 0.0 || cfg.random_opening_max_plies < 2) return;
+        const double u = double(next_random(g.rng) % 1000000u) / 1000000.0;
+        if (u >= cfg.random_opening_prob) return;
+        const int pairs = cfg.random_opening_max_plies / 2;          // 抽 1..pairs 对
+        const int k = 2 * (1 + int(next_random(g.rng) % uint64_t(pairs)));
+        std::vector<int32_t> mv;
+        for (int i = 0; i < k && !g.board.terminal(); ++i) {
+            g.board.legal_moves(mv);
+            if (mv.empty()) break;
+            MoveTarget mt;
+            mt.action = mv[next_random(g.rng) % mv.size()];
+            mt.player = int8_t(g.board.current_player());
+            mt.n_legal = int32_t(mv.size());
+            mt.n_top = 0;                    // 哨兵：没有搜索目标，不参与训练
+            mt.rest_prob = 0.f;
+            g.history.push_back(mt);
+            g.board.play(mt.action);
+            ++g.random_plies;
+        }
     }
 
     void play_opponent_until_net_turn(GameState& g) {
@@ -533,8 +567,11 @@ struct SelfPlayEngine::Impl {
 
             // 落子：前若干手用 Gumbel-AZ 的带噪 argmax（Gumbel 噪声即随机性来源），
             // 之后改用去噪的改进策略 argmax
+            // 温度窗口按**搜索过的手数**算，不是绝对手数 —— 否则注入 k 手随机开局
+            // 之后，k 越大能享受带噪 argmax 的搜索手就越少，随机开局的剂量就悄悄
+            // 变成了两个变量。减掉 random_plies，各 k 的搜索段口径一致。
             size_t chosen = 0;
-            if (g.board.ply() < cfg.temperature_plies && !g.sh.cand.empty()) {
+            if (g.board.ply() - g.random_plies < cfg.temperature_plies && !g.sh.cand.empty()) {
                 double max_n = 0.0;
                 for (size_t i = 0; i < k; ++i) max_n = std::max(max_n, double(root.n[i]));
                 const double sigma = (cfg.c_visit + max_n) * cfg.c_scale;
@@ -613,6 +650,8 @@ void SelfPlayEngine::set_position(const std::vector<int32_t>& actions) {
         g.board.reset();
         for (int32_t a : actions) g.board.play(a);
         g.history.clear();
+        // 外部指定的局面不算随机开局 —— 忘了清零的话温度窗口会按上一局的 k 偏移
+        g.random_plies = 0;
         impl_->reset_tree(g);
     }
 }

@@ -33,7 +33,25 @@ class Game:
     score1: int
 
     def __len__(self) -> int:
+        """**全部**着法数 —— 回放重建局面要用整条序列，一手都不能少。"""
         return int(self.actions.shape[0])
+
+    @property
+    def train_idx(self) -> np.ndarray:
+        """可训练的手在本局里的绝对下标。
+
+        `n_top == 0` 是引擎给随机开局手打的哨兵：它们照常进棋谱（否则从空盘回放
+        会断），但没有搜索目标，拿它们当训练样本等于在教网络模仿均匀随机着法。
+        缓存在实例上 —— buffer 里有几万局，每次采样重算一遍 flatnonzero 不划算。
+        """
+        idx = getattr(self, "_train_idx", None)
+        if idx is None:
+            idx = np.flatnonzero(self.n_top > 0).astype(np.int32)
+            object.__setattr__(self, "_train_idx", idx)
+        return idx
+
+    def n_train(self) -> int:
+        return int(self.train_idx.shape[0])
 
     @staticmethod
     def from_record(d: dict) -> "Game":
@@ -52,7 +70,12 @@ class Game:
 
 
 class ReplayBuffer:
-    """按局面数限容的滚动窗口。"""
+    """按局面数限容的滚动窗口。
+
+    **容量与采样都按「可训练的手」算，不按全部的手。** 开了随机开局注入之后
+    一局里会有几手没有搜索目标（`n_top == 0`），它们只为回放而存在。
+    按全部的手记容量的话，容量的语义会随随机开局剂量悄悄变化。
+    """
 
     def __init__(self, capacity_positions: int = 2_000_000):
         self.capacity = int(capacity_positions)
@@ -73,21 +96,23 @@ class ReplayBuffer:
                 raise ValueError("评测模式的对局记录不能进 replay buffer："
                                  "它只记了网络方的着法，无法回放重建局面")
             g = Game.from_record(d)
-            if len(g) == 0:
+            # 整局都是随机开局手（k 大到把棋走完）时 n_train() 为 0：能回放但没样本，
+            # 留着只会让采样时的空局越积越多
+            if len(g) == 0 or g.n_train() == 0:
                 continue
             self.games.append(g)
-            self.n_positions += len(g)
+            self.n_positions += g.n_train()
             self.total_games_seen += 1
             added += 1
         while self.n_positions > self.capacity and len(self.games) > 1:
             old = self.games.popleft()
-            self.n_positions -= len(old)
+            self.n_positions -= old.n_train()
         self._cum = None
         return added
 
     def _cumulative(self) -> np.ndarray:
         if self._cum is None:
-            lens = np.fromiter((len(g) for g in self.games), dtype=np.int64,
+            lens = np.fromiter((g.n_train() for g in self.games), dtype=np.int64,
                                count=len(self.games))
             self._cum = np.cumsum(lens)
         return self._cum
@@ -100,14 +125,17 @@ class ReplayBuffer:
         cum = self._cumulative()
         flat = rng.integers(0, self.n_positions, size=batch)
         gi = np.searchsorted(cum, flat, side="right")
-        ply = (flat - np.where(gi > 0, cum[gi - 1], 0)).astype(np.int32)
+        # local 是「本局第几个**可训练**的手」，还要映射回绝对下标才能喂给 C++ 回放
+        local = (flat - np.where(gi > 0, cum[gi - 1], 0)).astype(np.int32)
 
-        # C++ 侧要求每局的 ply 递增（一次回放吐出该局全部样本），先按 (局, 手) 排序
-        order = np.lexsort((ply, gi))
-        gi, ply = gi[order], ply[order]
+        # C++ 侧要求每局的 ply 递增（一次回放吐出该局全部样本），先按 (局, 手) 排序。
+        # train_idx 本身是升序的，所以按 local 排完，映射后的绝对下标也仍是升序
+        order = np.lexsort((local, gi))
+        gi, local = gi[order], local[order]
 
         uniq, inv = np.unique(gi, return_inverse=True)
         sel = [self.games[int(k)] for k in uniq]
+        ply = np.array([sel[i].train_idx[p] for i, p in zip(inv, local)], dtype=np.int32)
 
         acts = np.concatenate([g.actions for g in sel]) if sel else np.zeros(0, np.int32)
         game_off = np.zeros(len(sel) + 1, dtype=np.int32)
@@ -207,17 +235,18 @@ class ReplayBuffer:
         np.cumsum(lens, out=off[1:])
         for i in range(len(lens)):
             a, b = off[i], off[i + 1]
-            self.games.append(Game(
+            g = Game(
                 actions=arr["actions"][a:b], players=arr["players"][a:b],
                 n_legal=arr["n_legal"][a:b], n_top=arr["n_top"][a:b],
                 rest_prob=arr["rest_prob"][a:b], top_actions=arr["top_actions"][a:b],
                 top_probs=arr["top_probs"][a:b], result0=int(arr["result0"][i]),
                 score0=int(arr["score0"][i]), score1=int(arr["score1"][i]),
-            ))
-            self.n_positions += int(lens[i])
+            )
+            self.games.append(g)
+            self.n_positions += g.n_train()      # 和 add_records 一样按可训练手计
             self.total_games_seen += 1
         while self.n_positions > self.capacity and len(self.games) > 1:
-            self.n_positions -= len(self.games.popleft())
+            self.n_positions -= self.games.popleft().n_train()
         self._cum = None
         return int(len(lens))
 
