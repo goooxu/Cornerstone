@@ -131,6 +131,8 @@ def evaluate_vs_baseline(
     )
 
 
+@torch.no_grad()          # 漏了这个会在 pol.cpu().numpy() 处崩：
+                          # .eval() 只切 BN/Dropout，不关梯度
 def evaluate_vs_network(
     model_a,
     model_b,
