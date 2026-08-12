@@ -157,7 +157,7 @@ class SelfPlayDriver:
 
     def sync_weights(self) -> None:
         """单卡时驱动直接持有训练用的那个模型对象，无需同步。
-        接口和 MultiGpuSelfPlay 保持一致，调用方不用分支。"""
+        接口和 WorkerPool 保持一致，调用方不用分支。"""
 
     def run(self, target_games: int, max_seconds: float | None = None,
             on_games=None, should_stop=None) -> tuple[list[dict], SelfPlayStats]:
