@@ -111,15 +111,10 @@ check_once() {
     case "$host" in ''|\#*) continue ;; esac
     [ -n "${devs:-}" ] || continue
 
-    if ! rexec "$host" true >/dev/null; then
-      log "[$exp] 主机不可达（过期或网络抖动），本轮跳过"
-      continue
-    fi
-
-    if is_training "$host" "$exp"; then
-      continue                              # 一切正常，不刷日志
-    fi
-
+    # **跑满的实验最先跳过，在探主机之前。** 顺序反过来的话，实验早已跑完、
+    # 开发机也早已过期，守护还是会每 3 分钟往日志里写一条「主机不可达」——
+    # 一直写到有人来看为止。实测积过一整晚的这种行，全是噪声。
+    # 这个判断只读 NFS 上的 metrics，不需要连开发机。
     if finished "$exp"; then
       # 只记一条就够，别每 3 分钟往日志里刷一遍
       if [ ! -f "$RUNS/$exp/.done" ]; then
@@ -127,6 +122,15 @@ check_once() {
         : >"$RUNS/$exp/.done"
       fi
       continue
+    fi
+
+    if ! rexec "$host" true >/dev/null; then
+      log "[$exp] 主机不可达（过期或网络抖动），本轮跳过"
+      continue
+    fi
+
+    if is_training "$host" "$exp"; then
+      continue                              # 一切正常，不刷日志
     fi
 
     log "[$exp] 训练未在运行，尝试恢复（进度 $(progress "$exp")）"
@@ -151,6 +155,25 @@ alive() {
     grep -q watch_training "/proc/$pid/cmdline" 2>/dev/null
 }
 
+# pid 文件之外还在跑的守护。**没有这个就会跑出两份**：直接
+# `bash scripts/watch_training.sh loop`（不经过 start）起来的那份不写 pid 文件，
+# 之后 `start` 看 pid 文件为空就再起一个，两份同时往一个 log 里写，
+# 日志每条出现两遍 —— 而这看起来只是「日志重复了」，不像是有两个进程。
+# 逐个读 /proc 而不是 pgrep -f：`pgrep -f watch_training` 会匹配到**本进程自己**
+# 的命令行（我们的名字里就有这串），永远返回真。同一个坑 pkill -f 也有。
+strays() {
+  local self=$$ pid cmd
+  for pid in /proc/[0-9]*; do
+    pid="${pid#/proc/}"
+    [ "$pid" = "$self" ] && continue
+    [ "$pid" = "$PPID" ] && continue
+    cmd="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null)" || continue
+    case "$cmd" in
+      *watch_training.sh*loop*) alive && [ "$pid" = "$(cat "$PIDFILE")" ] || echo "$pid" ;;
+    esac
+  done
+}
+
 case "${1:-}" in
   once)  check_once; echo "已检查一轮，日志见 $LOG" ;;
   loop)  log "守护启动，间隔 ${INTERVAL}s"
@@ -158,6 +181,13 @@ case "${1:-}" in
   start)
     mkdir -p "$RUNS"
     alive && { echo "已在运行 (pid $(cat "$PIDFILE"))"; exit 0; }
+    s="$(strays | tr '\n' ' ')"
+    [ -n "${s// /}" ] && {
+      echo "已有守护在跑但不在 pid 文件里：$s" >&2
+      echo "先 kill 掉它们，或用 '$0 stop' 一并收拾。不接管是因为无从判断" >&2
+      echo "它绑的是不是同一张机器表 —— 两份守护会同时往一台机器上拉训练。" >&2
+      exit 1
+    }
     nohup bash "$0" loop >>"$LOG" 2>&1 &
     echo $! >"$PIDFILE"
     sleep 2
@@ -165,6 +195,8 @@ case "${1:-}" in
           || { echo "启动失败，见 $LOG" >&2; exit 1; }
     ;;
   stop)
+    s="$(strays | tr '\n' ' ')"
+    [ -n "${s// /}" ] && { echo "另有不在 pid 文件里的守护：$s，一并停掉"; kill $s 2>/dev/null; }
     alive || { echo "未在运行"; rm -f "$PIDFILE"; exit 0; }
     kill "$(cat "$PIDFILE")" 2>/dev/null
     rm -f "$PIDFILE"; log "守护已停止"; echo "已停止" ;;
