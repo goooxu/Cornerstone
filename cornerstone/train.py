@@ -259,12 +259,13 @@ class Trainer:
 
     # ---- 自博弈 ----
     def make_driver(self):
-        """单卡返回 SelfPlayDriver，多卡返回 MultiGpuSelfPlay，两者接口一致。
+        """单卡返回 SelfPlayDriver，多卡返回 WorkerPool，两者接口一致。
 
-        循环是同步的（自博弈与训练轮流跑），所以自博弈阶段把**全部** GPU 都用上，
-        训练阶段再回到主卡 —— 没有哪张卡会闲着。
+        循环是同步的（自博弈与训练轮流跑），但**两个阶段都用全部 GPU**：
+        自博弈各卡各跑自己的那批局，训练走 DDP（每卡 batch_size/N）。
+        早先只有自博弈是多卡的，训练阶段另外三张卡全闲着。
         """
-        from .multigpu import MultiGpuSelfPlay, visible_devices
+        from .devices import visible_devices
         c = self.cfg
         mcts = E.MctsConfig(
             simulations=c.simulations,
