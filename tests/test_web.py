@@ -72,14 +72,14 @@ def test_unknown_backend_rejected():
 # ---------------------------------------------------------------- 网络后端
 
 def test_specific_checkpoint_resolves(runs):
-    runs("ab-fp8", [1000, 2000])
-    kind, path = server.resolve_backend("net:ab-fp8/step00001000.pt")
+    runs("v2-fp8", [1000, 2000])
+    kind, path = server.resolve_backend("net:v2-fp8/step00001000.pt")
     assert kind == "net" and os.path.basename(path) == "step00001000.pt"
 
 
 def test_latest_follows_pointer_file(runs):
-    runs("ab-fp8", [1000, 2000], latest="step00002000.pt")
-    _, path = server.resolve_backend("net:ab-fp8/latest")
+    runs("v2-fp8", [1000, 2000], latest="step00002000.pt")
+    _, path = server.resolve_backend("net:v2-fp8/latest")
     assert os.path.basename(path) == "step00002000.pt"
 
 
@@ -89,61 +89,61 @@ def test_latest_survives_pruned_pointer(runs):
     训练侧 _prune_checkpoints 会删旧 checkpoint，而 latest 文件是单独写的，
     两者之间存在窗口。不处理的话试玩会直接 500。
     """
-    d = runs("ab-fp8", [1000, 2000], latest="step00002000.pt")
+    d = runs("v2-fp8", [1000, 2000], latest="step00002000.pt")
     (d / "step00002000.pt").unlink()
-    _, path = server.resolve_backend("net:ab-fp8/latest")
+    _, path = server.resolve_backend("net:v2-fp8/latest")
     assert os.path.basename(path) == "step00001000.pt"
 
 
 def test_latest_without_pointer_file(runs):
-    runs("ab-bf16", [500, 30000, 7000])          # 故意不按顺序创建
-    _, path = server.resolve_backend("net:ab-bf16/latest")
+    runs("v2-bf16", [500, 30000, 7000])          # 故意不按顺序创建
+    _, path = server.resolve_backend("net:v2-bf16/latest")
     assert os.path.basename(path) == "step00030000.pt", "要按步数排，不能按文件名字典序"
 
 
 def test_latest_resolves_afresh_each_call(runs):
     """「跟随训练」必须每次重新解析，否则选中那一刻就被钉死了。"""
-    d = runs("ab-fp8", [1000], latest="step00001000.pt")
-    _, first = server.resolve_backend("net:ab-fp8/latest")
+    d = runs("v2-fp8", [1000], latest="step00001000.pt")
+    _, first = server.resolve_backend("net:v2-fp8/latest")
     (d / "step00009000.pt").write_bytes(b"x")
     (d / "latest").write_text("step00009000.pt")
-    _, second = server.resolve_backend("net:ab-fp8/latest")
+    _, second = server.resolve_backend("net:v2-fp8/latest")
     assert os.path.basename(first) == "step00001000.pt"
     assert os.path.basename(second) == "step00009000.pt"
 
 
 def test_deleted_checkpoint_raises_readable_error(runs):
-    runs("ab-fp8", [1000])
+    runs("v2-fp8", [1000])
     with pytest.raises(ValueError, match="已不存在"):
-        server.resolve_backend("net:ab-fp8/step00007777.pt")
+        server.resolve_backend("net:v2-fp8/step00007777.pt")
 
 
 def test_missing_run_raises(runs):
-    runs("ab-fp8", [1000])
+    runs("v2-fp8", [1000])
     with pytest.raises(ValueError, match="找不到训练跑"):
         server.resolve_backend("net:没这个跑/latest")
 
 
 def test_path_traversal_is_contained(runs):
     """后端 ID 来自请求体，不能让它跳出 ckpt 目录。"""
-    runs("ab-fp8", [1000])
+    runs("v2-fp8", [1000])
     with pytest.raises(ValueError):
-        server.resolve_backend("net:ab-fp8/../../../etc/passwd")
+        server.resolve_backend("net:v2-fp8/../../../etc/passwd")
 
 
 # ------------------------------------------------------------------- 发现
 
 def test_discover_lists_rules_and_checkpoints(runs):
-    runs("ab-fp8", [1000, 2000], latest="step00002000.pt")
-    runs("ab-bf16", [3000], latest="step00003000.pt")
+    runs("v2-fp8", [1000, 2000], latest="step00002000.pt")
+    runs("v2-bf16", [3000], latest="step00003000.pt")
     got = server.discover_backends()
     ids = [b["id"] for b in got]
 
     for name in server.RULE_BACKENDS:
         assert f"rule:{name}" in ids
-    assert "net:ab-fp8/latest" in ids
-    assert "net:ab-bf16/latest" in ids
-    assert "net:ab-fp8/step00001000.pt" in ids
+    assert "net:v2-fp8/latest" in ids
+    assert "net:v2-bf16/latest" in ids
+    assert "net:v2-fp8/step00001000.pt" in ids
     # 每一项都能解析回去 —— 列出来却点不动是最难查的那种坏
     for b in got:
         server.resolve_backend(b["id"])
@@ -156,12 +156,12 @@ def test_discover_skips_empty_ckpt_dir(runs):
 
 
 def test_discover_orders_newest_first(runs):
-    runs("ab-fp8", [1000, 5000, 3000], latest="step00005000.pt")
+    runs("v2-fp8", [1000, 5000, 3000], latest="step00005000.pt")
     steps = [b["id"] for b in server.discover_backends()
-             if b["id"].startswith("net:ab-fp8/step")]
-    assert steps == ["net:ab-fp8/step00005000.pt",
-                     "net:ab-fp8/step00003000.pt",
-                     "net:ab-fp8/step00001000.pt"]
+             if b["id"].startswith("net:v2-fp8/step")]
+    assert steps == ["net:v2-fp8/step00005000.pt",
+                     "net:v2-fp8/step00003000.pt",
+                     "net:v2-fp8/step00001000.pt"]
 
 
 # --------------------------------------------------------------- 模型缓存
@@ -795,7 +795,7 @@ def test_model_label_includes_simulation_count():
 
 
 def test_model_label_includes_precision():
-    """标签要带精度。ab-fp8 / ab-bf16 的 checkpoint 混在一个下拉里，
+    """标签要带精度。v2-fp8 / v2-bf16 的 checkpoint 混在一个下拉里，
     光看 step 分不出是哪一条。
 
     精度取自 checkpoint 自带的 model_config，不是从跑名猜的 ——

@@ -146,7 +146,7 @@ _RUNS = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "runs")
 
 
-@pytest.mark.parametrize("run", ["ab-bf16", "ab-fp8"])
+@pytest.mark.parametrize("run", ["v2-bf16", "v2-fp8"])
 def test_published_checkpoints_are_still_readable(run):
     """两份已发布报告的 checkpoint 必须还能读出来做推理。
 
@@ -156,7 +156,7 @@ def test_published_checkpoints_are_still_readable(run):
     latest = os.path.join(ckpt_dir, "latest")
     if not os.path.exists(latest):
         pytest.skip(f"没有 {run} 的训练产物")
-    if run == "ab-fp8" and not torch.cuda.is_available():
+    if run == "v2-fp8" and not torch.cuda.is_available():
         pytest.skip("FP8 模型需要 GPU")
     with open(latest) as f:
         path = os.path.join(ckpt_dir, f.read().strip())

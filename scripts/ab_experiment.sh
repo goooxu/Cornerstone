@@ -25,8 +25,9 @@
 #     FP8 量化改 9.2%），而换来的是自博弈 2.4 倍。读结论时心里有数即可。
 #   * 每 10000 步留一个永久里程碑 checkpoint，供后续头对头
 #   * 每卡的引擎线程数用 TrainConfig 的默认值（8），不再另外指定
-#   * **卡数是唯一没锁死的一项**：A 腿 4 卡、B 腿 2 卡，因为 FP8 多卡不扩展
-#     （见下面 B_PARALLEL 处的实测）。每卡并行局数与 games_per_iter 仍然相同。
+#   * **两条腿的 COMMON 参数表是同一份**，没有任何按腿分叉的旋钮 —— 见下面
+#     那条注释：曾经为 B 腿单独留了一个 B_PARALLEL，结果在一次自动恢复时
+#     悄悄把并行局数减半，训练日志上看不出来。
 #
 # 结论只认**头对头胜负**，不认 loss 曲线：策略目标是网络自己搜索出来的，
 # 网络变强目标就变尖，跨实验比 loss 得不出棋力结论。
@@ -36,8 +37,8 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNS="$(dirname "$REPO")/runs"
 
-A_EXP="${A_EXP:-ab-bf16}"
-B_EXP="${B_EXP:-ab-fp8}"
+A_EXP="${A_EXP:-v2-bf16}"
+B_EXP="${B_EXP:-v2-fp8}"
 
 # 两条腿各自用哪些 GPU。默认挤在一台机器上各占两张卡；
 # 有第二台机器时，在各自机器上分别 start 单条腿、各占四张卡：
@@ -47,19 +48,17 @@ B_EXP="${B_EXP:-ab-fp8}"
 A_DEVICES="${A_DEVICES:-cuda:0,cuda:1}"
 B_DEVICES="${B_DEVICES:-cuda:2,cuda:3}"
 
-# **FP8 那条腿只用两张卡，这是实测逼出来的。** FP8 自博弈在多卡下不扩展 ——
-# 1/2/4 卡分别是 36k / 65k / 36k 评估/s，4 卡比 2 卡还慢，是典型的争用特征。
-# 根因在 TE 的全局 FP8 状态（同进程多线程共享），两个假设已排除：不是编译粒度
-# （按 block 47k vs 整个循环一个区 38k），也不是 fp8_autocast 上下文的进出开销
-# （提到驱动层仍是 1.01×）。真正的解法是每卡一个进程，那是 docs/08 里的
-# "异步自博弈"，没做。
-# BF16 不受影响，4 卡扩展 3.34×。
+# 这里曾经有一个只作用于 B 腿的 `B_PARALLEL=2048`（当时 FP8 自博弈在同进程
+# 多线程下不扩展，用减半并行局数来对齐每卡负载）。**换成每卡一个工作进程之后
+# FP8 线性扩展了（4 卡 3.95×），这个旋钮就没有理由再存在** —— 而它留下来的
+# 那段时间里造成过一次真实的污染：训练中断后守护脚本自动恢复，恢复用的是
+# 默认值，于是 B 腿最后 15% 的并行局数悄悄从 4096 变成 2048。
+# 日志上只有「自博弈慢了一半」这一个症状，配置本身没有任何提示。
 #
-# 为保持对照，B 腿把 parallel_games 减半：**每卡并行局数（1024）和
-# games_per_iter（2048）与 A 腿完全相同**，数据管线一致，只有墙钟不同。
-B_PARALLEL="${B_PARALLEL:-2048}"
+# **教训：受控对照里不要留「只作用于一条腿」的默认值。** 它在手动启动时是显式的，
+# 在自动恢复时是隐式的，而自动恢复恰恰是最没人盯着的时刻。
 
-# 除 --fp8 与设备外，两边逐字相同
+# 两条腿逐字共用这一份，除 --fp8 与设备外没有任何差别
 COMMON=(
   --dim 256 --blocks 16 --attn-every 4
   --parallel-games 4096 --games-per-iter 2048
@@ -90,7 +89,7 @@ case "${1:-}" in
   start-b)
     bash "$REPO/scripts/train.sh" start "$B_EXP" --fp8 true \
       --device "${B_DEVICES%%,*}" --selfplay-devices "$B_DEVICES" \
-      "${COMMON[@]}" --parallel-games "$B_PARALLEL"
+      "${COMMON[@]}"
     ;;
   stop)
     bash "$REPO/scripts/train.sh" stop "$A_EXP"

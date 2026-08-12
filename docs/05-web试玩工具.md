@@ -42,8 +42,8 @@ bash scripts/devbox.sh exec bash scripts/web.sh status|stop|restart
 | 先手 | 后手 | 得到 |
 |---|---|---|
 | 我来下 | `greedy-mobility` | 人机对局 |
-| `net:ab-fp8/latest` | `rule:corner-min` | AI 对战 |
-| `net:ab-fp8/latest` | `net:ab-bf16/latest` | 两个模型对战 |
+| `net:v2-fp8/latest` | `rule:corner-min` | AI 对战 |
+| `net:v2-fp8/latest` | `net:v2-bf16/latest` | 两个模型对战 |
 | 我来下 | 我来下 | 同屏两人 |
 
 少一个「模式」开关，就少一整类「模式与实际配置对不上」的状态。
@@ -214,7 +214,7 @@ AI 由 `pump()` 驱动：轮到的座位若是 AI 就替它走，一直走到轮
 
 三样缺一不可：
 
-- **精度**：`ab-fp8` 和 `ab-bf16` 的 checkpoint 混在同一个下拉里，
+- **精度**：`v2-fp8` 和 `v2-bf16` 的 checkpoint 混在同一个下拉里，
   光看 step 分不出是哪一条。这个标志取自 checkpoint 自带的 `model_config`，
   **不是从跑名猜的** —— 跑名可以随便起，模型配置不会骗人。
 - **step**：训练到哪儿了。
