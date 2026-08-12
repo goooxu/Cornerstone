@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """从 net_arena 的输出里回答「哪一档最强」，并给出这个结论有多确定。
 
-    python3 tools/arena_best.py ../runs/arena/bf16_purepolicy.json
+    python3 tools/arena_best.py ../runs/arena_v2_bf16.json
 
 单看 Elo 表的第一行是不够的：一堆参赛者的误差棒互相重叠时，「第一名」很可能只是
 噪声抽签的结果。这里用**自举出的最大值分布**回答 —— 每次重采样后重新拟合，
@@ -133,12 +133,15 @@ def plot(names, idx, nets, elo, dsd, win, out: str) -> None:
     ax.fill_between(step, y - dsd, y + dsd, color="#2f7fd1", alpha=0.18, lw=0)
     ax.plot(step, y, "-o", color="#1b3a5c", ms=4.5, lw=1.8, label="checkpoint (pure policy)")
     ax.plot(step[peak], y[peak], "o", ms=11, mfc="none", mec="#c0392b", mew=2.2)
+    # 两个标注的落点按数据跨度推，且**上下错开** —— 峰值靠近终点时
+    # （本项目两条腿都是 73~80% 处见顶）写死的偏移会让两段字叠在一起。
+    xs, ys = float(step[-1] - step[0]), float(y.max() - y.min())
     ax.annotate(f"peak  step {int(step[peak]):,}\n{y[peak]:.0f} Elo   P(best)={100*win[ns[peak]]:.0f}%",
-                xy=(step[peak], y[peak]), xytext=(step[peak] - 4000, y[peak] - 210),
+                xy=(step[peak], y[peak]), xytext=(step[peak] - 0.28 * xs, y[peak] - 0.20 * ys),
                 fontsize=9, color="#c0392b",
                 arrowprops=dict(arrowstyle="->", color="#c0392b", lw=1.2))
     ax.annotate(f"final  step {int(step[-1]):,}\n{y[-1]:.0f} Elo  ({y[-1]-y[peak]:+.0f})",
-                xy=(step[-1], y[-1]), xytext=(step[-1] - 30000, y[-1] - 250),
+                xy=(step[-1], y[-1]), xytext=(step[-1] - 0.16 * xs, y[-1] - 0.40 * ys),
                 fontsize=9, color="#333",
                 arrowprops=dict(arrowstyle="->", color="#888", lw=1.0))
     for nm, col in (("greedy-mobility", "#2f9e6f"), ("flat-mcts-1k", "#e8892b")):
@@ -150,8 +153,9 @@ def plot(names, idx, nets, elo, dsd, win, out: str) -> None:
         ax.text(step[0], val + 16, nm, ha="left", fontsize=8.5, color=col)
     ax.set_xlabel("training step")
     ax.set_ylabel("Elo  (random = 0)")
-    # 「前 4 万步占多少」按实测算 —— 旧口径那个 93% 是带搜索那次的数，不能沿用
-    i40 = int(np.argmin(np.abs(step - 40230)))
+    # 「前 4 万步占多少」按实测算，且找**离 4 万最近的那一档**而不是钉死某个步号 ——
+    # 里程碑落点带着第 1 轮限流的零头（40,227 / 40,234 而不是整 40,000）
+    i40 = int(np.argmin(np.abs(step - 40_000)))
     frac = 100.0 * (y[i40] - y[0]) / (y[peak] - y[0])
     ax.set_title(f"Playing strength without search — {frac:.0f}% of the gain lands by step 40k, "
                  f"then it goes flat", fontsize=10.5, pad=8)
