@@ -202,6 +202,21 @@ def _worker(rank: int, world: int, dev: str, spec: dict, flat: torch.Tensor, lay
                            dtype=next(model.parameters()).dtype, device=d)
         params = [p for _, p in model.named_parameters()]
 
+        # 训练步的热点编译。**这在工作池路径上漏了很久**：
+        # `Trainer._compile_hot_modules()` 只作用于父进程里那个镜像模型，
+        # 而真正在训练的是工作进程自己 new 出来的这一份。
+        # `docs/07` 实测只编译 SwiGLU 能让训练步快 1.38×，而训练占墙钟约 41% ——
+        # 漏掉等于白丢十几个百分点，且没有任何症状。
+        if d.type == "cuda":
+            if spec["model_cfg"].get("fp8"):
+                # FP8 只能按 block 编译（整模型会把 TE 的全局 FP8 上下文编进图里，
+                # 多卡并发跑就段错误）。下面建驱动时还会调一次，那个是幂等的。
+                from .selfplay import compile_for_inference
+                compile_for_inference(model)
+            else:
+                for blk in model.blocks:
+                    blk.mlp.compile(dynamic=False)   # 原地，不动 state_dict 的键
+
         # 门控：自博弈的生成器是 champ 而不是 learner。不开门控时两者是同一个对象，
         # 于是行为与改动前逐位相同（没有多一次拷贝，也没有多编译一份图）
         if spec.get("gate_enabled"):
@@ -303,6 +318,11 @@ def _worker(rank: int, world: int, dev: str, spec: dict, flat: torch.Tensor, lay
                     blob = dict(meta)
                     blob["model"] = {k: v.cpu() for k, v in sd.items()}
                     blob["optimizer"] = opt.state_dict()
+                    # 冠军的**权重**也要存，否则续训会把它重新播种成 learner，
+                    # 棘轮静默清零。只在开门控时存，不开时 champ is model。
+                    if champ is not model:
+                        blob["champion"] = {k: v.cpu()
+                                            for k, v in champ.state_dict().items()}
                     tmp = path + ".tmp"
                     torch.save(blob, tmp)
                     os.replace(tmp, path)
@@ -314,6 +334,16 @@ def _worker(rank: int, world: int, dev: str, spec: dict, flat: torch.Tensor, lay
                 from .model import load_weights
                 load_weights(model, blob["model"])
                 opt.load_state_dict(blob["optimizer"], master=blob["model"])
+                if champ is not model:
+                    # 存档里有冠军就恢复它；没有（旧 checkpoint、或那次跑没开门控）
+                    # 就退回「冠军 = 当前 learner」，并且**这件事必须让人看见**
+                    if "champion" in blob:
+                        load_weights(champ, blob["champion"])
+                    else:
+                        champ.load_state_dict(model.state_dict())
+                        if rank == 0:
+                            print("[门控] 存档里没有冠军权重，冠军重置为当前 learner",
+                                  flush=True)
                 rep.put(("ok", None))
     except BaseException:                              # noqa: BLE001
         # 必须回传回溯：否则父进程只看到「工作进程没了」，而其余 rank 还会

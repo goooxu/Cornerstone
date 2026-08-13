@@ -460,6 +460,12 @@ class Trainer:
             "model_config": asdict(self.model.cfg),
             "rng": self.rng.bit_generator.state,
             "torch_rng": torch.get_rng_state(),
+            # 门控的簿记必须跟着 checkpoint 走。不存的话续训会把这两个清零，
+            # **而且工作进程启动时会把 champ 重新播种成 learner** —— 一次自动恢复
+            # 就静默地把棘轮清空了（`v3-gate` 那条跑真的被触发过一次）。
+            # 冠军权重本身由 rank 0 在 save 命令里另存（见 pool.py）。
+            "champion_step": self.champion_step,
+            "rounds_since_promotion": self.rounds_since_promotion,
         }
         if getattr(self, "pool", None) is not None:
             # 权重与优化器状态都在工作进程里，由 rank 0 自己落盘 ——
@@ -472,21 +478,17 @@ class Trainer:
                 f.write(os.path.basename(path))
             return path
 
+        # 单卡这条路径以前自己又拼了一份字段表，和上面的 meta 是**两处真值** ——
+        # 加门控的簿记时只改了一处，于是单卡存档静默地少了冠军字段。
+        # 现在两条路径共用 meta，新增字段不会再漏。
         model_sd = self.model.state_dict()          # 参数 + buffers + TE 的 _extra_state
         model_sd.update(self.opt.master_state_dict())
-        torch.save({
-            "model": model_sd,
-            "optimizer": self.opt.state_dict(),
-            # 显式标记优化器状态的格式，比事后嗅探键名可靠
-            "opt_format": "master-adamw-v1",
-            "step": self.step,
-            "iteration": self.iteration,
-            "games_played": self.games_played,
-            "config": asdict(self.cfg),
-            "model_config": asdict(self.model.cfg),
-            "rng": self.rng.bit_generator.state,
-            "torch_rng": torch.get_rng_state(),
-        }, tmp)
+        blob = dict(meta)
+        blob["model"] = model_sd
+        blob["optimizer"] = self.opt.state_dict()
+        if self._champ is not None:
+            blob["champion"] = self._champ.state_dict()
+        torch.save(blob, tmp)
         os.replace(tmp, path)     # 原子替换，避免半截文件被当成有效 checkpoint
         self.last_ckpt_time = time.time()
         self.last_ckpt_step = self.step
@@ -561,6 +563,14 @@ class Trainer:
         self.last_ckpt_step = self.step
         self.iteration = blob["iteration"]
         self.games_played = blob.get("games_played", 0)
+        self.champion_step = blob.get("champion_step", 0)
+        self.rounds_since_promotion = blob.get("rounds_since_promotion", 0)
+        if self._champ is not None:
+            if "champion" in blob:
+                load_weights(self._champ, blob["champion"])
+            else:
+                self._champ.load_state_dict(self.model.state_dict())
+                print("[门控] 存档里没有冠军权重，冠军重置为当前 learner", flush=True)
         self.rng.bit_generator.state = blob["rng"]
         torch.set_rng_state(blob["torch_rng"].cpu())
 
