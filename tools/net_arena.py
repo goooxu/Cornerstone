@@ -262,20 +262,23 @@ def main() -> None:
     # 「晚的打得过早的」只在步数跨度够大时才是有效不变量。参赛者全是顶尖档时
     # （比如拿两组各自最强的几档来对比），彼此实力本就相当、次序也未必随步数单调，
     # 这条会误报。跨度不足 10 万步就不施加，改由下面规则基线那条兜底。
+    #
+    # **而且只在同一条跑内部施加。** 跨跑比较时「步数更大 = 更强」根本不是不变量，
+    # 那恰恰是被测的假设：`v4-bf16-long`（从第 10 万步续训到 22 万）的终点实测
+    # **打不过** `v4-bf16` 第 9 万步那档，于是这条自检把一次完全正确的比较判成了
+    # 「表颠倒了」并 SystemExit —— 28 对、1.5 小时的结果一起没了。
     SPAN = 100_000
-    if len(nets_sorted) >= 2 and nets_sorted[-1].step - nets_sorted[0].step >= SPAN:
+    runs = {os.path.basename(os.path.dirname(os.path.dirname(q.spec)))
+            for q in nets_sorted}
+    if (len(runs) == 1 and len(nets_sorted) >= 2
+            and nets_sorted[-1].step - nets_sorted[0].step >= SPAN):
         checks.append((nets_sorted[-1].name, nets_sorted[0].name, 0.5,
-                       "步数跨度超过 10 万，晚的那一档不该打不过最早那一档"))
+                       "同一条跑内步数跨度超过 10 万，晚的那一档不该打不过最早那一档"))
     for strong, weak in (("greedy-mobility", "random"), ("greedy-area", "random"),
                          ("flat-mcts-1k", "random")):
         if strong in idx and weak in idx:
             checks.append((strong, weak, 0.8, f"{strong} 对 {weak} 应当碾压"))
             break
-    for x, y, floor, why in checks:
-        r = _rate(x, y)
-        if r is not None and r < floor:
-            raise SystemExit(f"方向自检失败：{x} 对 {y} 得分率 {r:.3f} < {floor}"
-                             f"（{why}）—— 整张表可能上下颠倒了，先查 play() 的方向")
 
     print(f"\n{len(todo)} 对打完，用时 {time.perf_counter()-t0:.1f}s\n")
     print(f"{'参赛者':<22}{'Elo':>9}{'±':>7}{'总得分率':>10}{'局数':>8}")
@@ -300,6 +303,18 @@ def main() -> None:
                            "seed": args.seed, "pairs_mode": args.pairs},
             }, f, ensure_ascii=False, indent=2)
         print(f"\n已写入 {args.out}")
+
+    # **自检放在写盘之后。** 它原先在写盘之前 `SystemExit`，于是一次误报就把
+    # 28 对、1.5 小时的对局数据一起带走了 —— 而那些数据本身是好的，只是自检的
+    # 前提（晚的档必然更强）在跨跑比较里不成立。
+    # 现在：结果照样落盘，自检不通过就非零退出并说明，人再去判断。
+    for x, y, floor, why in checks:
+        r = _rate(x, y)
+        if r is not None and r < floor:
+            raise SystemExit(
+                f"\n方向自检失败：{x} 对 {y} 得分率 {r:.3f} < {floor}（{why}）\n"
+                f"整张表可能上下颠倒了，先查 play() 的方向。"
+                f"{'（结果已写入 ' + args.out + '，数据没丢）' if args.out else ''}")
 
 
 if __name__ == "__main__":
