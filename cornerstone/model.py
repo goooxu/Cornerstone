@@ -84,7 +84,7 @@ def make_linear(cfg: ModelConfig, in_f: int, out_f: int, bias: bool = False,
                 force_bf16: bool = False) -> nn.Module:
     """MLP / 注意力投影用的线性层 —— 低精度与否的唯一切换点。
 
-    **各条腿的初始权重必须逐位相同**，否则 A/B 里就混进了一个隐藏变量。
+    **各组的初始权重必须逐位相同**，否则 A/B 里就混进了一个隐藏变量。
     `te.Linear` 默认用 `normal(0, 0.023)` 初始化，而 `nn.Linear` 用 kaiming_uniform，
     分布本身就不一样；更麻烦的是两者消耗的 RNG 流长度不同，会让**后面所有层**
     （包括不含 TE 的卷积和位置嵌入）跟着错位。实测同一 seed 下 126 个参数张量里
@@ -111,7 +111,7 @@ def match_dtype(x: torch.Tensor, lin: nn.Module) -> torch.Tensor:
 
     **为什么必须有这一步**：`nn.RMSNorm` 在 `torch.autocast` 下按 fp32 策略执行，
     输出是 **fp32**，而它的下游正是 SwiGLU 与 Attention 的投影。
-    BF16 与 MXFP8 两条腿对此无所谓（autocast 会在进 GEMM 前把它 cast 回 bf16），
+    BF16 与 MXFP8 两组对此无所谓（autocast 会在进 GEMM 前把它 cast 回 bf16），
     **但 NVFP4 会直接报错**：
 
         RHT is only supported for bfloat16 input, got dtype enum value 4
@@ -122,11 +122,11 @@ def match_dtype(x: torch.Tensor, lin: nn.Module) -> torch.Tensor:
 
     实测的影响（dim=64/blocks=4 的小模型，同 seed 同输入）：
 
-    * **BF16 腿逐位不变** —— autocast 本来就会做同一个 cast，只是做得更晚。
-    * **FP8 腿会有极小的变化**（wdl 最大绝对差 4.4e-3、score 5.9e-3）：
+    * **BF16 组逐位不变** —— autocast 本来就会做同一个 cast，只是做得更晚。
+    * **FP8 组会有极小的变化**（wdl 最大绝对差 4.4e-3、score 5.9e-3）：
       MXFP8 从 fp32 量化和从 bf16 量化落到的块不完全一样。
 
-    第二条是**有意接受的**：折回之后三条腿喂给 GEMM 的输入 dtype 完全一致，
+    第二条是**有意接受的**：折回之后三组喂给 GEMM 的输入 dtype 完全一致，
     差别只剩量化格式本身 —— 这正是这一轮对照要隔离的那个变量。
     不折的话，FP8 从 fp32 量化而 FP4 只能从 bf16 量化，反倒多出一个变量。
     （代价是 v4-fp8 与 v2-fp8 在这一处不再逐位可比；本轮换了 WSD 日程，

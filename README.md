@@ -102,4 +102,4 @@ $D bash scripts/web.sh start               # 试玩服务，浏览器开 <开发
 - [docs/07-性能调优.md](docs/07-性能调优.md) —— 瓶颈三次转移、单卡 4.2×、每卡一进程 + DDP
 - [docs/08-已知问题与后续.md](docs/08-已知问题与后续.md) —— 当前限制、优先级、经验教训
 - [reports/BF16训练报告.md](reports/BF16训练报告.md) —— 首个完整模型的结构、训练方法与棋力评测
-- [reports/FP8训练报告.md](reports/FP8训练报告.md) —— FP8 那条腿，以及与 BF16 的 A/B 结论
+- [reports/FP8训练报告.md](reports/FP8训练报告.md) —— FP8 那组，以及与 BF16 的 A/B 结论

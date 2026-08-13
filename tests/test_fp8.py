@@ -2,7 +2,7 @@
 
 核心要验证的是四件事：**低精度只改计算不改存储**（权重是普通 bf16 张量）、
 **量化 GEMM 真的在算而且算的是这个精度**（TE 静默降级是这套方案最危险的失效
-模式）、**三条腿的初值逐位相同**（否则 A/B 里混进隐藏变量），
+模式）、**三组的初值逐位相同**（否则 A/B 里混进隐藏变量），
 以及维度约束确实存在（它一路传导到 batch size 上）。
 
 主权重与随机舍入相关的用例已经删掉 —— 主权重现在是 fp32，由
@@ -61,7 +61,7 @@ def test_precision_field_rejects_typos():
     """CLI 是从 dataclass 自动生成的、没有 choices —— `__post_init__` 是唯一防线。
 
     没有它，`--precision fp16` 这种手误会安静地建出一个 `quantized == False`
-    的配置：跑起来一切正常，只是那条腿其实是 BF16。
+    的配置：跑起来一切正常，只是那组其实是 BF16。
     """
     with pytest.raises(AssertionError):
         ModelConfig(precision="fp16")
@@ -79,7 +79,7 @@ def test_legacy_model_config_without_precision_loads_as_fp8():
     过滤**，`te.Linear` 与 `nn.Linear` 的 state_dict 键名又都是 `weight`
     （`_extra_state` 被 `load_weights` 剥掉）—— 所以一旦这条兼容断了，
     老 checkpoint 会**静默降级成 BF16 模型**，不抛任何异常，
-    只是「FP8 腿的复现」悄悄变成了 BF16。
+    只是「FP8 组的复现」悄悄变成了 BF16。
     """
     old = {"dim": 64, "blocks": 4, "attn_every": 2, "fp8": True}
     cfg = ModelConfig(**old)
@@ -113,14 +113,14 @@ def test_weights_are_plain_bf16_not_quantized(linear):
 
 
 def test_three_legs_have_identical_parameter_footprint():
-    """三条腿的参数量、逐参数 dtype、总字节数必须完全相同。
+    """三组的参数量、逐参数 dtype、总字节数必须完全相同。
 
     这是「唯一的区别是 GEMM 精度」这句话的可执行表述。一旦哪天存储又出现差异，
     A/B/C 就不再是单变量对照了。
     """
     legs = {p: _small(p).to(torch.bfloat16) for p in ("bf16", "fp8", "fp4")}
-    assert _n_te(legs["bf16"]) == 0, "BF16 腿里出现了 te.Linear"
-    assert _n_te(legs["fp8"]) > 0 and _n_te(legs["fp4"]) > 0, "量化腿里没有 te.Linear"
+    assert _n_te(legs["bf16"]) == 0, "BF16 组里出现了 te.Linear"
+    assert _n_te(legs["fp8"]) > 0 and _n_te(legs["fp4"]) > 0, "量化组里没有 te.Linear"
     assert _n_te(legs["fp8"]) == _n_te(legs["fp4"]), "fp8 与 fp4 的量化层数不同"
 
     def shape_of(m):
@@ -129,11 +129,11 @@ def test_three_legs_have_identical_parameter_footprint():
 
     ref = shape_of(legs["bf16"])
     for p, m in legs.items():
-        assert shape_of(m) == ref, f"{p} 腿的参数存储与 bf16 腿不同"
+        assert shape_of(m) == ref, f"{p} 组的参数存储与 bf16 组不同"
 
 
 def test_three_legs_start_from_identical_weights():
-    """同一 seed 下**三条腿两两**的初始权重必须逐位相同。
+    """同一 seed 下**三组两两**的初始权重必须逐位相同。
 
     `te.Linear` 默认用 normal(0, 0.023) 初始化而 `nn.Linear` 用 kaiming_uniform，
     两者消耗的 RNG 流长度也不同 —— 不做对齐的话，126 个参数张量里有 75 个不同，
@@ -142,13 +142,13 @@ def test_three_legs_start_from_identical_weights():
     而它删掉之后不会报任何错。
     """
     legs = {p: _small(p) for p in ("bf16", "fp8", "fp4")}
-    assert _n_te(legs["fp4"]) > 0, "FP4 腿里没有 te.Linear，这条测试没在测东西"
+    assert _n_te(legs["fp4"]) > 0, "FP4 组里没有 te.Linear，这条测试没在测东西"
     ref = dict(legs["bf16"].named_parameters())
     for p in ("fp8", "fp4"):
         cur = dict(legs[p].named_parameters())
         assert ref.keys() == cur.keys()
         bad = [n for n in ref if not torch.equal(ref[n].float().cpu(), cur[n].float().cpu())]
-        assert not bad, f"{p} 腿有 {len(bad)}/{len(ref)} 个张量初值不同，例如 {bad[:3]}"
+        assert not bad, f"{p} 组有 {len(bad)}/{len(ref)} 个张量初值不同，例如 {bad[:3]}"
 
 
 # ---- 计算：量化 GEMM 到底有没有在算、算的是不是这个精度 ----
@@ -210,7 +210,7 @@ def test_probe_tells_fp4_apart_from_fp8():
     """探针要能分辨**精度本身**，不只是「有没有在量化」。
 
     fp4 被静默降级成 fp8 的话，「作用域开着 + 有 te.Linear」这两条都还成立 ——
-    只有配方谓词与模块自己的量化器类型能抓到。这是本轮新增 FP4 腿之后
+    只有配方谓词与模块自己的量化器类型能抓到。这是本轮新增 FP4 组之后
     最可能出现、又最没有症状的失效模式。
     """
     m = _small("fp4").to(torch.bfloat16)
@@ -257,7 +257,7 @@ def test_quant_requires_dims_divisible_by_32():
     所以送进量化前向之前必须补齐。
 
     **NVFP4 的微块虽然是 16，整除要求仍然是 32**，所以 `pad_to_mxfp8` 通用 ——
-    这一点如果记错，FP4 腿会在第一批变长的自博弈批上直接炸。
+    这一点如果记错，FP4 组会在第一批变长的自博弈批上直接炸。
     """
     lin = F.quant_linear("fp8", 64, 64, bias=False).cuda().to(torch.bfloat16)
     with pytest.raises(RuntimeError, match="divisible by 32"):
@@ -275,7 +275,7 @@ def test_quant_requires_dims_divisible_by_32():
 
 
 def test_all_legs_feed_bf16_into_the_gemm():
-    """三条腿喂给量化层的输入 dtype 必须一致，而且必须是 bf16。
+    """三组喂给量化层的输入 dtype 必须一致，而且必须是 bf16。
 
     `nn.RMSNorm` 在 autocast 下按 fp32 策略跑，输出 fp32 —— 而它的下游正是
     SwiGLU 与 Attention 的投影。BF16/MXFP8 吃得下，**NVFP4 直接报
@@ -283,7 +283,7 @@ def test_all_legs_feed_bf16_into_the_gemm():
     必需件，不能靠 `disable_rht` 绕）。`model.match_dtype` 把它折了回来。
 
     这条同时守住对照的单变量性：不折的话 FP8 从 fp32 量化、FP4 从 bf16 量化，
-    两条腿就多差了一个「量化源精度」。
+    两组就多差了一个「量化源精度」。
     """
     import transformer_engine.pytorch as te
     for precision in ("fp8", "fp4"):
@@ -297,7 +297,7 @@ def test_all_legs_feed_bf16_into_the_gemm():
         with torch.autocast("cuda", dtype=torch.bfloat16), torch.no_grad():
             m(*_dummy())
         assert seen, "一个 te.Linear 都没被调到"
-        assert set(seen) == {torch.bfloat16}, f"{precision} 腿喂进了 {set(seen)}"
+        assert set(seen) == {torch.bfloat16}, f"{precision} 组喂进了 {set(seen)}"
 
 
 # ---- 设备护栏 ----

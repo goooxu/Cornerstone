@@ -134,7 +134,7 @@ def plot(names, idx, nets, elo, dsd, win, out: str) -> None:
     ax.plot(step, y, "-o", color="#1b3a5c", ms=4.5, lw=1.8, label="checkpoint (pure policy)")
     ax.plot(step[peak], y[peak], "o", ms=11, mfc="none", mec="#c0392b", mew=2.2)
     # 两个标注的落点按数据跨度推，且**上下错开** —— 峰值靠近终点时
-    # （本项目两条腿都是 73~80% 处见顶）写死的偏移会让两段字叠在一起。
+    # （本项目两组都是 73~80% 处见顶）写死的偏移会让两段字叠在一起。
     xs, ys = float(step[-1] - step[0]), float(y.max() - y.min())
     ax.annotate(f"peak  step {int(step[peak]):,}\n{y[peak]:.0f} Elo   P(best)={100*win[ns[peak]]:.0f}%",
                 xy=(step[peak], y[peak]), xytext=(step[peak] - 0.28 * xs, y[peak] - 0.20 * ys),

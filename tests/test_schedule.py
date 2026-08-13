@@ -196,7 +196,7 @@ def test_stable_checkpoint_is_preserved_on_entering_decay(tmp_path):
     fake._stable_saved = False
     assert Trainer.maybe_save_stable(fake) is False and not saved
 
-    # 余弦那条腿完全不该触发
+    # 余弦那组完全不该触发
     cos = object.__new__(Trainer)
     cos.cfg = TrainConfig(total_steps=150_000, run_dir=str(tmp_path))
     cos._stable_saved = False
@@ -230,7 +230,7 @@ def test_watchdog_refuses_to_launch_an_arm_it_cannot_classify():
     """守护脚本按实验名分派精度，**认不出来就必须拒绝拉起**。
 
     这里原先是 `*fp8*) start-b;; *) start-a`，于是任何不含 "fp8" 的名字都被当成
-    BF16 腿 —— 加 FP4 腿之后，`v4-fp4` 会被静默拉成一条 BF16 的跑，
+    BF16 组 —— 加 FP4 组之后，`v4-fp4` 会被静默拉成一条 BF16 的跑，
     而且只在「开发机过期后自动恢复」那一刻发生，日志上完全看不出来。
     """
     sh = open(os.path.join(REPO, "scripts", "watch_training.sh"), encoding="utf-8").read()

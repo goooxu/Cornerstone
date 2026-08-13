@@ -26,7 +26,7 @@ from cornerstone.model import (  # noqa: E402
 MX_BLOCK = 32
 
 PRECISIONS = ("bf16", "fp8", "fp4")
-# 表头与配方名。三条腿的存储完全一致，差别只在这一列。
+# 表头与配方名。三组的存储完全一致，差别只在这一列。
 RECIPE = {"bf16": "—", "fp8": "MXFP8", "fp4": "NVFP4"}
 
 
@@ -138,7 +138,7 @@ def main() -> None:
         print(f"{label:<{width}}" + "".join(fn(rep[p]) for p in PRECISIONS))
 
     print("== 参数与训练期显存 ==")
-    print("（三条腿的存储完全相同 —— 量化只发生在 GEMM 里，不是存储格式）")
+    print("（三组的存储完全相同 —— 量化只发生在 GEMM 里，不是存储格式）")
     print(f"{'':<22}{cols}")
     row("参数张量总数", lambda r: f"{r['n_tensors']:>16,}")
     row("其中 GEMM 走低精度", lambda r: f"{r['n_quant']:>16,}", 20)
