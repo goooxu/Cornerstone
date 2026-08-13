@@ -6,7 +6,7 @@
 #   bash scripts/web.sh status
 #   bash scripts/web.sh restart [checkpoint]
 #
-# 不给 checkpoint 就自动找 runs/*/ckpt/latest 里最新的一个；一个都没有就用规则基线。
+# 不给模型就自动找 runs/*/model/ 里最新的一个发布包；一个都没有就用规则基线。
 #
 # 用 pid 文件而不是 pkill 来停服务：`pkill -f web/server.py` 会匹配**完整命令行**，
 # 任何恰好带上这个字符串的进程（比如远程执行时的 ssh 命令本身）都会被误杀。
@@ -25,14 +25,15 @@ mkdir -p "$RUNS"
 # 不给参数时的默认对手：挑**最近还在写**的那条跑，用它的 net:<跑>/latest。
 # 用 latest 而不是当时那个具体文件，是因为训练还在继续 ——
 # 钉死一个文件的话，服务开着开着模型就旧了，而界面上看不出来。
+#
+# 扫的是 `model/`（发布包）而不是 `ckpt/`（训练档）：web 只做推理，
+# 而收割之后 ckpt/ 里只剩为续训留的一两份。见 cornerstone/export.py
 default_backend() {
   local best="" bestrun=""
-  for f in "$RUNS"/*/ckpt/latest; do
+  for f in "$RUNS"/*/model/step*.pt; do
     [ -e "$f" ] || continue
-    local ck; ck="$(dirname "$f")/$(cat "$f")"
-    [ -e "$ck" ] || continue
-    if [ -z "$best" ] || [ "$ck" -nt "$best" ]; then
-      best="$ck"; bestrun="$(basename "$(dirname "$(dirname "$ck")")")"
+    if [ -z "$best" ] || [ "$f" -nt "$best" ]; then
+      best="$f"; bestrun="$(basename "$(dirname "$(dirname "$f")")")"
     fi
   done
   [ -n "$bestrun" ] && echo "net:$bestrun/latest"

@@ -8,6 +8,7 @@
 计算权重（bf16）不存，因为它精确等于 `master.bfloat16()`。
 """
 
+import glob
 import os
 
 import pytest
@@ -113,14 +114,23 @@ def _to_legacy(path: str) -> str:
     return out
 
 
-def test_legacy_checkpoint_loads_for_inference(tmp_path):
+def test_legacy_checkpoint_can_still_be_exported(tmp_path):
+    """旧格式的训练档要还能导出成发布包，再从发布包做推理。
+
+    推理入口不再直接吃训练档（见 cornerstone/export.py），所以这条链路
+    从「读 checkpoint」变成了「导出 → 读发布包」；旧格式的兼容性
+    （TE 的 _extra_state、缺 param_dtype）要在导出这一侧继续成立。
+    """
+    from cornerstone.export import write_release
     tr = _trainer(tmp_path)
     _step(tr)
     legacy = _to_legacy(tr.save_checkpoint())
 
-    model, step = load_checkpoint(legacy, device="cpu")
+    out = str(tmp_path / "release.pt")
+    write_release(legacy, out, device="cpu")
+    model, step = load_checkpoint(out, device="cpu")
     assert step == tr.step
-    # 推理一律用计算权重，即使 checkpoint 里存的是 fp32
+    # 推理一律用计算权重，即使训练档里存的是 fp32
     assert all(p.dtype is torch.bfloat16 for p in model.parameters())
     with torch.no_grad():
         pol, wdl, sc = model(*_inputs())
@@ -148,20 +158,31 @@ _RUNS = os.path.join(
 
 @pytest.mark.parametrize("run", ["v2-bf16", "v2-fp8"])
 def test_published_checkpoints_are_still_readable(run):
-    """两份已发布报告的 checkpoint 必须还能读出来做推理。
+    """两份已发布报告的产物必须还能读出来做推理。
 
-    没有这些产物的环境自动跳过 —— 它们不在 git 里。
+    收割之后 `ckpt/` 里可能只剩为续训留的那一两份，所以**优先读发布包**，
+    没有发布包就临时导一份 —— 两条路都要通。
+    没有这些产物的环境自动跳过（它们不在 git 里）。
     """
-    ckpt_dir = os.path.join(_RUNS, run, "ckpt")
-    latest = os.path.join(ckpt_dir, "latest")
-    if not os.path.exists(latest):
-        pytest.skip(f"没有 {run} 的训练产物")
+    from cornerstone.export import write_release
     if run == "v2-fp8" and not torch.cuda.is_available():
         pytest.skip("FP8 模型需要 GPU")
-    with open(latest) as f:
-        path = os.path.join(ckpt_dir, f.read().strip())
-
     dev = "cuda" if torch.cuda.is_available() else "cpu"
+
+    model_dir = os.path.join(_RUNS, run, "model")
+    rels = sorted(glob.glob(os.path.join(model_dir, "step*.pt")))
+    if rels:
+        path = rels[-1]
+    else:
+        ckpt_dir = os.path.join(_RUNS, run, "ckpt")
+        latest = os.path.join(ckpt_dir, "latest")
+        if not os.path.exists(latest):
+            pytest.skip(f"没有 {run} 的训练产物")
+        with open(latest) as f:
+            src = os.path.join(ckpt_dir, f.read().strip())
+        path = src + ".release-test"
+        write_release(src, path, device=dev)
+
     model, step = load_checkpoint(path, device=dev)
     assert isinstance(step, int) and step > 0
     assert all(p.dtype is torch.bfloat16 for p in model.parameters())

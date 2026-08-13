@@ -433,6 +433,14 @@ FP8 提供了一个对照：**它的先手胜率非单调、终点 0.939、和�
 
 ## 7. 复现
 
+> **路径已随「训练档 / 发布包分家」改变。** 评测工具现在只读发布包
+> （`runs/<跑名>/model/`），训练档（`ckpt/`）只有续训读得了。
+> 复现前先收割一次：`python3 tools/export_model.py harvest ../runs/<跑名> --yes`，
+> 然后把下面命令里的 `ckpt/` 换成 `model/`。导出**不改变数值**
+> （逐位验证过），所以复现出来的数字与原表一致。见
+> [docs/06](../docs/06-低精度训练.md) 的「训练产物 → 推理部署」。
+
+
 ```bash
 # 起训（四卡，每卡一个工作进程）
 bash scripts/devbox.sh exec env B_EXP=v2-fp8 B_DEVICES=cuda:0,cuda:1,cuda:2,cuda:3 \
@@ -469,8 +477,8 @@ grep '\[自检\]' ../runs/v2-fp8/train.log | sort | uniq -c
 
 | | |
 |---|---|
-| 最强的一档 | `runs/v2-fp8/ckpt/step00110234.pt` |
-| 训练终点 | `runs/v2-fp8/ckpt/step00150234.pt`（排第 8，比峰值低 22.2 分） |
+| 最强的一档 | `runs/v2-fp8/model/step00110234.pt`（**发布包**，单份 17.0 MB） |
+| 训练终点 | `runs/v2-fp8/model/step00150234.pt`（排第 8，比峰值低 22.2 分） |
 | checkpoint | 15 份里程碑（每 1 万步一档，10,234 … 150,234） |
 | 单份大小 | 162.5 MiB（与 BF16 那条完全相同） |
 | 训练指标 | `runs/v2-fp8/logs/metrics.jsonl`（376 行） |

@@ -1,13 +1,13 @@
 # Web 试玩工具
 
 ```bash
-bash scripts/devbox.sh exec bash scripts/web.sh start        # 自动挑最新的 checkpoint
-bash scripts/devbox.sh exec bash scripts/web.sh start <ckpt> # 指定 checkpoint
+bash scripts/devbox.sh exec bash scripts/web.sh start         # 自动挑最新的发布包
+bash scripts/devbox.sh exec bash scripts/web.sh start <发布包> # 指定一个
 bash scripts/devbox.sh exec bash scripts/web.sh status|stop|restart
 ```
 
 常驻服务，绑 `0.0.0.0:8080`，内网直接访问，无鉴权。
-没有 checkpoint 时 AI 自动退回规则基线，所以训练还没出结果也能先玩。
+没有发布包时 AI 自动退回规则基线，所以训练还没出结果也能先玩。
 
 ## 一条硬规则：合法性判断不在前端重写
 
@@ -214,11 +214,11 @@ AI 由 `pump()` 驱动：轮到的座位若是 AI 就替它走，一直走到轮
 
 三样缺一不可：
 
-- **精度**：`v2-fp8` 和 `v2-bf16` 的 checkpoint 混在同一个下拉里，
-  光看 step 分不出是哪一条。这个标志取自 checkpoint 自带的 `model_config`，
+- **精度**：三种精度的发布包混在同一个下拉里，
+  光看 step 分不出是哪一条。这个标志取自发布包自带的 `model_config`，
   **不是从跑名猜的** —— 跑名可以随便起，模型配置不会骗人。
 - **step**：训练到哪儿了。
-- **模拟数**：同一个 checkpoint 用 800 次模拟和用纯策略完全是两个对手，
+- **模拟数**：同一个模型用 800 次模拟和用纯策略完全是两个对手，
   搜索量对棋力的影响不比 step 小。规则基线不搜索，就不写这一项。
 
 凡是要显示一方名字的地方**都必须走 `describe()`**。有一处曾经自己拼字符串，
@@ -271,8 +271,12 @@ AI 由 `pump()` 驱动：轮到的座位若是 AI 就替它走，一直走到轮
 | `rule:greedy-area` | 只看棋子格数 |
 | `rule:corner-min` | 只堵对方落点 |
 | `rule:greedy-mobility` | 调好权重的综合版（强度见 [03](03-基线与评测.md)） |
-| `net:<跑名>/step00012345.pt` | 某个具体 checkpoint |
+| `net:<跑名>/step00012345.pt` | 某个具体发布包 |
 | `net:<跑名>/latest` | **跟随训练**，用的时候才解析 |
+
+网络后端一律来自 `runs/<跑名>/**model/**`（发布包），不是 `ckpt/`（训练档）——
+web 只做推理，读的就该是要交付的那个东西。见
+[06](06-低精度训练.md) 的「训练产物 → 推理部署」。
 
 给这三个规则基线是因为它们各代表一种打法，正好能直观感受
 「压制对方比扩张自己值钱」这条结论 —— `corner-min` 明显比 `greedy-area` 难缠。
@@ -282,22 +286,23 @@ AI 由 `pump()` 驱动：轮到的座位若是 AI 就替它走，一直走到轮
 「跟随训练」的意思是选中之后还能继续跟。缓存解析结果的话，
 选中那一刻就被钉死了，界面上却仍然写着「最新」—— 边训边打时
 这是**看不出来的错**：你以为在跟当前权重下棋，其实是几小时前的。
-所以 `resolve_backend()` 每次调用都重新读 `ckpt/latest`。
+所以 `resolve_backend()` 每次调用都重新扫 `model/`，取步数最大的那份。
+（发布包目录里**没有** `latest` 指针文件 —— 那是训练档的东西，
+指的是续训入口，与"最新可玩的模型"不是一回事。）
 
-### checkpoint 会在你眼皮底下消失
+### 发布包会在你眼皮底下消失
 
-训练侧的 `_prune_checkpoints()` 会轮换删除旧 checkpoint，而 `latest` 文件是
-单独写的，两者之间有窗口。于是有两种正常但会炸的情况：
+界面上列出来的某个发布包，点下去时可能已经没了（收割、或跑目录被清理）——
+要返回 400 并说清楚，而不是 500。有单测（`tests/test_web.py`）。
 
-1. `latest` 指向的那份已经被删 → 回退到目录里实际存在的最大步数那份
-2. 界面上列出来的某个具体 checkpoint，点下去时已经没了 → 返回 400
-   并说明「可能已被轮换删除」，而不是 500
-
-这两条都有单测（`tests/test_web.py`）。
+另有一条容易犯的错：`ckpt/` 里留的是**终点档**，步数往往比中间的发布包都大。
+「跟随训练」的逻辑要是跑回去扫 `ckpt/`，界面上会冒出一个从没导出过的条目，
+点下去就炸 —— `test_latest_ignores_the_training_checkpoint_dir` 盯着这个。
 
 ### 模型按 LRU 缓存
 
-每次走子都重新 `torch.load` 一个 100 MB 级的 checkpoint 显然不行；
+每次走子都重新 `torch.load` 一份发布包显然不行（bf16 约 28 MB、fp8 约 17 MB、
+fp4 约 11 MB —— 换成收割之前那种 162.5 MiB 的训练档更是不可能）；
 无上限地缓存又会在来回切模型时把显存吃光。`BrainPool` 按解析后的路径缓存，
 默认留 3 个（`--max-models`）。加载放在锁外做——读盘加建模要几秒，
 占着锁会把所有请求一起堵住。

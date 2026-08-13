@@ -538,7 +538,18 @@ class Trainer:
         return self.save_checkpoint() if due else None
 
     def load_checkpoint(self, path: str) -> None:
+        """续训入口，**只吃训练档**（`runs/<exp>/ckpt/*.pt`）。
+
+        与 `model.load_checkpoint`（只吃发布包）是两条互不相通的路。
+        喂错时在这里就报出来，而不是让它掉进 `KeyError: 'optimizer'` ——
+        那个报错离「你拿了个推理包」这个真相太远。
+        """
         blob = torch.load(path, map_location="cpu", weights_only=False)
+        from .export import is_release
+        if is_release(blob):
+            raise ValueError(
+                f"{path} 是推理发布包，没有优化器状态与 RNG，不能用来续训。\n"
+                f"续训要用 runs/<exp>/ckpt/ 下的训练档；发布包只供评测与试玩。")
         if getattr(self, "pool", None) is not None:
             self.pool.load_checkpoint(path)         # 各 rank 各自读，不经父进程转发
             self.pool.pull_weights()                # 父进程的镜像也跟上

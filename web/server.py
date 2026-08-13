@@ -2,7 +2,7 @@
 """Web 试玩工具后端。
 
     python3 web/server.py                          # 默认对手 greedy-mobility
-    python3 web/server.py --checkpoint runs/v2-fp8/ckpt/step00031452.pt
+    python3 web/server.py --model ../runs/v4-fp8/model/step00111391.pt
 
 规则判定全部走 C++ 引擎（`cornerstone._engine`），和训练用的是同一份实现 ——
 前端只负责画和收集点击，任何合法性判断都不在 JS 里重写，否则迟早两边对不上。
@@ -38,6 +38,9 @@ from cornerstone import _engine as E           # noqa: E402
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 RUNS_DIR = os.path.join(os.path.dirname(REPO), "runs")
+# 网络后端只从发布包目录里找。训练档（ckpt/）带着 AdamW 动量与 RNG，
+# 那是续训的东西；web 只做推理，读发布包。见 cornerstone/export.py
+MODEL_SUBDIR = "model"
 
 # 界面上直接选模拟数，不再套「简单/普通/困难」这层名字 ——
 # 两个座位可以各选各的，用来比「同一个网络多搜一倍值多少棋力」这种事，
@@ -88,8 +91,11 @@ def _step_of(fname: str) -> int:
 def resolve_backend(backend: str) -> tuple[str, str]:
     """把后端 ID 解析成 (kind, 目标)。kind 是 'rule' 或 'net'。
 
+    **网络后端指向 `runs/<跑名>/model/`，也就是发布包，不是训练档**。
+    训练档（`ckpt/`）只有续训读，收割之后那里也只剩一两份了。
+
     `net:<跑名>/latest` 是**每次调用都重新解析**的，不缓存 ——
-    正在训练的跑每隔几分钟就落一份新 checkpoint，缓存了就永远停在选中那一刻。
+    正在训练的跑每隔几分钟就多一份发布包，缓存了就永远停在选中那一刻。
     """
     if backend.startswith("rule:"):
         name = backend[5:]
@@ -101,39 +107,32 @@ def resolve_backend(backend: str) -> tuple[str, str]:
         raise ValueError(f"无法识别的后端: {backend}")
     rel = backend[4:]
     run, _, fname = rel.partition("/")
-    ckpt_dir = os.path.join(RUNS_DIR, run, "ckpt")
-    if not os.path.isdir(ckpt_dir):
-        raise ValueError(f"找不到训练跑 {run}")
+    model_dir = os.path.join(RUNS_DIR, run, MODEL_SUBDIR)
+    if not os.path.isdir(model_dir):
+        raise ValueError(f"找不到 {run} 的发布包目录（先跑 tools/export_model.py harvest）")
 
     if fname in ("latest", ""):
-        # 先信 latest 文件；它指向的那份可能已经被 _prune_checkpoints 删了，
-        # 所以要回退到目录里实际存在的最大步数那份
-        pointer = os.path.join(ckpt_dir, "latest")
-        if os.path.exists(pointer):
-            with open(pointer) as f:
-                cand = os.path.join(ckpt_dir, f.read().strip())
-            if os.path.exists(cand):
-                return "net", cand
-        found = sorted(glob.glob(os.path.join(ckpt_dir, "step*.pt")), key=_step_of)
+        # 发布包目录里没有 latest 指针文件（那是训练档的东西），直接取步数最大的那份
+        found = sorted(glob.glob(os.path.join(model_dir, "step*.pt")), key=_step_of)
         if not found:
-            raise ValueError(f"{run} 还没有 checkpoint")
+            raise ValueError(f"{run} 还没有发布包")
         return "net", found[-1]
 
-    path = os.path.join(ckpt_dir, os.path.basename(fname))
+    path = os.path.join(model_dir, os.path.basename(fname))
     if not os.path.exists(path):
-        # checkpoint 会被轮换删除，界面上列出来的那一刻还在、点下去可能就没了
-        raise ValueError(f"checkpoint 已不存在（可能已被轮换删除）：{os.path.basename(fname)}")
+        # 发布包会被轮换/收割，界面上列出来的那一刻还在、点下去可能就没了
+        raise ValueError(f"发布包已不存在：{os.path.basename(fname)}")
     return "net", path
 
 
 def discover_backends() -> list[dict]:
-    """列出当前可选的对手。每次调用都重新扫盘，好让新落的 checkpoint 能出现。"""
+    """列出当前可选的对手。每次调用都重新扫盘，好让新导出的发布包能出现。"""
     out = [{"id": f"rule:{n}", "label": n, "group": "规则基线", "kind": "rule"}
            for n in RULE_BACKENDS]
 
-    for ckpt_dir in sorted(glob.glob(os.path.join(RUNS_DIR, "*", "ckpt"))):
-        run = os.path.basename(os.path.dirname(ckpt_dir))
-        cks = sorted(glob.glob(os.path.join(ckpt_dir, "step*.pt")), key=_step_of)
+    for model_dir in sorted(glob.glob(os.path.join(RUNS_DIR, "*", MODEL_SUBDIR))):
+        run = os.path.basename(os.path.dirname(model_dir))
+        cks = sorted(glob.glob(os.path.join(model_dir, "step*.pt")), key=_step_of)
         if not cks:
             continue
         out.append({"id": f"net:{run}/latest",
@@ -168,7 +167,7 @@ class RuleBrain:
 
 
 class NetBrain:
-    """单个 checkpoint 的推理后端。"""
+    """单个发布包的推理后端。"""
 
     has_net = True
 
@@ -184,8 +183,8 @@ class NetBrain:
         self.device = torch.device(device)
         self.step = step
         self.path = path
-        # 精度写进标签：v4-bf16 / v4-fp8 / v4-fp4 三组的 checkpoint 混在一个
-        # 下拉里，光看 step 分不出是哪一条。这个值来自 checkpoint 自带的
+        # 精度写进标签：v4-bf16 / v4-fp8 / v4-fp4 三组的发布包混在一个
+        # 下拉里，光看 step 分不出是哪一条。这个值来自发布包自带的
         # model_config，不是从跑名猜的 —— 跑名可以随便起，模型配置不会骗人。
         self.precision = str(getattr(model.cfg, "precision", "bf16")).upper()
         self.label = (f"CornerNet {model.num_params()/1e6:.1f}M · {self.precision}"
@@ -265,9 +264,10 @@ class NetBrain:
 
 
 class BrainPool:
-    """按需加载并缓存后端。网络按 checkpoint 路径缓存，LRU 淘汰。
+    """按需加载并缓存后端。网络按发布包路径缓存，LRU 淘汰。
 
-    不缓存的话每走一步都要重新 torch.load 一份 100 MB 级的 checkpoint；
+    不缓存的话每走一步都要重新 torch.load 一份发布包（bf16 约 28 MB、
+    fp8 约 17 MB、fp4 约 11 MB —— 收割之前这里是 162.5 MB 的训练档）；
     无上限地缓存又会在来回切模型时把显存吃光。
     """
 
@@ -448,7 +448,7 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
     def load_brain(backend: str):
         """加载后端。失败要给出**能看懂**的 400，而不是 500。
 
-        checkpoint 会被训练侧轮换删除，界面上列出来的那一刻还在、
+        发布包会被收割/轮换，界面上列出来的那一刻还在、
         点下去可能就没了 —— 这不是 bug，是正常状态，得让用户知道换一个就行。
         """
         try:
@@ -559,7 +559,7 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
 
     @app.get("/api/backends")
     def backends():
-        """每次都重新扫盘：训练在跑，checkpoint 是会变多的。"""
+        """每次都重新扫盘：训练在跑，发布包是会变多的。"""
         return {"backends": discover_backends(), "default": default_backend}
 
     @app.post("/api/backend")
@@ -679,8 +679,9 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--checkpoint", default=None,
-                    help="默认对手用哪个 checkpoint；界面上仍可随时换")
+    ap.add_argument("--model", "--checkpoint", dest="model", default=None,
+                    help="默认对手用哪个**发布包**（runs/<跑名>/model/…）；"
+                         "界面上仍可随时换。旧名 --checkpoint 仍可用")
     ap.add_argument("--backend", default=None,
                     help="默认后端 ID，如 rule:greedy-mobility 或 net:v2-fp8/latest")
     ap.add_argument("--device", default="cuda")
@@ -691,9 +692,9 @@ def main() -> None:
 
     import uvicorn
     default = args.backend
-    if default is None and args.checkpoint:
-        # 把 --checkpoint 折成后端 ID，好和界面上的选项对得上
-        ck = os.path.abspath(args.checkpoint)
+    if default is None and args.model:
+        # 把 --model 折成后端 ID，好和界面上的选项对得上
+        ck = os.path.abspath(args.model)
         run = os.path.basename(os.path.dirname(os.path.dirname(ck)))
         default = f"net:{run}/{os.path.basename(ck)}"
     if default is None:
