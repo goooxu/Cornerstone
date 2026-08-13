@@ -468,7 +468,7 @@ class Trainer:
             return path
 
         # 单卡这条路径以前自己又拼了一份字段表，和上面的 meta 是**两处真值** ——
-        # 加擂主制的簿记时只改了一处，于是单卡存档静默地少了擂主字段。
+        # 加门控的簿记时只改了一处，于是单卡存档静默地少了冠军字段。
         # 现在两条路径共用 meta，新增字段不会再漏。
         model_sd = self.model.state_dict()          # 参数 + buffers + TE 的 _extra_state
         model_sd.update(self.opt.master_state_dict())
