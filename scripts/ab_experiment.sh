@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# BF16 / FP8(MXFP8) / FP4(NVFP4) 三条腿的受控对照实验。
+# BF16 / FP8(MXFP8) / FP4(NVFP4) 三组的受控对照实验。
 #
-#   bash scripts/ab_experiment.sh start        # 起 A+B（同机两条腿，各半数卡）
-#   bash scripts/ab_experiment.sh start-c      # FP4 腿，通常在第二台机器上单起
+#   bash scripts/ab_experiment.sh start        # 起 A+B（同机两组，各半数卡）
+#   bash scripts/ab_experiment.sh start-c      # FP4 组，通常在第二台机器上单起
 #   bash scripts/ab_experiment.sh stop
 #   bash scripts/ab_experiment.sh status
 #   bash scripts/ab_experiment.sh compare [步数]     # 在对齐步数处头对头
 #
 # 方案里写死了一条：**没有 BF16 对照，「FP8 无损」就是没有依据的说法。**
-# FP4 腿同理 —— 它的判据是「相对 BF16 腿损失多少 Elo」，不是它自己的 loss 曲线。
+# FP4 组同理 —— 它的判据是「相对 BF16 组损失多少 Elo」，不是它自己的 loss 曲线。
 # 第一次做这个对照失败了，原因值得记下来：
 #
 #   1. 两条跑的 games_per_iter 不一样（1024 vs 2048），于是相同 step 下
@@ -27,8 +27,8 @@
 #     FP8 量化改 9.2%），而换来的是自博弈 2.4 倍。读结论时心里有数即可。
 #   * 每 10000 步留一个永久里程碑 checkpoint，供后续头对头
 #   * 每卡的引擎线程数用 TrainConfig 的默认值（8），不再另外指定
-#   * **两条腿的 COMMON 参数表是同一份**，没有任何按腿分叉的旋钮 —— 见下面
-#     那条注释：曾经为 B 腿单独留了一个 B_PARALLEL，结果在一次自动恢复时
+#   * **两组的 COMMON 参数表是同一份**，没有任何按组分叉的旋钮 —— 见下面
+#     那条注释：曾经为 B 组单独留了一个 B_PARALLEL，结果在一次自动恢复时
 #     悄悄把并行局数减半，训练日志上看不出来。
 #
 # 结论只认**头对头胜负**，不认 loss 曲线：策略目标是网络自己搜索出来的，
@@ -43,27 +43,27 @@ A_EXP="${A_EXP:-v4-bf16}"
 B_EXP="${B_EXP:-v4-fp8}"
 C_EXP="${C_EXP:-v4-fp4}"
 
-# 两条腿各自用哪些 GPU。默认挤在一台机器上各占两张卡；
-# 有第二台机器时，在各自机器上分别 start 单条腿、各占四张卡：
+# 两组各自用哪些 GPU。默认挤在一台机器上各占两张卡；
+# 有第二台机器时，在各自机器上分别 start 单组、各占四张卡：
 #   机器 1:  A_DEVICES=cuda:0,cuda:1,cuda:2,cuda:3 bash scripts/ab_experiment.sh start-a
 #   机器 2:  B_DEVICES=cuda:0,cuda:1,cuda:2,cuda:3 bash scripts/ab_experiment.sh start-b
-# **两条腿的卡数必须一致**，否则每卡的并行局数不同，就多了一个变量。
+# **两组的卡数必须一致**，否则每卡的并行局数不同，就多了一个变量。
 A_DEVICES="${A_DEVICES:-cuda:0,cuda:1}"
 B_DEVICES="${B_DEVICES:-cuda:2,cuda:3}"
-# C 腿（FP4）默认吃满一台机器 —— 它本来就要单独排一轮，见 docs/09 的编排。
+# C 组（FP4）默认吃满一台机器 —— 它本来就要单独排一轮，见 docs/09 的编排。
 C_DEVICES="${C_DEVICES:-cuda:0,cuda:1,cuda:2,cuda:3}"
 
-# 这里曾经有一个只作用于 B 腿的 `B_PARALLEL=2048`（当时 FP8 自博弈在同进程
+# 这里曾经有一个只作用于 B 组的 `B_PARALLEL=2048`（当时 FP8 自博弈在同进程
 # 多线程下不扩展，用减半并行局数来对齐每卡负载）。**换成每卡一个工作进程之后
 # FP8 线性扩展了（4 卡 3.95×），这个旋钮就没有理由再存在** —— 而它留下来的
 # 那段时间里造成过一次真实的污染：训练中断后守护脚本自动恢复，恢复用的是
-# 默认值，于是 B 腿最后 15% 的并行局数悄悄从 4096 变成 2048。
+# 默认值，于是 B 组最后 15% 的并行局数悄悄从 4096 变成 2048。
 # 日志上只有「自博弈慢了一半」这一个症状，配置本身没有任何提示。
 #
-# **教训：受控对照里不要留「只作用于一条腿」的默认值。** 它在手动启动时是显式的，
+# **教训：受控对照里不要留「只作用于一组」的默认值。** 它在手动启动时是显式的，
 # 在自动恢复时是隐式的，而自动恢复恰恰是最没人盯着的时刻。
 
-# 每条腿的额外旋钮，**按实验名分派、写死在脚本里**。
+# 每组的额外旋钮，**按实验名分派、写死在脚本里**。
 #
 # 不用环境变量传：守护脚本自动恢复时只转交实验名与设备，任何靠 env 传进来的
 # 旋钮都会在那一刻悄悄消失或退回默认值 —— v2-fp8 的 parallel_games 就是这么
@@ -89,7 +89,7 @@ precision_for() {
   esac
 }
 
-# 三条腿逐字共用这一份，除 --precision、设备、extra_for 外没有任何差别。
+# 三组逐字共用这一份，除 --precision、设备、extra_for 外没有任何差别。
 #
 # **WSD 的三个字段必须待在这里，不能走环境变量**：`save_checkpoint` 虽然存了
 # `asdict(cfg)`，但 `load_checkpoint` 从不读它 —— 学习率曲线的形状 100% 由本次
@@ -114,7 +114,7 @@ COMMON=(
   --seed 1
 )
 
-# 三条 start-* 共用这一个函数：精度与配置都从实验名推，没有按腿分叉的旋钮。
+# 三条 start-* 共用这一个函数：精度与配置都从实验名推，没有按组分叉的旋钮。
 start_leg() {
   local exp="$1" devs="$2"
   bash "$REPO/scripts/train.sh" start "$exp" --precision "$(precision_for "$exp")" \

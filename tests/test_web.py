@@ -795,7 +795,7 @@ def test_model_label_includes_simulation_count():
 
 
 def test_model_label_includes_precision():
-    """标签要带精度。bf16 / fp8 / fp4 三条腿的 checkpoint 混在一个下拉里，
+    """标签要带精度。bf16 / fp8 / fp4 三组的 checkpoint 混在一个下拉里，
     光看 step 分不出是哪一条。
 
     精度取自 checkpoint 自带的 model_config，不是从跑名猜的 ——

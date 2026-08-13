@@ -93,7 +93,7 @@ def main() -> None:
     a.plot(step, sm(val), color=C["val"], lw=1.4, label="value loss")
     a.axvline(step[lo], color="#888", ls="--", lw=1.0)
     rise = 100 * (total[-1] - total[lo]) / total[lo]
-    # 最低点落在最后 5% 里 = 这条腿的损失一路降到底，没有回升可标 ——
+    # 最低点落在最后 5% 里 = 这组的损失一路降到底，没有回升可标 ——
     # 两个标注会叠在同一个点上糊成一团，标题也就说反了。
     span = float(step[-1] - step[0])
     tail = bool(step[lo] >= step[0] + 0.95 * span)

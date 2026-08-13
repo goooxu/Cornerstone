@@ -41,12 +41,12 @@ class TrainConfig:
     # 主干 GEMM 的计算精度：bf16 | fp8(MXFP8) | fp4(NVFP4)。
     # **直接换掉了老的 `fp8: bool`**（不像 ModelConfig 要留兼容别名）——
     # TrainConfig 不需要读老 checkpoint，让老命令行 `--fp8 true` 硬报错才是对的：
-    # 静默把它当成一个未知参数忽略，等于开了一条本该是 fp8 的 bf16 腿。
+    # 静默把它当成一个未知参数忽略，等于开了一组本该是 fp8 的 bf16 训练。
     precision: str = "bf16"
 
     # 自博弈
     parallel_games: int = 8192    # 多卡时按卡均分（4 卡 -> 每卡 2048，实测该点最优）
-    # torch.compile 不做成开关：一律开，每条腿各走各最快的编法
+    # torch.compile 不做成开关：一律开，每组各走各最快的编法
     # （BF16 整模型 13.46 ms、FP8 按 block 15.97 ms，eager 是 37 ms）。
     # CPU 上自动跳过。
     # C++ 侧树搜索**每张卡**用多少 CPU 线程。名字里带 per_gpu 是因为这里踩过坑：
@@ -147,7 +147,7 @@ class TrainConfig:
             self.run_dir = os.path.join(os.path.dirname(repo_root), "runs", self.exp)
         if not self.hot_dir:
             self.hot_dir = os.path.join("/tmp", "cornerstone", self.exp)
-        # 这里曾经强制关掉 FP8 那条腿的 compile。**现在不需要了** ——
+        # 这里曾经强制关掉 FP8 那组的 compile。**现在不需要了** ——
         # 真正的限制是「FP8 不能整模型编译」，而不是「FP8 不能编译」，
         # 按 block 编译既安全又几乎一样快（见 selfplay.compile_for_inference）。
         return self
@@ -260,7 +260,7 @@ class Trainer:
                 blk.mlp.compile(dynamic=False)
 
     def _make_optimizer(self) -> MasterWeightAdamW:
-        """两条腿用同一个优化器 —— FP8 与否只影响 GEMM，不影响主权重与更新。"""
+        """两组用同一个优化器 —— FP8 与否只影响 GEMM，不影响主权重与更新。"""
         # Norm / bias / 位置嵌入不做权重衰减
         decay, no_decay = [], []
         for name, p in self.model.named_parameters():
@@ -302,7 +302,7 @@ class Trainer:
         return max(c.warmup_steps, horizon - (c.lr_decay_steps or max(1, horizon // 10)))
 
     def verify_fp8_compute(self, tag: str = "") -> bool | None:
-        """跑一次前向，确认量化层**确实在用本腿的精度计算**，并把结论写进日志。
+        """跑一次前向，确认量化层**确实在用本组的精度计算**，并把结论写进日志。
 
         TE 在「该量化却没量化」时是静默的：模型照常训练，只是低精度名存实亡。
         与其去追一次性的告警，不如把「低精度是否真的在算」做成一个**可反复测量**

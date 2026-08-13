@@ -260,7 +260,7 @@ def main() -> None:
     nets_sorted = sorted((p for p in parts if p.is_net), key=lambda q: q.step)
     checks = []
     # 「晚的打得过早的」只在步数跨度够大时才是有效不变量。参赛者全是顶尖档时
-    # （比如拿两条腿各自最强的几档来对比），彼此实力本就相当、次序也未必随步数单调，
+    # （比如拿两组各自最强的几档来对比），彼此实力本就相当、次序也未必随步数单调，
     # 这条会误报。跨度不足 10 万步就不施加，改由下面规则基线那条兜底。
     SPAN = 100_000
     if len(nets_sorted) >= 2 and nets_sorted[-1].step - nets_sorted[0].step >= SPAN:

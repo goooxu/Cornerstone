@@ -16,8 +16,8 @@
 峰值学习率下反而看不出问题（甚至偏大 12%，那是舍入噪声在随机游走），
 所以这个故障只会在训练后半程显现，最难查。
 
-这个文件刻意不 import transformer_engine：master 权重是两条腿共用的脚手架，
-和 FP8 无关，而 BF16 那条腿必须能在没装 TE 的机器上跑。
+这个文件刻意不 import transformer_engine：master 权重是两组共用的脚手架，
+和 FP8 无关，而 BF16 那组必须能在没装 TE 的机器上跑。
 """
 
 from __future__ import annotations
