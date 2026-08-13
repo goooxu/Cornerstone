@@ -279,3 +279,10 @@ def test_experiment_script_derives_precision_from_the_run_name():
     assert "exit 1" in fn, "认不出精度时必须报错退出，不能默默回退到 bf16"
     assert '--precision "$(precision_for "$exp")"' in sh
     assert "--fp8" not in sh, "还留着老的 --fp8 开关，那个参数已经不存在了"
+
+    # 种子同理：`v4-bf16-s2` 存在的唯一理由就是换种子，守护恢复时若退回
+    # 默认 seed 1，它就变成 v4-bf16 的重复跑，而日志上看不出来
+    sf = sh[sh.index("seed_for()"):sh.index("esac", sh.index("seed_for()"))]
+    assert "*-s2) echo 2" in sf and "*) *echo 1" not in sf
+    assert '--seed "$(seed_for "$exp")"' in sh, "seed_for 定义了却没被 start_leg 用上"
+    assert "--seed 1\n" not in sh, "COMMON 里还写死着 --seed 1"
