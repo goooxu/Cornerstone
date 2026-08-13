@@ -104,6 +104,17 @@ precision_for() {
 # 这正是 `lr_horizon_steps` 与 `total_steps` 解耦要支持的用法：horizon 一改，
 # 退火点后移，原本已在退火段里的步数重新落回 stable 平顶，**不会**变成
 # 一次 warm restart。
+# 种子同样按实验名分派 —— 理由和上面两个一模一样。
+# **这个尤其要紧**：守护恢复时若退回默认 seed 1，`v4-bf16-s2` 就变成了
+# `v4-bf16` 的重复跑，而它存在的唯一理由就是换种子。日志上看不出来。
+seed_for() {
+  case "$1" in
+    *-s2) echo 2 ;;
+    *-s3) echo 3 ;;
+    *)    echo 1 ;;
+  esac
+}
+
 budget_for() {
   case "$1" in
     *-long) echo "--total-steps 220000 --lr-horizon-steps 220000 --lr-decay-steps 20000" ;;
@@ -132,7 +143,6 @@ COMMON=(
   --batch-size 1024 --steps-per-iter 400
   --lr 0.002 --warmup-steps 500 --lr-schedule wsd
   --milestone-every-steps 10000
-  --seed 1
 )
 
 # 三条 start-* 共用这一个函数：精度与配置都从实验名推，没有按组分叉的旋钮。
@@ -140,7 +150,8 @@ start_leg() {
   local exp="$1" devs="$2"
   bash "$REPO/scripts/train.sh" start "$exp" --precision "$(precision_for "$exp")" \
     --device "${devs%%,*}" --selfplay-devices "$devs" \
-    "${COMMON[@]}" $(budget_for "$exp") $(extra_for "$exp")
+    "${COMMON[@]}" $(budget_for "$exp") --seed "$(seed_for "$exp")" \
+    $(extra_for "$exp")
 }
 
 case "${1:-}" in
