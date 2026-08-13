@@ -65,12 +65,21 @@ class TrainConfig:
     # 它只在「SH 胜者（带 Gumbel）」和「改进策略 argmax」之间二选一，
     # 先验一尖锐两者就选同一手（实测把它从 12 延到 30，先手胜率不降反升）。
     #
-    # 实测（tools/diag_diversity.py，v2-bf16）：训练到第 8 万步时 512 局自博弈的
-    # **首手全部相同**（首手有 414 种合法着法），15 万步时只剩 5 种前两手、
-    # 15 种前四手，三分之一的对局逐手重复。replay 名义压着 300 万个局面，
-    # 有效多样性远小于此。这两个旋钮直接治那个。
-    random_opening_prob: float = 0.0
-    random_opening_max_plies: int = 0
+    # 治的是开局塌缩。实测（tools/diag_diversity.py，v2-bf16）：训练到第 8 万步时
+    # 512 局自博弈的**首手全部相同**，而首手有 414 种合法着法；15 万步时只剩
+    # 5 种前两手、15 种前四手，45% 的对局与别的对局逐手重复。
+    # replay 名义压着 300 万个局面（约 49 轮），但这 49 轮走的是同一个漏斗。
+    #
+    # 开着（0.5 / 6）是默认，因为它**要么更好要么持平，且零成本**：
+    #   * 唯一首手 1 → 283，唯一整局 55% → 99%
+    #   * 自博弈先手胜率 0.887 → 0.739，而该档镜像自战的**客观**值是 0.725 ——
+    #     多出来的那 0.16 全是漏斗，一注入就还原
+    #   * 同步数带搜索头对头：第 2~6 万步领先 +92 ~ +149 Elo
+    #   * 墙钟 4.52h vs 4.42h
+    # **但它不抬天花板**：15 万步的终点与不开时打平（16 对 / 6,400 局带搜索，
+    # 不开那侧 +11.3 Elo，95% 区间 [−0.7, +23.5] 跨零）。见 docs/08。
+    random_opening_prob: float = 0.5
+    random_opening_max_plies: int = 6
 
     # 以下三个此前只在 C++ 里有默认值、没暴露出来。不改默认值，只是让它们可调：
     #   c_visit / c_scale —— sigma(q) = (c_visit + max_N) * c_scale，本项目约 50~66。
@@ -82,22 +91,6 @@ class TrainConfig:
     c_scale: float = 1.0
     value_from_score: float = 0.0
 
-    # 门控冠军：自博弈的生成器是**被实测出来的**最强档，而不是「最新即最强」。
-    #
-    # 裸自博弈里没有任何机制保证生成数据的那份权重不比历史最优差 —— 实测两条腿
-    # 都在训练量的 73~80% 处见顶，之后终点比峰值低 19~22 Elo，而那 20~27% 的
-    # 训练数据全是由一个正在退化的策略产出的。门控给这条链加一个棘轮。
-    #
-    # 期望要放对：门控保证的是「不变差」，不是「继续变强」——
-    # AlphaZero 正是砍掉 AlphaGo Zero 的门控之后才更强的。
-    # 它值得做是因为评测在这个项目里便宜到离谱（纯策略 400 局 2 秒），
-    # 而且顺手补上了训练期**唯一不会饱和的**棋力信号。
-    gate_enabled: bool = False
-    gate_every_iters: int = 4
-    gate_games: int = 800
-    gate_simulations: int = 64      # 与自博弈同口径；纯策略(0)测的是另一件事
-    gate_opening_plies: int = 2
-    gate_threshold: float = 0.55
 
     # 训练
     batch_size: int = 1024
@@ -183,9 +176,6 @@ class Trainer:
         self.model.to_param_dtype()
         self._compile_hot_modules()
         self.pool = None
-        self._champ = None          # 门控的冠军副本，只在单卡路径下由 make_driver 建
-        self.champion_step = 0      # 当前冠军是哪一步的权重（0 = 初值）
-        self.rounds_since_promotion = 0
         self.buffer = ReplayBuffer(cfg.replay_capacity)
         self.step = 0
         self.iteration = 0
@@ -322,56 +312,13 @@ class Trainer:
         devices = visible_devices(c.selfplay_devices)
         if len(devices) <= 1:
             self.pool = None
-            # 门控开着时自博弈的生成器是 champ 而不是 learner（多卡下同理，
-            # 只是那边 champ 住在工作进程里）。不开门控时两者是同一个对象。
-            gen = self.model
-            if c.gate_enabled:
-                self._champ = CornerNet(self.model.cfg).to(self.device)
-                self._champ.to_param_dtype()
-                self._champ.load_state_dict(self.model.state_dict())
-                self._champ.eval()
-                gen = self._champ
-            return SelfPlayDriver(gen, self.device, num_games=c.parallel_games,
+            return SelfPlayDriver(self.model, self.device, num_games=c.parallel_games,
                                   mcts=mcts, seed=seed, compile_model=True,
                                   engine_threads=c.engine_threads_per_gpu)
         # 多卡走每卡一个进程的工作池：自博弈与训练都在里面做。
         # 注意此后**权重的真身在工作进程**，self.model 只是镜像（见 WorkerPool.sync_weights）
         self.pool = WorkerPool(self.model, devices, c, mcts, seed)
         return self.pool
-
-    # ---- 门控冠军 ----
-    def gate(self, seed: int) -> tuple[float, int]:
-        """learner 挑战 champion，返回 (learner 得分率, 局数)。"""
-        c = self.cfg
-        if self.pool is not None:
-            return self.pool.gate(c.gate_games, c.gate_simulations, seed,
-                                  c.gate_opening_plies)
-        from .evaluate import evaluate_vs_network
-        n = c.gate_games + (c.gate_games % 2)      # 成对开局要求偶数
-        was = self.model.training
-        self.model.eval()
-        try:
-            r = evaluate_vs_network(self.model, self._champ, self.device, games=n,
-                                    parallel_games=max(2, n // 2),
-                                    simulations=c.gate_simulations, seed=seed,
-                                    engine_threads=c.engine_threads_per_gpu,
-                                    opening_plies=c.gate_opening_plies,
-                                    label="champion")
-        finally:
-            if was:
-                self.model.train()
-        return r.score_rate, r.games
-
-    def promote(self) -> None:
-        """把 learner 提升为 champion。
-
-        必须**原地**拷贝：重新赋值模块会让 champ 那份编译图失效
-        （下一轮自博弈重编译几十秒），并把 state_dict 的键变成 `_orig_mod.*`。
-        """
-        if self.pool is not None:
-            self.pool.promote()
-        elif getattr(self, "_champ", None) is not None:
-            self._champ.load_state_dict(self.model.state_dict())
 
     def steps_for_iteration(self) -> int:
         """按 replay 里现有的数据量给本轮的训练步数限流。
@@ -460,12 +407,6 @@ class Trainer:
             "model_config": asdict(self.model.cfg),
             "rng": self.rng.bit_generator.state,
             "torch_rng": torch.get_rng_state(),
-            # 门控的簿记必须跟着 checkpoint 走。不存的话续训会把这两个清零，
-            # **而且工作进程启动时会把 champ 重新播种成 learner** —— 一次自动恢复
-            # 就静默地把棘轮清空了（`v3-gate` 那条跑真的被触发过一次）。
-            # 冠军权重本身由 rank 0 在 save 命令里另存（见 pool.py）。
-            "champion_step": self.champion_step,
-            "rounds_since_promotion": self.rounds_since_promotion,
         }
         if getattr(self, "pool", None) is not None:
             # 权重与优化器状态都在工作进程里，由 rank 0 自己落盘 ——
@@ -486,8 +427,6 @@ class Trainer:
         blob = dict(meta)
         blob["model"] = model_sd
         blob["optimizer"] = self.opt.state_dict()
-        if self._champ is not None:
-            blob["champion"] = self._champ.state_dict()
         torch.save(blob, tmp)
         os.replace(tmp, path)     # 原子替换，避免半截文件被当成有效 checkpoint
         self.last_ckpt_time = time.time()
@@ -563,14 +502,6 @@ class Trainer:
         self.last_ckpt_step = self.step
         self.iteration = blob["iteration"]
         self.games_played = blob.get("games_played", 0)
-        self.champion_step = blob.get("champion_step", 0)
-        self.rounds_since_promotion = blob.get("rounds_since_promotion", 0)
-        if self._champ is not None:
-            if "champion" in blob:
-                load_weights(self._champ, blob["champion"])
-            else:
-                self._champ.load_state_dict(self.model.state_dict())
-                print("[门控] 存档里没有冠军权重，冠军重置为当前 learner", flush=True)
         self.rng.bit_generator.state = blob["rng"]
         torch.set_rng_state(blob["torch_rng"].cpu())
 
