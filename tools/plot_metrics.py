@@ -9,8 +9,11 @@
 三块面板对应报告里那段结论：
 
     上   总损失在某一步触底后回升，而学习率还在往下退 —— 不是「没退火完」
-    中   policy 与 policy_entropy 几乎完全重合，说明策略损失基本等于**目标本身的熵**，
-         所以总损失的回升反映的是搜索目标变了，不是网络学坏了
+    中   policy 与 policy_entropy_model 几乎完全重合。**注意这不是「已经拟合到
+         目标的信息地板」** —— 后者量的是 H(模型)，不是 H(目标)，两者的差
+         `CE(t,m) − H(m)` 是一个温度标定条件，与拟合好坏无关（见 losses.py 的
+         docstring）。真实蒸馏误差离线测出来是 KL(t‖m)=0.283 nats，
+         其中 ≥54% 是 MCTS 目标本身的采样噪声、不可约
     下   同一段时间里价值损失还在降、WDL 准确率还在升 —— 和总损失方向相反
 
 **标注一律用英文**：容器里没有任何中文字体（`fc-list :lang=zh` 为空），
@@ -67,7 +70,12 @@ def main() -> None:
     step = np.array([r["step"] for r in rows], dtype=float)
     get = lambda k: np.array([r.get(k, np.nan) for r in rows], dtype=float)  # noqa: E731
     total, pol, val = get("loss"), get("policy"), get("value")
-    ent, acc, lr = get("policy_entropy"), get("wdl_acc"), get("lr")
+    # 字段改过名（policy_entropy -> policy_entropy_model）。新名优先、回退旧名，
+    # 否则 v2-* 那批老 metrics.jsonl 画出来这条曲线整片是 NaN。
+    ent = get("policy_entropy_model")
+    if np.isnan(ent).all():
+        ent = get("policy_entropy")
+    acc, lr = get("wdl_acc"), get("lr")
     sm = lambda y: rolling(y, args.smooth)                                    # noqa: E731
 
     lo = int(np.nanargmin(total))
@@ -113,20 +121,20 @@ def main() -> None:
     a2.set_ylabel("learning rate", color=C["lr"], fontsize=9)
     a2.tick_params(axis="y", labelcolor=C["lr"], labelsize=8)
 
-    # ── 中：policy 与目标熵几乎重合 ───────────────────────────────
+    # ── 中：policy 与**模型自己的熵**几乎重合（是温度标定，不是拟合到地板）──
     b = ax[1]
     b.plot(step, sm(pol), color=C["pol"], lw=2.4, label="policy loss")
-    b.plot(step, sm(ent), color=C["ent"], lw=1.2, ls="--", label="policy target entropy")
+    b.plot(step, sm(ent), color=C["ent"], lw=1.2, ls="--", label="entropy of the model's own policy")
     b.set_ylabel("nats")
-    b.set_title("Policy loss ≈ entropy of the search target itself: the network already fits it",
-                fontsize=10.5, pad=8)
+    b.set_title("Policy loss ≈ H(model): temperature is calibrated. NOT a fit-quality claim "
+                "(true KL is 0.283 nats)", fontsize=10.5, pad=8)
     b.legend(loc="upper right", fontsize=9, framealpha=0.9)
     b.grid(alpha=0.18)
     b2 = b.twinx()
     d = pol - ent
     b2.plot(step, d, color="#b04a8a", lw=0.6, alpha=0.20)      # 原始值，只作底噪
     b2.plot(step, sm(d), color="#b04a8a", lw=1.5, alpha=0.95)
-    b2.set_ylabel("policy − entropy (log)", color="#b04a8a", fontsize=9)
+    b2.set_ylabel("CE(t,m) − H(m)  (log)", color="#b04a8a", fontsize=9)
     b2.tick_params(axis="y", labelcolor="#b04a8a", labelsize=8)
     # 对数轴：早期尖峰有 1e-2，末段只有 1e-5，线性轴会把后者压成一条贴底的线
     b2.set_yscale("log")
@@ -134,7 +142,7 @@ def main() -> None:
     late = d[step > 20000]
     b2.text(0.028, 0.86,
             f"gap: median {np.median(d):.1e}   ≤ {late.max():.1e} after step 20k"
-            f"   (loss itself is ~1.4)",
+            f"   — this is CE(t,m)-H(m), not KL(t||m)",
             transform=b.transAxes, fontsize=8.5, color="#b04a8a",
             bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="#d8c0d0", alpha=0.92))
 

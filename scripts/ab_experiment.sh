@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# FP8 vs BF16 的受控对照实验。
+# BF16 / FP8(MXFP8) / FP4(NVFP4) 三条腿的受控对照实验。
 #
-#   bash scripts/ab_experiment.sh start
+#   bash scripts/ab_experiment.sh start        # 起 A+B（同机两条腿，各半数卡）
+#   bash scripts/ab_experiment.sh start-c      # FP4 腿，通常在第二台机器上单起
 #   bash scripts/ab_experiment.sh stop
 #   bash scripts/ab_experiment.sh status
 #   bash scripts/ab_experiment.sh compare [步数]     # 在对齐步数处头对头
 #
 # 方案里写死了一条：**没有 BF16 对照，「FP8 无损」就是没有依据的说法。**
+# FP4 腿同理 —— 它的判据是「相对 BF16 腿损失多少 Elo」，不是它自己的 loss 曲线。
 # 第一次做这个对照失败了，原因值得记下来：
 #
 #   1. 两条跑的 games_per_iter 不一样（1024 vs 2048），于是相同 step 下
@@ -17,7 +19,7 @@
 #
 # 所以这次把变量锁死：
 #
-#   * 除 --fp8 外全部配置逐字相同，种子相同，都从零开始
+#   * 除 --precision 外全部配置逐字相同，种子相同，都从零开始
 #   * **torch.compile 两边都开**，各走各最快的编法（BF16 整模型、
 #     FP8 只能按 block，整模型会 SIGSEGV，见 docs/06 第四条）。
 #     **这是一个已知的不对称**：两边的算子融合不同，严格说多了一个变量。
@@ -37,8 +39,9 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNS="$(dirname "$REPO")/runs"
 
-A_EXP="${A_EXP:-v2-bf16}"
-B_EXP="${B_EXP:-v2-fp8}"
+A_EXP="${A_EXP:-v4-bf16}"
+B_EXP="${B_EXP:-v4-fp8}"
+C_EXP="${C_EXP:-v4-fp4}"
 
 # 两条腿各自用哪些 GPU。默认挤在一台机器上各占两张卡；
 # 有第二台机器时，在各自机器上分别 start 单条腿、各占四张卡：
@@ -47,6 +50,8 @@ B_EXP="${B_EXP:-v2-fp8}"
 # **两条腿的卡数必须一致**，否则每卡的并行局数不同，就多了一个变量。
 A_DEVICES="${A_DEVICES:-cuda:0,cuda:1}"
 B_DEVICES="${B_DEVICES:-cuda:2,cuda:3}"
+# C 腿（FP4）默认吃满一台机器 —— 它本来就要单独排一轮，见 docs/09 的编排。
+C_DEVICES="${C_DEVICES:-cuda:0,cuda:1,cuda:2,cuda:3}"
 
 # 这里曾经有一个只作用于 B 腿的 `B_PARALLEL=2048`（当时 FP8 自博弈在同进程
 # 多线程下不扩展，用减半并行局数来对齐每卡负载）。**换成每卡一个工作进程之后
@@ -73,16 +78,49 @@ extra_for() {
   esac
 }
 
-# 两条腿逐字共用这一份，除 --fp8、设备、extra_for 外没有任何差别
+# 精度也按实验名分派，理由与 extra_for 完全相同：守护脚本自动恢复时只转交
+# 实验名与设备。**跑名里没写精度就退回 bf16**，所以实验名必须带后缀。
+# `watch_training.sh` 那边有一条对称的、拒绝拉起无法判定精度的实验的守卫。
+precision_for() {
+  case "$1" in
+    *-fp4) echo "fp4" ;;
+    *-fp8) echo "fp8" ;;
+    *)     echo "bf16" ;;
+  esac
+}
+
+# 三条腿逐字共用这一份，除 --precision、设备、extra_for 外没有任何差别。
+#
+# **WSD 的三个字段必须待在这里，不能走环境变量**：`save_checkpoint` 虽然存了
+# `asdict(cfg)`，但 `load_checkpoint` 从不读它 —— 学习率曲线的形状 100% 由本次
+# 命令行决定。守护恢复时若少传一个 `--lr-horizon-steps`，horizon 会退回
+# `total_steps`，曲线形状不变但**下一次改 total_steps 时会整体右移**。
+#
+# 另：`watch_training.sh` 的 `total_steps()` 是 `grep --total-steps | head -1`
+# 抠这个文件，所以 `--total-steps` 必须是这里出现的第一个（也是唯一一个）步数参数，
+# 也不要往 extra_for 里塞任何 --total-steps。
+#
+# 交付点 A：warmup 500 -> stable 恒 2e-3 到 100,000 -> 线性退火 11,000 步
+# 到 2e-4 @ 111,000。选 10 万做 stable 的依据是实测「92% 的棋力在 8 万步到手」，
+# 之后每万步的增量（+2~+12 Elo）已落在测量误差 ±9.6 之内。
 COMMON=(
   --dim 256 --blocks 16 --attn-every 4
   --parallel-games 4096 --games-per-iter 2048
   --simulations 64 --max-considered 16 --temperature-plies 12
   --batch-size 1024 --steps-per-iter 400
-  --lr 0.002 --warmup-steps 500 --total-steps 150000
+  --lr 0.002 --warmup-steps 500 --total-steps 111000
+  --lr-schedule wsd --lr-horizon-steps 111000 --lr-decay-steps 11000
   --milestone-every-steps 10000
   --seed 1
 )
+
+# 三条 start-* 共用这一个函数：精度与配置都从实验名推，没有按腿分叉的旋钮。
+start_leg() {
+  local exp="$1" devs="$2"
+  bash "$REPO/scripts/train.sh" start "$exp" --precision "$(precision_for "$exp")" \
+    --device "${devs%%,*}" --selfplay-devices "$devs" \
+    "${COMMON[@]}" $(extra_for "$exp")
+}
 
 case "${1:-}" in
   start)
@@ -96,24 +134,18 @@ case "${1:-}" in
     "$0" start-a
     "$0" start-b
     ;;
-  start-a)
-    bash "$REPO/scripts/train.sh" start "$A_EXP" --fp8 false \
-      --device "${A_DEVICES%%,*}" --selfplay-devices "$A_DEVICES" \
-      "${COMMON[@]}" $(extra_for "$A_EXP")
-    ;;
-  start-b)
-    bash "$REPO/scripts/train.sh" start "$B_EXP" --fp8 true \
-      --device "${B_DEVICES%%,*}" --selfplay-devices "$B_DEVICES" \
-      "${COMMON[@]}" $(extra_for "$B_EXP")
-    ;;
+  start-a) start_leg "$A_EXP" "$A_DEVICES" ;;
+  start-b) start_leg "$B_EXP" "$B_DEVICES" ;;
+  start-c) start_leg "$C_EXP" "$C_DEVICES" ;;
   stop)
     bash "$REPO/scripts/train.sh" stop "$A_EXP"
     bash "$REPO/scripts/train.sh" stop "$B_EXP"
     ;;
   stop-a) bash "$REPO/scripts/train.sh" stop "$A_EXP" ;;
   stop-b) bash "$REPO/scripts/train.sh" stop "$B_EXP" ;;
+  stop-c) bash "$REPO/scripts/train.sh" stop "$C_EXP" ;;
   status)
-    for e in "$A_EXP" "$B_EXP"; do
+    for e in "$A_EXP" "$B_EXP" "$C_EXP"; do
       echo "=== $e ==="
       bash "$REPO/scripts/train.sh" status "$e" | head -3
     done
@@ -143,5 +175,5 @@ case "${1:-}" in
             --parallel 200 --device cuda:0 \
             --name-a "$B_EXP" --name-b "$A_EXP"
     ;;
-  *) sed -n '2,8p' "$0"; exit 1 ;;
+  *) sed -n '2,10p' "$0"; exit 1 ;;
 esac

@@ -92,6 +92,7 @@ def main() -> int:
     # 这些路径都可能把 FP8 的状态搞坏 —— 而 TE 的降级是静默的。
     trainer.verify_fp8_compute("建驱动后")
     t_start = time.time()
+    step_at_start = trainer.step        # 用来区分「本次一步没训」与「本次训完了」
 
     while True:
         if _STOP:
@@ -103,6 +104,16 @@ def main() -> int:
             print("到达时间上限，收尾")
             break
         if trainer.step >= cfg.total_steps:
+            if trainer.step == step_at_start:
+                # **一步没训就直接返回，不走收尾落盘。**
+                # 跑满之后再被拉起一次（守护每 3 分钟查一次，配置一改就会发生），
+                # 若照常 break 出去就会立刻 save_checkpoint()，而 Adam 的 state
+                # 是懒创建的、此时还空着 —— 于是用一份**没有动量**的档覆盖掉同名的
+                # 里程碑，并重写 replay 快照。磁盘上已经发生过：v2-bf16 的
+                # step00150227.pt 只有 56 MB 无 exp_avg，而 step00140227.pt 是完整的 170 MB。
+                # WSD 的「续跑下一段」每次都要经过这条路径。
+                print("到达总步数上限（本次一步未训，保持磁盘上的 checkpoint 不动）")
+                return 0
             print("到达总步数上限")
             break
 
@@ -154,6 +165,8 @@ def main() -> int:
               f"自博弈 {sp.games_per_s:.1f} 局/s 批均 {sp.mean_batch:.0f} | "
               f"replay {len(trainer.buffer):,}" + loss_s, flush=True)
 
+        # WSD：跨进退火段的那一刻留一份永久的 stable 档，供将来分叉出别的终点
+        trainer.maybe_save_stable()
         if trainer.maybe_checkpoint():
             pass
         if cfg.snapshot_every_iters and trainer.iteration % cfg.snapshot_every_iters == 0:

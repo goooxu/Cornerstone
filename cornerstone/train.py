@@ -38,7 +38,11 @@ class TrainConfig:
     dim: int = 256
     blocks: int = 16
     attn_every: int = 4
-    fp8: bool = False
+    # 主干 GEMM 的计算精度：bf16 | fp8(MXFP8) | fp4(NVFP4)。
+    # **直接换掉了老的 `fp8: bool`**（不像 ModelConfig 要留兼容别名）——
+    # TrainConfig 不需要读老 checkpoint，让老命令行 `--fp8 true` 硬报错才是对的：
+    # 静默把它当成一个未知参数忽略，等于开了一条本该是 fp8 的 bf16 腿。
+    precision: str = "bf16"
 
     # 自博弈
     parallel_games: int = 8192    # 多卡时按卡均分（4 卡 -> 每卡 2048，实测该点最优）
@@ -99,6 +103,20 @@ class TrainConfig:
     min_lr_ratio: float = 0.1
     warmup_steps: int = 500
     total_steps: int = 200_000
+
+    # 学习率日程。**`total_steps` 只管「这一次跑到哪停」，不再决定曲线形状** ——
+    # 形状由 `lr_horizon_steps` 定。少了这层解耦，把 total_steps 从 11.1 万改到
+    # 25 万的那一刻，退火窗口整体右移，已经退到 2e-4 的学习率会跳回 2e-3，
+    # 那不是「加训」而是「做了一次 warm restart 再加训」。
+    #
+    #   cosine  余弦退火到 lr*min_lr_ratio（历史默认，horizon=0 时逐位不变）
+    #   wsd     warmup → stable 恒 lr → 末段线性退到 lr*min_lr_ratio
+    #
+    # WSD 的意义是「预算不必预先知道」：stable 段与总预算无关，想收工时才花
+    # 最后约 10% 退火；而且 stable 段的 checkpoint 可以反复分叉出不同的终点。
+    lr_schedule: str = "cosine"     # cosine | wsd
+    lr_horizon_steps: int = 0       # 曲线的横轴终点；0 = 跟随 total_steps
+    lr_decay_steps: int = 0         # wsd 末段退火步数；0 = horizon 的 10%
     weight_decay: float = 1e-2
     grad_clip: float = 1.0
     w_value: float = 1.0
@@ -119,7 +137,7 @@ class TrainConfig:
     keep_last: int = 3
     milestone_every_steps: int = 10_000   # 里程碑 checkpoint 永久保留
     snapshot_every_iters: int = 20
-    fp8_check_every_iters: int = 10   # FP8 会静默降级，只能靠反复测
+    fp8_check_every_iters: int = 10   # 低精度会静默降级，只能靠反复测
 
     seed: int = 1
     device: str = "cuda"
@@ -170,12 +188,14 @@ class Trainer:
         # 参数降到计算权重精度。写反的话 master 是从 bf16 值回填的，
         # 等于一开始就丢一半精度，而训练看不出任何异常。
         self.model = CornerNet(ModelConfig(
-            dim=cfg.dim, blocks=cfg.blocks, attn_every=cfg.attn_every, fp8=cfg.fp8
+            dim=cfg.dim, blocks=cfg.blocks, attn_every=cfg.attn_every,
+            precision=cfg.precision,
         )).to(self.device)
         self.opt = self._make_optimizer()
         self.model.to_param_dtype()
         self._compile_hot_modules()
         self.pool = None
+        self._stable_saved = False      # WSD：stable 终点的永久档是否已落
         self.buffer = ReplayBuffer(cfg.replay_capacity)
         self.step = 0
         self.iteration = 0
@@ -230,8 +250,8 @@ class Trainer:
         """
         if self.device.type != "cuda":
             return
-        if self.cfg.fp8:
-            # FP8 有更强的约束：只能按 block 编译，不能整模型编译，否则多卡自博弈
+        if self.model.cfg.quantized:
+            # 低精度有更强的约束：只能按 block 编译，不能整模型编译，否则多卡自博弈
             # 会段错误。这里直接走那条路径 —— 自博弈驱动复用同一个模型对象，
             # 而它是幂等的，不会叠加编译。
             compile_for_inference(self.model)
@@ -254,38 +274,60 @@ class Trainer:
         return MasterWeightAdamW(groups, lr=self.cfg.lr, betas=(0.9, 0.95), eps=1e-8)
 
     def lr_at(self, step: int) -> float:
+        """纯函数，全仓只有这一份（工作进程只是转发父进程算好的标量）。
+
+        `horizon` 而不是 `total_steps` 决定形状 —— 见 TrainConfig.lr_horizon_steps。
+        """
         c = self.cfg
         if step < c.warmup_steps:
             return c.lr * (step + 1) / c.warmup_steps
-        t = min(1.0, (step - c.warmup_steps) / max(1, c.total_steps - c.warmup_steps))
+        horizon = c.lr_horizon_steps or c.total_steps
+        if c.lr_schedule == "wsd":
+            decay = c.lr_decay_steps or max(1, horizon // 10)
+            start = max(c.warmup_steps, horizon - decay)
+            if step < start:
+                return c.lr                                    # stable
+            t = min(1.0, (step - start) / max(1, horizon - start))
+            return c.lr * (1 - (1 - c.min_lr_ratio) * t)       # 线性退到底
+        t = min(1.0, (step - c.warmup_steps) / max(1, horizon - c.warmup_steps))
         cos = 0.5 * (1 + math.cos(math.pi * t))
         return c.lr * (c.min_lr_ratio + (1 - c.min_lr_ratio) * cos)
 
-    def verify_fp8_compute(self, tag: str = "") -> bool | None:
-        """跑一次前向，确认 FP8 层**确实在用 FP8 计算**，并把结论写进日志。
+    def decay_start_step(self) -> int:
+        """WSD 的 stable 段在哪一步结束（非 wsd 时返回 0）。"""
+        c = self.cfg
+        if c.lr_schedule != "wsd":
+            return 0
+        horizon = c.lr_horizon_steps or c.total_steps
+        return max(c.warmup_steps, horizon - (c.lr_decay_steps or max(1, horizon // 10)))
 
-        TE 在「该量化却没量化」时是静默的：模型照常训练，只是 FP8 名存实亡。
-        与其去追一次性的告警，不如把「FP8 是否真的在算」做成一个**可反复测量**
+    def verify_fp8_compute(self, tag: str = "") -> bool | None:
+        """跑一次前向，确认量化层**确实在用本腿的精度计算**，并把结论写进日志。
+
+        TE 在「该量化却没量化」时是静默的：模型照常训练，只是低精度名存实亡。
+        与其去追一次性的告警，不如把「低精度是否真的在算」做成一个**可反复测量**
         的性质：启动时、建完驱动后、以及每个自检周期各查一次。
+        探针还会分辨精度本身（fp4 被降级成 fp8 也算失败），见 `fp8.gemm_active`。
 
         返回 None 有两种含义，调用方都据此**不写** `fp8_active` 字段：
-        「这条跑本来就没开 FP8」，以及「TE 换了内部 API，查不到」。
+        「这条跑本来就是 bf16」，以及「TE 换了内部 API，查不到」。
         BF16 对照组以前在这里返回 True，写进 metrics 就成了 `fp8_active: true` ——
         照着日志看会得出「对照组也在跑 FP8」的结论，而这恰好是整个 A/B
         唯一要区分的那个变量。把「查不到」记成 False 是同一个错误的反方向。
         """
-        if not self.cfg.fp8:
+        if not self.model.cfg.quantized:
             return None
-        from .fp8 import fp8_gemm_active
+        prec = self.model.cfg.precision
+        from .fp8 import gemm_active
         with torch.cuda.device(self.device), torch.autocast("cuda", dtype=torch.bfloat16):
-            ok = fp8_gemm_active(
-                self.model,
+            ok = gemm_active(
+                self.model, prec,
                 torch.zeros(8, E.NUM_PLANES, E.BOARD_N, E.BOARD_N, device=self.device),
                 torch.zeros(8, E.NUM_SCALARS, device=self.device))
         where = f"（{tag}）" if tag else ""
-        verdict = {True: "已启用", False: "未启用 —— GEMM 没走 FP8！",
+        verdict = {True: "已启用", False: f"未启用 —— GEMM 没走 {prec.upper()}！",
                    None: "查不到（TE 内部 API 变了，探针需要更新）"}[ok]
-        print(f"[自检]{where} FP8 计算{verdict}", flush=True)
+        print(f"[自检]{where} {prec.upper()} 计算{verdict}", flush=True)
         return ok
 
     # ---- 自博弈 ----
@@ -390,7 +432,12 @@ class Trainer:
         return out
 
     # ---- checkpoint ----
-    def save_checkpoint(self, tag: str | None = None) -> str:
+    def save_checkpoint(self, tag: str | None = None, update_latest: bool = True) -> str:
+        """`update_latest=False` 用于 WSD 的 stable 旁档：它是一份**分叉点**，
+        不是这条跑的进度。让 `latest` 指过去的话，下次恢复会从它读起 ——
+        本身状态是对的，但恢复出来的进程会把 `_stable_saved` 重置成 False，
+        于是下一轮又往 `stable.pt` 上写一份**已经在退火段里**的权重，
+        分叉点就悄悄漂走了。"""
         name = tag or f"step{self.step:08d}"
         path = os.path.join(self.ckpt_dir, f"{name}.pt")
         tmp = path + ".tmp"
@@ -415,8 +462,9 @@ class Trainer:
             self.last_ckpt_time = time.time()
             self.last_ckpt_step = self.step
             self._prune_checkpoints()
-            with open(os.path.join(self.ckpt_dir, "latest"), "w") as f:
-                f.write(os.path.basename(path))
+            if update_latest:
+                with open(os.path.join(self.ckpt_dir, "latest"), "w") as f:
+                    f.write(os.path.basename(path))
             return path
 
         # 单卡这条路径以前自己又拼了一份字段表，和上面的 meta 是**两处真值** ——
@@ -432,8 +480,9 @@ class Trainer:
         self.last_ckpt_time = time.time()
         self.last_ckpt_step = self.step
         self._prune_checkpoints()
-        with open(os.path.join(self.ckpt_dir, "latest"), "w") as f:
-            f.write(os.path.basename(path))
+        if update_latest:
+            with open(os.path.join(self.ckpt_dir, "latest"), "w") as f:
+                f.write(os.path.basename(path))
         return path
 
     def _prune_checkpoints(self) -> None:
@@ -526,9 +575,38 @@ class Trainer:
                       f"{type(e).__name__}: {e}")
         return True
 
-    def save_snapshot(self) -> None:
+    def save_snapshot(self, name: str = "replay.npz") -> None:
         # 热数据在本地盘，快照写工作目录 —— 换机器后靠它恢复
-        self.buffer.save_shard(os.path.join(self.snapshot_dir, "replay.npz"))
+        self.buffer.save_shard(os.path.join(self.snapshot_dir, name))
+
+    def maybe_save_stable(self) -> bool:
+        """WSD 跨进 decay 段的那一刻，额外留一份**永久**的 stable 档 + replay 快照。
+
+        这是 WSD「stable 段可反复分叉」这个卖点的落地条件，而默认机制留不住它：
+
+        * replay 快照只有一份、每次 `save_snapshot()` 覆盖同一个文件
+        * 里程碑保留的是「每个 milestone_every_steps 桶里的**第一份**」，
+          stable 终点（比如 100,000）落在桶 10 里，而桶 10 早被 100,0xx 之前的
+          某一份占了 —— 所以 stable 那一步的档不会被保留
+
+        没有这两份东西，将来想「从 stable 续到 25 万」就只能从零重跑。
+        """
+        if self.cfg.lr_schedule != "wsd" or self._stable_saved:
+            return False
+        if self.step < self.decay_start_step():
+            return False
+        path = os.path.join(self.ckpt_dir, "stable.pt")
+        # 磁盘上已经有了就认它 —— 进程内的 `_stable_saved` 在每次恢复时归零，
+        # 光靠它会让恢复后的第一轮又覆盖一次，而那时已经在退火段里了。
+        if os.path.exists(path):
+            self._stable_saved = True
+            return False
+        self.save_checkpoint(tag="stable", update_latest=False)
+        self.save_snapshot("stable.npz")
+        self._stable_saved = True
+        print(f"[WSD] 已跨入退火段（step {self.step}），"
+              f"stable 档与快照已永久保留：{path}", flush=True)
+        return True
 
     # ---- 日志 ----
     def log(self, record: dict) -> None:

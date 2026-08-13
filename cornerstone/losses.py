@@ -55,7 +55,23 @@ def score_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return F.smooth_l1_loss(pred, target, beta=0.1)
 
 
-def policy_entropy(logits: torch.Tensor, legal: torch.Tensor) -> torch.Tensor:
+def policy_entropy_model(logits: torch.Tensor, legal: torch.Tensor) -> torch.Tensor:
+    """**H(模型自己的预测分布)** —— 收的是网络输出的 logits，不是搜索目标。
+
+    名字里那个 `_model` 是花钱买来的。它以前叫 `policy_entropy`，读的人（包括我）
+    都把它当成「目标本身的熵 H(t)」，于是得出「`policy` 与它几乎重合 ⇒
+    策略先验已经贴着目标的信息地板、没有拟合空间了」这个结论。**推不出来**：
+
+        policy − policy_entropy_model = CE(t, m) − H(m)
+
+    这是一个**温度标定条件**，与拟合好坏无关。构造一个 KL(t‖m)=2.72 nats、
+    连最优着法都选错的模型，只要温度调对，这个差照样是 1e-3 量级。
+    旁证：376 轮里有 98 轮这个差是**负的**，而真 KL 永远非负。
+
+    真正的蒸馏误差要 KL(t‖m) = CE(t,m) − H(t)，而 H(t) 现在没有被记录
+    （目标只存 top-32 + rest_prob，算得出但要改数据路径）。离线测出来是
+    **0.283 nats，其中 ≥54% 是 MCTS 目标本身的采样噪声、不可约**。
+    """
     logp = masked_log_softmax(logits, legal)
     p = logp.exp()
     return -(p * logp.masked_fill(~legal, 0.0)).sum(dim=1).mean()
@@ -74,12 +90,14 @@ def total_loss(out, batch, w_value: float = 1.0, w_score: float = 0.25) -> tuple
 
     with torch.no_grad():
         acc = (wdl.argmax(dim=-1) == batch["wdl"]).float().mean()
-        ent = policy_entropy(pol, legal)
+        ent = policy_entropy_model(pol, legal)
     return loss, {
         "loss": loss.detach(),
         "policy": lp.detach(),
         "value": lv.detach(),
         "score": ls.detach(),
         "wdl_acc": acc,
-        "policy_entropy": ent,
+        # 改过名（原 policy_entropy）。老 metrics.jsonl 里是旧名，
+        # 读取方（plot_metrics / compare_runs）要新名优先、回退旧名。
+        "policy_entropy_model": ent,
     }

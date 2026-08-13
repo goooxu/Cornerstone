@@ -795,15 +795,14 @@ def test_model_label_includes_simulation_count():
 
 
 def test_model_label_includes_precision():
-    """标签要带精度。v2-fp8 / v2-bf16 的 checkpoint 混在一个下拉里，
+    """标签要带精度。bf16 / fp8 / fp4 三条腿的 checkpoint 混在一个下拉里，
     光看 step 分不出是哪一条。
 
     精度取自 checkpoint 自带的 model_config，不是从跑名猜的 ——
     跑名可以随便起，模型配置不会骗人。
     """
     srv = open(os.path.join(REPO, "web", "server.py"), encoding="utf-8").read()
-    assert 'self.fp8 = bool(getattr(model.cfg, "fp8", False))' in srv
-    assert 'self.precision = "FP8" if self.fp8 else "BF16"' in srv
+    assert 'getattr(model.cfg, "precision", "bf16")' in srv
     assert "· {self.precision}" in srv
 
 

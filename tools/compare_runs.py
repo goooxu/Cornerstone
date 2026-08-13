@@ -9,7 +9,7 @@
 `tools/net_arena.py` 的头对头为准。
 
     python3 tools/compare_runs.py bf16 fp8
-    python3 tools/compare_runs.py bf16 fp8 --metric policy value policy_entropy
+    python3 tools/compare_runs.py bf16 fp8 --metric policy value policy_entropy_model
 """
 
 import argparse
@@ -20,7 +20,7 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUNS = os.path.join(os.path.dirname(REPO), "runs")
 
-DEFAULT_METRICS = ["loss", "policy", "value", "score", "policy_entropy",
+DEFAULT_METRICS = ["loss", "policy", "value", "score", "policy_entropy_model",
                    "wdl_acc"]
 # 只在历史 metrics 里存在：训练期的周期性评测已经移除（规则基线量不了这个网络，
 # 见 docs/08）。留着是为了还能读 ab-* 那两条跑的日志；缺字段时自动跳过。
@@ -40,8 +40,16 @@ def load(exp: str) -> list[dict]:
     return rows
 
 
+# 改过名的字段：新名 -> 老名。v2-* 那批 metrics.jsonl 里还是老名，
+# 缺了就回退，否则跨代对比里这一列整片是「—」。
+RENAMED = {"policy_entropy_model": "policy_entropy"}
+
+
 def tail_mean(rows, key, n=10):
     vals = [r[key] for r in rows if key in r and r[key] is not None]
+    if not vals and key in RENAMED:
+        old = RENAMED[key]
+        vals = [r[old] for r in rows if old in r and r[old] is not None]
     return sum(vals[-n:]) / len(vals[-n:]) if vals else None
 
 

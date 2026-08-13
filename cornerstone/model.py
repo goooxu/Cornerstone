@@ -43,11 +43,33 @@ class ModelConfig:
     attn_every: int = 4          # 每隔几个 block 插一层全局注意力，0 表示不插
     heads: int = 8
     dw_kernel: int = 5           # 深度可分离卷积核大小
-    fp8: bool = False            # 打开：把 MLP/注意力的 Linear 换成走 FP8 GEMM
-    fp8_first_last_bf16: bool = True   # 首尾 block 不走 FP8
+    # 主干 GEMM 的计算精度：bf16 | fp8(MXFP8) | fp4(NVFP4)。三者的**参数存储完全
+    # 相同**，差别只在 te.Linear 前向时用哪个量化配方。
+    precision: str = "bf16"
+    # 兼容别名。**不能删** —— `load_checkpoint` 对未知键做静默过滤，而
+    # `te.Linear` 与 `nn.Linear` 的 state_dict 键名都是 `weight`、`_extra_state`
+    # 又被 `load_weights` 剥掉：删了它，`runs/v2-fp8` 那些只写了 `fp8: true` 的老
+    # checkpoint 会**静默降级成 BF16 模型**，不抛任何异常。新代码一律读 `precision`。
+    fp8: bool | None = None
+    fp8_first_last_bf16: bool = True   # 首尾 block 不走低精度
     # 计算权重的精度。**一切推理都用它**，fp32 主权重只服务优化器。
     # 老 checkpoint 的 model_config 里没有这个字段，加载时走的也是这个默认值。
     param_dtype: str = "bf16"
+
+    def __post_init__(self):
+        # 只有老 blob（有 fp8、无 precision）才走这条映射；新配置里 precision 已经
+        # 显式给了，此时不能让 fp8=False 把它顶回 bf16。
+        if self.fp8 is not None and self.precision == "bf16":
+            self.precision = "fp8" if self.fp8 else "bf16"
+        self.fp8 = (self.precision == "fp8")       # 回填，asdict 出来的 blob 仍带它
+        # `tools/train.py` 的 CLI 是从 dataclass 自动生成的，没有 choices 校验 ——
+        # `--precision fp16` 这种手误会安静地建出一个错配置，这句 assert 是唯一防线。
+        assert self.precision in ("bf16", "fp8", "fp4"), f"未知精度 {self.precision!r}"
+
+    @property
+    def quantized(self) -> bool:
+        """GEMM 是否走低精度。判「要不要 autocast / 补齐 batch」一律用它。"""
+        return self.precision in ("fp8", "fp4")
 
     @property
     def hidden(self) -> int:
@@ -60,9 +82,9 @@ class ModelConfig:
 
 def make_linear(cfg: ModelConfig, in_f: int, out_f: int, bias: bool = False,
                 force_bf16: bool = False) -> nn.Module:
-    """MLP / 注意力投影用的线性层 —— FP8 与否的唯一切换点。
+    """MLP / 注意力投影用的线性层 —— 低精度与否的唯一切换点。
 
-    **两条腿的初始权重必须逐位相同**，否则 A/B 里就混进了一个隐藏变量。
+    **各条腿的初始权重必须逐位相同**，否则 A/B 里就混进了一个隐藏变量。
     `te.Linear` 默认用 `normal(0, 0.023)` 初始化，而 `nn.Linear` 用 kaiming_uniform，
     分布本身就不一样；更麻烦的是两者消耗的 RNG 流长度不同，会让**后面所有层**
     （包括不含 TE 的卷积和位置嵌入）跟着错位。实测同一 seed 下 126 个参数张量里
@@ -73,15 +95,45 @@ def make_linear(cfg: ModelConfig, in_f: int, out_f: int, bias: bool = False,
     之后再由 `CornerNet.to_param_dtype()` 整体降到 bf16。
     """
     ref = nn.Linear(in_f, out_f, bias=bias)
-    if not (cfg.fp8 and not force_bf16):
+    if not (cfg.quantized and not force_bf16):
         return ref
-    from .fp8 import fp8_linear
-    lin = fp8_linear(in_f, out_f, bias=bias, params_dtype=torch.float32)
+    from .fp8 import quant_linear
+    lin = quant_linear(cfg.precision, in_f, out_f, bias=bias, params_dtype=torch.float32)
     with torch.no_grad():
         lin.weight.copy_(ref.weight)
         if bias:
             lin.bias.copy_(ref.bias)
     return lin
+
+
+def match_dtype(x: torch.Tensor, lin: nn.Module) -> torch.Tensor:
+    """把输入折回线性层权重的 dtype，再交给它。
+
+    **为什么必须有这一步**：`nn.RMSNorm` 在 `torch.autocast` 下按 fp32 策略执行，
+    输出是 **fp32**，而它的下游正是 SwiGLU 与 Attention 的投影。
+    BF16 与 MXFP8 两条腿对此无所谓（autocast 会在进 GEMM 前把它 cast 回 bf16），
+    **但 NVFP4 会直接报错**：
+
+        RHT is only supported for bfloat16 input, got dtype enum value 4
+
+    （4 = kFloat32。随机 Hadamard 变换是 FP4 收敛的必需件，见 fp8.py，
+    不能为了绕开它去关 `disable_rht`。）报错点在 `blocks.1.attn.qkv` ——
+    第一个不被首尾 bf16 规则豁免的 te.Linear。
+
+    实测的影响（dim=64/blocks=4 的小模型，同 seed 同输入）：
+
+    * **BF16 腿逐位不变** —— autocast 本来就会做同一个 cast，只是做得更晚。
+    * **FP8 腿会有极小的变化**（wdl 最大绝对差 4.4e-3、score 5.9e-3）：
+      MXFP8 从 fp32 量化和从 bf16 量化落到的块不完全一样。
+
+    第二条是**有意接受的**：折回之后三条腿喂给 GEMM 的输入 dtype 完全一致，
+    差别只剩量化格式本身 —— 这正是这一轮对照要隔离的那个变量。
+    不折的话，FP8 从 fp32 量化而 FP4 只能从 bf16 量化，反倒多出一个变量。
+    （代价是 v4-fp8 与 v2-fp8 在这一处不再逐位可比；本轮换了 WSD 日程，
+    两者本来就不是同一个基线。）
+    """
+    w = getattr(lin, "weight", None)
+    return x if w is None or x.dtype is w.dtype else x.to(w.dtype)
 
 
 class SwiGLU(nn.Module):
@@ -94,7 +146,7 @@ class SwiGLU(nn.Module):
         self.down = make_linear(cfg, h, d, force_bf16=force_bf16)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        gate, val = self.up(x).chunk(2, dim=-1)
+        gate, val = self.up(match_dtype(x, self.up)).chunk(2, dim=-1)
         return self.down(F.silu(gate) * val)
 
 
@@ -130,10 +182,11 @@ class Attention(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         b, n, d = x.shape
-        qkv = self.qkv(x).view(b, n, 3, self.heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        qkv = self.qkv(match_dtype(x, self.qkv))
+        qkv = qkv.view(b, n, 3, self.heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        o = F.scaled_dot_product_attention(q, k, v)
-        return self.proj(o.transpose(1, 2).reshape(b, n, d))
+        o = F.scaled_dot_product_attention(q, k, v).transpose(1, 2).reshape(b, n, d)
+        return self.proj(match_dtype(o, self.proj))
 
 
 class PolyBlock(nn.Module):
@@ -213,20 +266,20 @@ class CornerNet(nn.Module):
         x = self.stem(planes.to(memory_format=torch.channels_last))
         x = x.permute(0, 2, 3, 1).reshape(b, CELLS, self.cfg.dim)
         x = x + self.pos + self.scalar_mlp(scalars).unsqueeze(1)
-        # FP8 的作用域只包住主干：stem/头部/损失都留在高精度
+        # 量化作用域只包住主干：stem/头部/损失都留在高精度
         with self._fp8_scope():
             for blk in self.blocks:
                 x = blk(x)
         return self.norm_out(x)
 
     def _fp8_scope(self):
-        if not self.cfg.fp8:
+        if not self.cfg.quantized:
             return contextlib.nullcontext()
-        from .fp8 import fp8_autocast
-        return fp8_autocast()
+        from .fp8 import quant_autocast
+        return quant_autocast(self.cfg.precision)
 
     def _device_scope(self):
-        """FP8 下把当前 CUDA 设备设成本模型所在的卡。
+        """低精度下把当前 CUDA 设备设成本模型所在的卡。
 
         TransformerEngine 按**当前设备**取 cuBLAS 句柄/上下文。当前设备与张量设备
         不一致时，它的表现是**两种**，都很难查：
@@ -239,7 +292,7 @@ class CornerNet(nn.Module):
         漏掉任何一条都会以上面两种形态之一炸出来。
         `torch.cuda.device` 是线程局部的，多卡多线程各设各的互不干扰。
         """
-        if not self.cfg.fp8:
+        if not self.cfg.quantized:
             return contextlib.nullcontext()
         dev = self.pos.device
         return torch.cuda.device(dev) if dev.type == "cuda" else contextlib.nullcontext()
@@ -264,9 +317,9 @@ class CornerNet(nn.Module):
             planes, scalars = planes.to(dt), scalars.to(dt)
 
         b0 = planes.shape[0]
-        if self.cfg.fp8:
-            # MXFP8 要求 GEMM 的两维都是 32 的倍数，token 维是 B*196 且 196%32==4，
-            # 所以 B 必须是 8 的倍数。自博弈的批大小是变的，这里补齐再切回来。
+        if self.cfg.quantized:
+            # MXFP8 与 NVFP4 都要求 GEMM 的两维是 32 的倍数，token 维是 B*196 且
+            # 196%32==4，所以 B 必须是 8 的倍数。自博弈的批大小是变的，补齐再切回来。
             from .fp8 import pad_to_mxfp8
             bp = pad_to_mxfp8(b0)
             if bp != b0:
