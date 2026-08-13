@@ -65,13 +65,11 @@ B_DEVICES="${B_DEVICES:-cuda:2,cuda:3}"
 # 在第 12.8 万步被从 4096 改成 2048 的，日志上只表现为「自博弈慢了一半」。
 # 配置跟着实验名走，恢复出来的就一定还是同一个实验。
 #
-#   *gate*     门控冠军：自博弈的生成器是被实测出来的最强档（见 docs/08）
-#   *rndopen*  自博弈随机开局注入：治开局塌缩（实测第 8 万步起每局同一首手）
+# 现在是空的（随机开局注入已成为 TrainConfig 的默认值，不需要再单独传）。
+# 留着这个钩子是因为下一轮还要拿它挂 value_from_score / simulations 之类的臂。
 extra_for() {
   case "$1" in
-    *gate*)    echo "--gate-enabled true" ;;
-    *rndopen*) echo "--random-opening-prob 0.5 --random-opening-max-plies 6" ;;
-    *)         echo "" ;;
+    *)  echo "" ;;
   esac
 }
 
