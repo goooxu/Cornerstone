@@ -4,8 +4,23 @@
     python3 tools/net_arena.py \
         --nets ../runs/v2-bf16/ckpt/step*.pt \
         --rules random greedy-area flat-mcts-256 flat-mcts-1k greedy-mobility \
-        --games 400 --simulations 0 --engine-threads 8 \
+        --games 400 --engine-threads 8 \
         --out ../runs/arena_v2_bf16.json
+
+## `--simulations` 的默认值是 64，不是 0
+
+移除训练期周期评测之后，**这个工具是本项目棋力结论的唯一来源**，
+四个下游分析（`arena_best` / `arena_diff` / `cross_arm` / `compare_runs`）
+都只吃它的输出。所以它的默认口径必须是**网络实际被使用的那个**。
+
+纯策略（`--simulations 0`）量的是「先验单独有多强」，是另一个量，而且
+**会给出相反的排名**：`v2-bf16` 的终点档在纯策略下排第 8、比「峰值」低 18.9 分，
+带 64 模拟时却是最强的一档（同一对的直接头对头 0.527 → 0.485）。
+原因是纯策略每手只做一次前向、落 `argmax(prior)`，把价值头整个丢掉，
+而训练后期的进步主要存在那里。详见 `docs/08`。
+
+默认值曾经是 0，两份已发布报告的全部曲线因此都是纯策略口径的
+（那些复现命令仍显式写着 `--simulations 0`，正确 —— 它们复现的就是那些表）。
 
 为什么需要这个：网络强过全部规则基线之后，`evaluate_vs_baseline` 的得分率会钉在
 1.0，换算出来的 Elo 只是钳位假数（`elo_from_score_rate` 把胜率钳到 1−1e-9，
@@ -118,8 +133,12 @@ def main() -> None:
                     help="网络之间只打里程碑距离 <= N 的对（0 = 不限）")
     ap.add_argument("--bootstrap", type=int, default=200, help="自举次数，用来算 ±")
     ap.add_argument("--games", type=int, default=400, help="每对的对局数（必须是偶数）")
-    ap.add_argument("--simulations", type=int, default=0,
-                    help="网络每手的模拟数；**0 = 纯策略**（只做一次前向，落 argmax(prior)）。"
+    ap.add_argument("--simulations", type=int, default=64,
+                    help="网络每手的模拟数。默认 64 = 与自博弈同款、也是网络实际"
+                         "被使用的配置。**0 = 纯策略**（只做一次前向，落 argmax(prior)）"
+                         "—— 它量的是「先验单独有多强」，是另一个量，"
+                         "**和带搜索的排名会不一致**（实测同一批 checkpoint 的最强档"
+                         "两种口径给出相反答案，见 docs/08）。"
                          "注意 1 不是纯策略 —— 那是「根评估 + 1 次子节点访问」，"
                          "单次访问会把 σ 放大 51 倍，反而是最随机的设置。")
     ap.add_argument("--engine-threads", type=int, default=os.cpu_count() or 16)
@@ -166,6 +185,15 @@ def main() -> None:
             if wanted(parts[i], parts[j])]
     print(f"{len(parts)} 个参赛者，{len(todo)} 对 × {args.games} 局，"
           f"{args.simulations} 次模拟，{args.engine_threads} 引擎线程", flush=True)
+    if args.simulations == 0:
+        # 这条不是啰嗦。移除训练期周期评测之后，本工具是棋力的**唯一**来源，
+        # 而纯策略与带搜索会给出相反的排名 —— 实测 v2-bf16 的终点档在纯策略下
+        # 排第 8、带搜索下排第 1（同一对的直接头对头 0.527 → 0.485）。
+        # 表打出来两种口径长得一模一样，事后根本认不出手里这张是哪一种。
+        print("⚠️  纯策略口径（simulations=0）：量的是**先验单独有多强**，"
+              "不是网络实际下棋的强度。\n"
+              "    它与带搜索的排名会不一致，别拿这张表选权重或对外声称棋力。",
+              flush=True)
 
     n = len(parts)
     scores = np.zeros((n, n))
