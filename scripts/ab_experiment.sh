@@ -158,9 +158,9 @@ case "${1:-}" in
     fi
     # 找**最接近**目标步数的 checkpoint 而不是要求精确命中 ——
     # 落盘点受限流影响不会正好停在整数倍上（19832 而不是 20000）
-    read -r A A_STEP < <(python3 "$REPO/tools/nearest_ckpt.py" "$RUNS/$A_EXP/ckpt" "$STEP") \
+    read -r A A_STEP < <(python3 "$REPO/tools/nearest_ckpt.py" "$RUNS/$A_EXP/model" "$STEP") \
       || { echo "$A_EXP 还没有可用的 checkpoint" >&2; exit 1; }
-    read -r B B_STEP < <(python3 "$REPO/tools/nearest_ckpt.py" "$RUNS/$B_EXP/ckpt" "$STEP") \
+    read -r B B_STEP < <(python3 "$REPO/tools/nearest_ckpt.py" "$RUNS/$B_EXP/model" "$STEP") \
       || { echo "$B_EXP 还没有可用的 checkpoint" >&2; exit 1; }
     D=$(( A_STEP > B_STEP ? A_STEP - B_STEP : B_STEP - A_STEP ))
     echo "目标 step $STEP -> 实际 $A_EXP@$A_STEP vs $B_EXP@$B_STEP（相差 $D 步）"

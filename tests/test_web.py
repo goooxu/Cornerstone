@@ -30,14 +30,23 @@ server = _load_server()
 
 @pytest.fixture
 def runs(tmp_path, monkeypatch):
-    """造一个假的 runs/ 目录树。"""
-    def make(run: str, steps: list[int], latest: str | None = None):
-        d = tmp_path / run / "ckpt"
+    """造一个假的 runs/ 目录树。
+
+    网络后端一律来自 **`model/`（发布包）**，不是 `ckpt/`（训练档）——
+    web 只做推理，而收割之后 ckpt/ 里只剩为续训留的一两份。
+    所以这里连 `ckpt/` 都一并造出来、且**故意放进不同的步数**：
+    一旦哪天发现逻辑又跑回去扫 ckpt/，下面的断言会立刻对不上。
+    """
+    def make(run: str, steps: list[int], decoys: list[int] | None = None):
+        d = tmp_path / run / "model"
         d.mkdir(parents=True, exist_ok=True)
         for s in steps:
             (d / f"step{s:08d}.pt").write_bytes(b"x")
-        if latest is not None:
-            (d / "latest").write_text(latest)
+        c = tmp_path / run / "ckpt"
+        c.mkdir(parents=True, exist_ok=True)
+        for s in (decoys if decoys is not None else [999999]):
+            (c / f"step{s:08d}.pt").write_bytes(b"x")
+        (c / "latest").write_text("step00999999.pt")
         return d
 
     monkeypatch.setattr(server, "RUNS_DIR", str(tmp_path))
@@ -77,36 +86,34 @@ def test_specific_checkpoint_resolves(runs):
     assert kind == "net" and os.path.basename(path) == "step00001000.pt"
 
 
-def test_latest_follows_pointer_file(runs):
-    runs("v2-fp8", [1000, 2000], latest="step00002000.pt")
+def test_latest_is_the_highest_step_release(runs):
+    """`latest` 取发布包里步数最大的那份。
+
+    发布包目录**没有 latest 指针文件** —— 那是训练档的东西（续训入口）。
+    这里按步数排，不能按文件名字典序。
+    """
+    runs("v2-bf16", [500, 30000, 7000])          # 故意不按顺序创建
+    _, path = server.resolve_backend("net:v2-bf16/latest")
+    assert os.path.basename(path) == "step00030000.pt"
+    assert os.sep + "model" + os.sep in path, "解析到了训练档目录"
+
+
+def test_latest_ignores_the_training_checkpoint_dir(runs):
+    """`ckpt/` 里那份步数更大的诱饵不能被选中。
+
+    收割之后 `ckpt/` 里留的是终点档，步数往往**比中间的发布包都大**；
+    逻辑要是跑回去扫它，界面上会出现一个没人导出过的条目，点下去就炸。
+    """
+    runs("v2-fp8", [1000, 2000], decoys=[999999])
     _, path = server.resolve_backend("net:v2-fp8/latest")
     assert os.path.basename(path) == "step00002000.pt"
 
 
-def test_latest_survives_pruned_pointer(runs):
-    """latest 指向的那份被轮换删了，要回退到实际存在的最大步数。
-
-    训练侧 _prune_checkpoints 会删旧 checkpoint，而 latest 文件是单独写的，
-    两者之间存在窗口。不处理的话试玩会直接 500。
-    """
-    d = runs("v2-fp8", [1000, 2000], latest="step00002000.pt")
-    (d / "step00002000.pt").unlink()
-    _, path = server.resolve_backend("net:v2-fp8/latest")
-    assert os.path.basename(path) == "step00001000.pt"
-
-
-def test_latest_without_pointer_file(runs):
-    runs("v2-bf16", [500, 30000, 7000])          # 故意不按顺序创建
-    _, path = server.resolve_backend("net:v2-bf16/latest")
-    assert os.path.basename(path) == "step00030000.pt", "要按步数排，不能按文件名字典序"
-
-
 def test_latest_resolves_afresh_each_call(runs):
     """「跟随训练」必须每次重新解析，否则选中那一刻就被钉死了。"""
-    d = runs("v2-fp8", [1000], latest="step00001000.pt")
+    d = runs("v2-fp8", [1000])
     _, first = server.resolve_backend("net:v2-fp8/latest")
     (d / "step00009000.pt").write_bytes(b"x")
-    (d / "latest").write_text("step00009000.pt")
     _, second = server.resolve_backend("net:v2-fp8/latest")
     assert os.path.basename(first) == "step00001000.pt"
     assert os.path.basename(second) == "step00009000.pt"
@@ -120,12 +127,12 @@ def test_deleted_checkpoint_raises_readable_error(runs):
 
 def test_missing_run_raises(runs):
     runs("v2-fp8", [1000])
-    with pytest.raises(ValueError, match="找不到训练跑"):
+    with pytest.raises(ValueError, match="发布包"):
         server.resolve_backend("net:没这个跑/latest")
 
 
 def test_path_traversal_is_contained(runs):
-    """后端 ID 来自请求体，不能让它跳出 ckpt 目录。"""
+    """后端 ID 来自请求体，不能让它跳出发布包目录。"""
     runs("v2-fp8", [1000])
     with pytest.raises(ValueError):
         server.resolve_backend("net:v2-fp8/../../../etc/passwd")
@@ -134,8 +141,8 @@ def test_path_traversal_is_contained(runs):
 # ------------------------------------------------------------------- 发现
 
 def test_discover_lists_rules_and_checkpoints(runs):
-    runs("v2-fp8", [1000, 2000], latest="step00002000.pt")
-    runs("v2-bf16", [3000], latest="step00003000.pt")
+    runs("v2-fp8", [1000, 2000])
+    runs("v2-bf16", [3000])
     got = server.discover_backends()
     ids = [b["id"] for b in got]
 
@@ -156,7 +163,7 @@ def test_discover_skips_empty_ckpt_dir(runs):
 
 
 def test_discover_orders_newest_first(runs):
-    runs("v2-fp8", [1000, 5000, 3000], latest="step00005000.pt")
+    runs("v2-fp8", [1000, 5000, 3000])
     steps = [b["id"] for b in server.discover_backends()
              if b["id"].startswith("net:v2-fp8/step")]
     assert steps == ["net:v2-fp8/step00005000.pt",
@@ -177,7 +184,7 @@ class _FakeNet:
 
 
 def test_pool_caches_and_evicts_lru(runs, monkeypatch):
-    runs("r", [1, 2, 3, 4], latest="step00000004.pt")
+    runs("r", [1, 2, 3, 4])
     monkeypatch.setattr(server, "NetBrain", _FakeNet)
     _FakeNet.loaded = []
 
@@ -288,7 +295,7 @@ def test_default_session_is_human_vs_ai():
 
 def test_pool_latest_tracks_new_checkpoint(runs, monkeypatch):
     """选了「最新」之后，训练又落了一份 —— 池子要跟着换，而不是抱着旧的。"""
-    d = runs("r", [10], latest="step00000010.pt")
+    d = runs("r", [10])
     monkeypatch.setattr(server, "NetBrain", _FakeNet)
     _FakeNet.loaded = []
 

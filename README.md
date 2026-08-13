@@ -50,7 +50,17 @@ tests/        规则单测与交叉比对
 docs/         设计与实验记录
 ```
 
-模型 checkpoint、replay buffer、日志都写在 repo 之外的 `runs/`，不进 git。
+模型、replay buffer、日志都写在 repo 之外的 `runs/`，不进 git。其中模型分两种，
+**各自只有一个消费方**：
+
+```
+runs/<跑名>/ckpt/    训练档：fp32 主权重 + AdamW 动量 + RNG，162.5 MiB/份 —— 只有续训读
+runs/<跑名>/model/   发布包：只有权重（低精度是量化权重 + 缩放因子）—— 评测/试玩/诊断读
+```
+
+训练结束后用 `tools/export_model.py harvest` 收割：全部导出成发布包，
+`ckpt/` 里只留为继续训练而存在的那两份。导出**不改变数值**（逐位验证过），
+细节见 [docs/06](docs/06-低精度训练.md) 的「训练产物 → 推理部署」。
 
 ## 训练与试玩
 
@@ -69,14 +79,18 @@ $D bash scripts/train.sh start <exp> [参数...]   # 重跑同一条命令即续
 $D bash scripts/train.sh stop <exp>
 
 $D python3 tools/run_arena.py --games 400 --threads 128   # 规则基线阶梯 Elo
-$D python3 tools/model_report.py                          # BF16/FP8 的结构差异
+$D python3 tools/model_report.py                          # 三种精度的结构差异
+
+# 训练结束后收割：导出发布包，只留为继续训练而存在的训练档
+$D python3 tools/export_model.py harvest ../runs/<exp>          # 默认只预演
+$D python3 tools/export_model.py harvest ../runs/<exp> --yes
 $D bash scripts/monitor.sh 15                             # CPU/GPU 利用率
 
-# 棋力评测：把 checkpoint 和规则基线放进同一场单循环，联合拟合 Elo。
+# 棋力评测：把发布包和规则基线放进同一场单循环，联合拟合 Elo。
 # --simulations 0 是纯策略（一次前向、落 argmax(prior)，不做搜索）——
 # 想量模型本身就用它；带搜索测的是「网络 + 搜索」的合力。
 $D python3 tools/net_arena.py --rules random greedy-area corner-min \
-      greedy-mobility flat-mcts-1k --nets <ckpt...> \
+      greedy-mobility flat-mcts-1k --nets ../runs/<exp>/model/step*.pt \
       --games 400 --simulations 0 --engine-threads 128 --out ../runs/arena/x.json
 $D python3 tools/arena_best.py ../runs/arena/x.json --plot reports/图表/曲线.png
       # 回答「哪一档最强」并给出把握（自举出的最大值分布），顺带画增长曲线
@@ -86,7 +100,7 @@ $D python3 tools/plot_metrics.py --kind timeline --exp <exp>   # 一轮的墙钟
 $D bash scripts/web.sh start               # 试玩服务，浏览器开 <开发机>:8080
 ```
 
-**换机器 / 会话到期**：checkpoint 与 replay 快照都写在工作目录的 `runs/` 下，
+**换机器 / 会话到期**：训练档与 replay 快照都写在工作目录的 `runs/` 下，
 新机器上先 `scripts/probe.sh` 确认环境，再 `scripts/build.sh` 重新编译引擎，
 然后 `scripts/train.sh start <exp>` 就会从上次落盘处接着跑。
 

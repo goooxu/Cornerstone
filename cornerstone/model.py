@@ -360,26 +360,22 @@ def load_weights(model: "CornerNet", sd: dict) -> None:
 
 
 def load_checkpoint(path: str, device="cuda") -> tuple["CornerNet", object]:
-    """从 checkpoint 建模型做**推理**。FP8 与非 FP8 的 checkpoint 都能读。
+    """**读发布包**建模型做推理（`runs/<exp>/model/*.pt`）。
 
-    统一走这里，别在各处自己 torch.load + load_state_dict —— FP8 模型必须在
-    目标设备的上下文里构造（TE 按当前设备取 cuBLAS 句柄），否则会得到
+    名字沿用 `load_checkpoint` 是因为四个工具和 web 都在调它，但它现在
+    **只吃发布包，不吃训练档** —— 拿到训练档会明确报错，不会将就着读。
+
+    这条分家是有意的（速查表第六章）：训练档带着 AdamW 动量、RNG、步数簿记，
+    那些东西只有续训用得上；推理只该拿到权重。通吃两种格式的加载器意味着
+    「拿训练档当发布包用」这件事永远不会被发现，而两者在低精度下**不是**
+    同一组数值 —— 发布包里是已经量化好的权重，训练档里是 fp32 master。
+
+    统一走这里，别在各处自己 torch.load —— 量化模型必须在目标设备的上下文里
+    构造（TE 按当前设备取 cuBLAS 句柄），否则会得到
     `cublas_gemm: failed to launch on the GPU` 这种离根因很远的错。
-
-    checkpoint 里存的是 fp32 主权重，但**推理一律用计算权重**（`to_param_dtype()`），
-    这样推理和训练看到的是同一个模型 —— 否则两边的权重差一次舍入。
     """
-    blob = torch.load(path, map_location="cpu", weights_only=False)
-    mc = blob.get("model_config") or {}
-    cfg = ModelConfig(**{k: v for k, v in mc.items()
-                         if k in ModelConfig.__dataclass_fields__})
-    dev = torch.device(device)
-    ctx = torch.cuda.device(dev) if dev.type == "cuda" else contextlib.nullcontext()
-    with ctx:
-        model = CornerNet(cfg).to(dev)
-        load_weights(model, blob["model"])
-        model.to_param_dtype()
-    return model.eval(), blob.get("step", "?")
+    from .export import load_release
+    return load_release(path, device)
 
 
 def mask_logits(logits: torch.Tensor, legal: torch.Tensor) -> torch.Tensor:
