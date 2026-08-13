@@ -238,3 +238,49 @@ def test_gate_config_defaults_are_off():
     # 这三个是从 C++ 里暴露出来的，默认值必须与引擎一致，否则等于悄悄改了实验
     assert (c.c_visit, c.c_scale, c.value_from_score) == (50.0, 1.0, 0.0)
     assert os.environ.get("CORNERSTONE_GATE") is None
+
+
+# ---- 冠军状态必须跟着 checkpoint 走 ----
+
+def test_checkpoint_roundtrips_champion(tmp_path):
+    """存读要保住冠军权重与晋升簿记。
+
+    不存的话，续训会把 champ 重新播种成 learner —— **一次自动恢复就静默地
+    把棘轮清空了**，而开发机每 8 小时回收一次、续训是最高频路径。
+    `v3-gate` 那条跑真的被触发过：中途崩了一次，冠军从此重置。
+    """
+    tr = Trainer(_cfg(tmp_path, gate_enabled=True))
+    tr.make_driver()
+    # 必须**走优化器**让 learner 和 champ 分开：直接改 model.parameters() 只动了
+    # bf16 计算权重，而 checkpoint 存的是 fp32 master —— 那样存出来两边还是一样的，
+    # 这条测试会看着通过其实什么都没测（第一版就是这么写错的）。
+    for _ in range(3):
+        for p in tr.model.parameters():
+            p.grad = torch.full_like(p, 0.05)
+        tr.opt.step(grad_clip=1.0)
+    tr.step, tr.champion_step, tr.rounds_since_promotion = 4321, 1234, 8
+    path = tr.save_checkpoint()
+
+    tr2 = Trainer(_cfg(tmp_path, gate_enabled=True))
+    tr2.make_driver()
+    tr2.load_checkpoint(path)
+    assert (tr2.champion_step, tr2.rounds_since_promotion) == (1234, 8)
+    for a, b in zip(tr2._champ.parameters(), tr._champ.parameters()):
+        assert torch.equal(a, b)
+    # 冠军与 learner 必须仍是两份不同的权重，不能被"顺手同步"掉
+    assert not torch.equal(next(tr2._champ.parameters()), next(tr2.model.parameters()))
+
+
+def test_old_checkpoint_without_champion_is_loud(tmp_path, capsys):
+    """旧存档没有冠军字段时退回「冠军 = 当前 learner」，但**必须出声**。
+
+    静默退回就等于「棘轮偶尔会自己消失」，而它不改变任何可观测量。
+    """
+    tr = Trainer(_cfg(tmp_path, gate_enabled=False))     # 不开门控 -> 存档里没有 champion
+    tr.make_driver()
+    path = tr.save_checkpoint()
+
+    tr2 = Trainer(_cfg(tmp_path, gate_enabled=True))
+    tr2.make_driver()
+    tr2.load_checkpoint(path)
+    assert "没有冠军权重" in capsys.readouterr().out
