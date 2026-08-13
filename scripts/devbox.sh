@@ -78,7 +78,11 @@ cmd_up() {
   echo "已创建"
 }
 
-cmd_exec() { [ $# -gt 0 ] || usage; cmd_up >/dev/null; docker exec -w "$REPO" "$NAME" "$@"; }
+# -i 不是可有可无：没有它 docker exec 不接管 stdin，于是
+#   bash scripts/devbox.sh exec python3 - <<'PY' ... PY
+# 喂进去的是**空程序** —— python 读到 EOF 就正常退出，返回码 0、零输出、不报错。
+# 这个失败模式看起来像「脚本跑了但什么都没打印」，很难查。
+cmd_exec() { [ $# -gt 0 ] || usage; cmd_up >/dev/null; docker exec -i -w "$REPO" "$NAME" "$@"; }
 cmd_root() { [ $# -gt 0 ] || usage; cmd_up >/dev/null; docker exec -u 0 -w "$REPO" "$NAME" "$@"; }
 cmd_shell(){ cmd_up >/dev/null; docker exec -it -w "$REPO" "$NAME" bash; }
 cmd_down() { exists && docker rm -f "$NAME" >/dev/null && echo "已销毁 $NAME" || echo "容器 $NAME 不存在"; }

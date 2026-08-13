@@ -33,14 +33,17 @@ def main() -> None:
     ap.add_argument("--parallel", nargs="+", type=int, default=[256, 512, 1024, 2048])
     ap.add_argument("--seconds", type=float, default=20.0)
     ap.add_argument("--compile", action="store_true")
-    ap.add_argument("--fp8", action="store_true")
+    ap.add_argument("--precision", choices=("bf16", "fp8", "fp4"), default="bf16",
+                    help="主干 GEMM 的计算精度")
     ap.add_argument("--engine-threads", type=int, default=1)
     args = ap.parse_args()
 
     torch.backends.cuda.matmul.allow_tf32 = True
-    model = CornerNet(ModelConfig(dim=args.dim, blocks=args.blocks, fp8=args.fp8)).cuda().eval()
+    model = CornerNet(ModelConfig(dim=args.dim, blocks=args.blocks,
+                                  precision=args.precision)).cuda().eval()
     print(f"模型 {model.num_params()/1e6:.1f}M 参数 | {args.simulations} 次模拟/手 | "
-          f"compile={args.compile} fp8={args.fp8} 引擎线程={args.engine_threads}")
+          f"compile={args.compile} precision={args.precision} "
+          f"引擎线程={args.engine_threads}")
     print(f"{'并行局数':>9}{'评估/s':>12}{'等效局/s':>11}{'批均':>8}{'GPU占比':>9}{'前向ms':>9}")
     print("-" * 58)
 

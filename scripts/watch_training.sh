@@ -57,11 +57,20 @@ is_training() {
 # 第一次 A/B 就是毁在两条腿 games_per_iter 不一致（1024 vs 2048）上，
 # 而且从日志表面完全看不出来，只有把两边的启动命令逐字比对才会发现。
 # 现在配置只有 ab_experiment.sh 里那一份。
+# 腿的分派**只看实验名**，而实验名同时决定了精度（见 ab_experiment.sh 的
+# precision_for）。这里曾经写成 `*fp8*) start-b;; *) start-a`，
+# 于是任何不含 "fp8" 的名字都被当成 BF16 腿 —— 加 fp4 腿时它会被静默拉成
+# BF16，而且只在「开发机过期后自动恢复」那一刻发生，日志上完全看不出来。
+# 现在三条腿各有各的 case，落不进任何一条就直接报错，不猜。
 start_training() {
   local host="$1" exp="$2" devs="$3" arm vars
   case "$exp" in
-    *fp8*) arm="start-b"; vars="B_EXP=$exp B_DEVICES=$devs" ;;
-    *)     arm="start-a"; vars="A_EXP=$exp A_DEVICES=$devs" ;;
+    *fp4*)  arm="start-c"; vars="C_EXP=$exp C_DEVICES=$devs" ;;
+    *fp8*)  arm="start-b"; vars="B_EXP=$exp B_DEVICES=$devs" ;;
+    *bf16*) arm="start-a"; vars="A_EXP=$exp A_DEVICES=$devs" ;;
+    *)
+      log "[$exp] 实验名里没有 bf16/fp8/fp4，无法确定精度，拒绝拉起"
+      return 1 ;;
   esac
   rexec "$host" "bash $REPO/scripts/devbox.sh exec \
     env $vars \

@@ -6,7 +6,9 @@ import pytest
 torch = pytest.importorskip("torch")
 
 import cornerstone as cs
-from cornerstone.losses import policy_loss, score_loss, total_loss, value_loss
+from cornerstone.losses import (
+    policy_entropy_model, policy_loss, score_loss, total_loss, value_loss,
+)
 from cornerstone.model import ACTIONS, CornerNet, ModelConfig
 
 SMALL = ModelConfig(dim=48, blocks=3, attn_every=2, heads=4)
@@ -161,9 +163,73 @@ def test_total_loss_reports_all_parts():
     out = (torch.randn(6, ACTIONS), torch.randn(6, 3), torch.randn(6))
     loss, parts = total_loss(out, batch)
     assert torch.isfinite(loss)
-    assert set(parts) == {"loss", "policy", "value", "score", "wdl_acc", "policy_entropy"}
-    # 策略熵不会超过 log(合法着法数)
-    assert parts["policy_entropy"] <= np.log(int(batch["n_legal"][0])) + 1e-4
+    assert set(parts) == {"loss", "policy", "value", "score", "wdl_acc",
+                          "policy_entropy_model"}
+    # 模型自己的策略熵不会超过 log(合法着法数)
+    assert parts["policy_entropy_model"] <= np.log(int(batch["n_legal"][0])) + 1e-4
+
+
+def test_policy_entropy_is_the_model_not_the_target():
+    """`policy_entropy_model` 量的是 **H(模型)**，不是 H(目标)。
+
+    这条守的是一个**已经造成过错误结论**的误读：项目里曾经把
+    `policy − policy_entropy` 的差（中位 7.1e-4）读成「蒸馏误差已经小到可忽略、
+    策略头贴着目标的信息地板了」。推不出来 —— 那个差是
+
+        policy − policy_entropy_model = CE(t,m) − H(m) = KL(t‖m) + H(t) − H(m)
+
+    只有在 `H(m) == H(t)` 时它才等于 KL，而这是一条**温度标定条件**、
+    与拟合好坏无关。
+
+    反例直接构造出来：**一个在全部合法着法上均匀的模型**。它什么都没学到
+    （KL 接近一个纳特），而 CE(t,m) 恒等于 log(n_legal) 恒等于 H(m) ——
+    这个差**精确等于 0**，比训练日志里那 7.1e-4 还"好看"。
+
+    另一头也钉住：把目标做个置换（H 不变、每个着法都错位），
+    这时差就等于 KL 了。同一个数字在两种模型上含义完全不同，
+    这正说明它不能单独当拟合质量读。
+    """
+    batch = make_batch()
+    b, k = batch["top_probs"].shape
+    n_legal = int(batch["n_legal"][0])
+    legal = batch["legal"].bool()
+
+    # 精确复现 policy_loss 用的那个目标：top-K 用给定概率，**其余**合法着法均摊
+    # rest_prob。这里必须先填尾部再 scatter 覆盖 —— 累加的话 top-K 会多吃一份
+    # 尾部质量，dense 目标就和稀疏损失对不上了（差 0.11 nats，正好够让下面的
+    # 「差 == KL」断言假失败）。
+    target = legal.float() * (batch["rest_prob"] / (n_legal - k))[:, None]
+    target.scatter_(1, batch["top_actions"], batch["top_probs"])
+    assert target.sum(1).allclose(torch.ones(b), atol=1e-5), "目标没归一"
+    h_target = -(target * torch.log(target.clamp_min(1e-12))).sum(1).mean()
+
+    def gap_and_kl(logits):
+        lp = policy_loss(logits, legal, batch["top_actions"], batch["top_probs"],
+                         batch["rest_prob"], batch["n_top"], batch["n_legal"])
+        ent = policy_entropy_model(logits, legal)
+        return float(lp - ent), float(lp - h_target)
+
+    # ---- 反例：均匀模型。什么都没学到，可这个差是**精确的 0** ----
+    uniform = torch.zeros(b, ACTIONS).masked_fill(~legal, -1e9)
+    gap, kl = gap_and_kl(uniform)
+    assert kl > 0.5, f"反例没构造成功，均匀模型的 KL 只有 {kl:.4f}"
+    assert abs(gap) < 1e-4, (
+        f"均匀模型的 policy − policy_entropy_model = {gap:.2e}，本该精确为 0。"
+        "这个字段似乎被改成量目标的熵了 —— 那样它就不再是温度标定条件")
+
+    # ---- 对照：目标的置换。H(m)==H(t)，于是这个差**才**等于 KL ----
+    rolled = torch.full((b, ACTIONS), -1e9)
+    for i in range(b):
+        where = legal[i].nonzero(as_tuple=True)[0]
+        rolled[i, where] = torch.log(target[i, where].roll(1).clamp_min(1e-12))
+    gap2, kl2 = gap_and_kl(rolled)
+    assert gap2 == pytest.approx(kl2, abs=1e-4), "置换模型上这个差应当等于 KL"
+    assert gap2 > 0.5, "置换模型的差应当很大 —— 和均匀模型的 0 形成对照"
+
+    # ---- 反过来钉住语义：它确实等于模型自己分布的熵 ----
+    logp = torch.log_softmax(rolled.masked_fill(~legal, -1e9), dim=1)
+    h_model = -(logp.exp() * logp.masked_fill(~legal, 0.0)).sum(1).mean()
+    assert float(policy_entropy_model(rolled, legal)) == pytest.approx(float(h_model), abs=1e-5)
 
 
 def test_to_param_dtype_preserves_parameter_objects():

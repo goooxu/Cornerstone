@@ -45,13 +45,14 @@ class SelfPlayStats:
 
 
 def compile_for_inference(model: CornerNet):
-    """编译推理前向。**FP8 只能按 block 编译，不能整模型编译。**
+    """编译推理前向。**低精度只能按 block 编译，不能整模型编译。**
 
-    整模型编译会把 `CornerNet.trunk` 里的 `_fp8_scope()`（TE 的 `fp8_autocast`
-    上下文）一起包进图里，而 TE 的 FP8 状态是**全局**的。多卡多线程下各驱动
+    整模型编译会把 `CornerNet.trunk` 里的 `_fp8_scope()`（TE 的量化 autocast
+    上下文）一起包进图里，而 TE 的量化状态是**全局**的。多卡多线程下各驱动
     并发跑起编译后的图，就会 **SIGSEGV** —— 崩在第一轮自博弈里，两次自检都还是
     「FP8 计算已启用」。三个因素缺一都不炸（单卡不炸、不编译不炸、BF16 不炸），
-    所以孤立的单卡基准完全测不到。
+    所以孤立的单卡基准完全测不到。**FP4 一样按 block 编** —— 单卡 fullgraph 能过
+    不代表多卡安全，全局状态那个风险是原样继承的，没有理由在这里赌一把。
 
     按 block 编译把那个上下文留在 eager，实测速度几乎没差
     （batch=1024 前向：按 block 15.97 ms，整模型 16.05 ms，eager 37.49 ms），
@@ -66,7 +67,7 @@ def compile_for_inference(model: CornerNet):
 
     幂等：重复调用不会叠加编译（driver 0 与训练循环共用同一个模型对象）。
     """
-    if not getattr(model.cfg, "fp8", False):
+    if not getattr(model.cfg, "quantized", False):
         return torch.compile(model, dynamic=False)
     if not getattr(model, "_blocks_compiled", False):
         for blk in model.blocks:

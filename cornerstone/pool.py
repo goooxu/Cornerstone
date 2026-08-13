@@ -204,8 +204,8 @@ def _worker(rank: int, world: int, dev: str, spec: dict, flat: torch.Tensor, lay
         # `docs/07` 实测只编译 SwiGLU 能让训练步快 1.38×，而训练占墙钟约 41% ——
         # 漏掉等于白丢十几个百分点，且没有任何症状。
         if d.type == "cuda":
-            if spec["model_cfg"].get("fp8"):
-                # FP8 只能按 block 编译（整模型会把 TE 的全局 FP8 上下文编进图里，
+            if spec["model_cfg"].get("precision", "bf16") != "bf16":
+                # 低精度只能按 block 编译（整模型会把 TE 的全局量化上下文编进图里，
                 # 多卡并发跑就段错误）。下面建驱动时还会调一次，那个是幂等的。
                 from .selfplay import compile_for_inference
                 compile_for_inference(model)

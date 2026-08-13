@@ -184,11 +184,10 @@ class NetBrain:
         self.device = torch.device(device)
         self.step = step
         self.path = path
-        # 精度写进标签：v2-fp8 / v2-bf16 两条腿的 checkpoint 混在一个下拉里，
-        # 光看 step 分不出是哪一条。这个标志来自 checkpoint 自带的 model_config，
-        # 不是从跑名猜的 —— 跑名可以随便起，模型配置不会骗人。
-        self.fp8 = bool(getattr(model.cfg, "fp8", False))
-        self.precision = "FP8" if self.fp8 else "BF16"
+        # 精度写进标签：v4-bf16 / v4-fp8 / v4-fp4 三条腿的 checkpoint 混在一个
+        # 下拉里，光看 step 分不出是哪一条。这个值来自 checkpoint 自带的
+        # model_config，不是从跑名猜的 —— 跑名可以随便起，模型配置不会骗人。
+        self.precision = str(getattr(model.cfg, "precision", "bf16")).upper()
         self.label = (f"CornerNet {model.num_params()/1e6:.1f}M · {self.precision}"
                       f" · step {step}")
         self.engines: dict[int, E.SelfPlayEngine] = {}
