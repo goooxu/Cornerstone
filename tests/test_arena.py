@@ -155,3 +155,18 @@ def test_bridge_mode_skips_saturated_mixed_pairs():
     assert ("net@630", "net@200230") in pairs, "网络之间要全打"
     assert ("random", "greedy-area") in pairs, "规则之间要全打"
     del argparse
+
+
+def test_default_simulations_is_the_product_setting():
+    """`--simulations` 默认必须是 64（带搜索），不是 0（纯策略）。
+
+    移除训练期周期评测之后，`net_arena.py` 是棋力结论的**唯一**来源，而且没有
+    任何代码调用它 —— 全是人手敲命令行，所以「默认值」实际上就是大多数调用的
+    取值。两种口径会给出**相反**的排名（v2-bf16 的终点档纯策略下排第 8、
+    带搜索下排第 1），而打印出来的表长得一模一样，事后认不出手里这张是哪一种。
+    """
+    import re
+    src = open(os.path.join(REPO, "tools", "net_arena.py")).read()
+    m = re.search(r'"--simulations",\s*type=int,\s*default=(\d+)', src)
+    assert m, "找不到 --simulations 的定义，这条测试本身该更新了"
+    assert int(m.group(1)) == 64, "默认口径退回纯策略了 —— 那会让排名反过来"
