@@ -42,6 +42,7 @@ RUNS="$(dirname "$REPO")/runs"
 A_EXP="${A_EXP:-v4-bf16}"
 B_EXP="${B_EXP:-v4-fp8}"
 C_EXP="${C_EXP:-v4-fp4}"
+D_EXP="${D_EXP:-v4-bf16-long}"
 
 # 两组各自用哪些 GPU。默认挤在一台机器上各占两张卡；
 # 有第二台机器时，在各自机器上分别 start 单组、各占四张卡：
@@ -52,6 +53,8 @@ A_DEVICES="${A_DEVICES:-cuda:0,cuda:1}"
 B_DEVICES="${B_DEVICES:-cuda:2,cuda:3}"
 # C 组（FP4）默认吃满一台机器 —— 它本来就要单独排一轮，见 docs/09 的编排。
 C_DEVICES="${C_DEVICES:-cuda:0,cuda:1,cuda:2,cuda:3}"
+# D 组：从 stable 分叉点续训的加长跑，同样吃满一台机器
+D_DEVICES="${D_DEVICES:-cuda:0,cuda:1,cuda:2,cuda:3}"
 
 # 这里曾经有一个只作用于 B 组的 `B_PARALLEL=2048`（当时 FP8 自博弈在同进程
 # 多线程下不扩展，用减半并行局数来对齐每卡负载）。**换成每卡一个工作进程之后
@@ -78,14 +81,33 @@ extra_for() {
   esac
 }
 
-# 精度也按实验名分派，理由与 extra_for 完全相同：守护脚本自动恢复时只转交
-# 实验名与设备。**跑名里没写精度就退回 bf16**，所以实验名必须带后缀。
-# `watch_training.sh` 那边有一条对称的、拒绝拉起无法判定精度的实验的守卫。
+# 精度按实验名分派，理由与 extra_for 完全相同：守护脚本自动恢复时只转交
+# 实验名与设备。
+#
+# **认不出来就报错退出，不猜。** 这里原先写的是 `*-fp4)` / `*-fp8)` / `*)`，
+# 后缀锚定 —— 那样 `v4-fp8-long` 会落到 `*)` 上被当成 bf16，而且只在守护自动
+# 恢复那一刻发生，日志上完全看不出来。改成不锚定后缀，并加一条兜底。
 precision_for() {
   case "$1" in
-    *-fp4) echo "fp4" ;;
-    *-fp8) echo "fp8" ;;
-    *)     echo "bf16" ;;
+    *fp4*)  echo "fp4" ;;
+    *fp8*)  echo "fp8" ;;
+    *bf16*) echo "bf16" ;;
+    *)
+      echo "实验名 $1 里没有 bf16/fp8/fp4，无法确定精度" >&2
+      exit 1 ;;
+  esac
+}
+
+# 步数预算也按实验名分派。同一个理由：守护恢复时只转交实验名。
+#
+# `-long` 后缀 = 从 WSD 的 stable 分叉点（`ckpt/stable.pt`）续训到 22 万步。
+# 这正是 `lr_horizon_steps` 与 `total_steps` 解耦要支持的用法：horizon 一改，
+# 退火点后移，原本已在退火段里的步数重新落回 stable 平顶，**不会**变成
+# 一次 warm restart。
+budget_for() {
+  case "$1" in
+    *-long) echo "--total-steps 220000 --lr-horizon-steps 220000 --lr-decay-steps 20000" ;;
+    *)      echo "--total-steps 111000 --lr-horizon-steps 111000 --lr-decay-steps 11000" ;;
   esac
 }
 
@@ -96,9 +118,9 @@ precision_for() {
 # 命令行决定。守护恢复时若少传一个 `--lr-horizon-steps`，horizon 会退回
 # `total_steps`，曲线形状不变但**下一次改 total_steps 时会整体右移**。
 #
-# 另：`watch_training.sh` 的 `total_steps()` 是 `grep --total-steps | head -1`
-# 抠这个文件，所以 `--total-steps` 必须是这里出现的第一个（也是唯一一个）步数参数，
-# 也不要往 extra_for 里塞任何 --total-steps。
+# 步数预算不在这里，在 `budget_for()` —— 因为它要按实验名变（见上）。
+# `watch_training.sh` 判「跑满没有」时**调用本脚本的 `budget` 子命令**取步数，
+# 不自己解析文件：同一套规则写在两个地方，迟早对不上。
 #
 # 交付点 A：warmup 500 -> stable 恒 2e-3 到 100,000 -> 线性退火 11,000 步
 # 到 2e-4 @ 111,000。选 10 万做 stable 的依据是实测「92% 的棋力在 8 万步到手」，
@@ -108,8 +130,7 @@ COMMON=(
   --parallel-games 4096 --games-per-iter 2048
   --simulations 64 --max-considered 16 --temperature-plies 12
   --batch-size 1024 --steps-per-iter 400
-  --lr 0.002 --warmup-steps 500 --total-steps 111000
-  --lr-schedule wsd --lr-horizon-steps 111000 --lr-decay-steps 11000
+  --lr 0.002 --warmup-steps 500 --lr-schedule wsd
   --milestone-every-steps 10000
   --seed 1
 )
@@ -119,7 +140,7 @@ start_leg() {
   local exp="$1" devs="$2"
   bash "$REPO/scripts/train.sh" start "$exp" --precision "$(precision_for "$exp")" \
     --device "${devs%%,*}" --selfplay-devices "$devs" \
-    "${COMMON[@]}" $(extra_for "$exp")
+    "${COMMON[@]}" $(budget_for "$exp") $(extra_for "$exp")
 }
 
 case "${1:-}" in
@@ -137,6 +158,11 @@ case "${1:-}" in
   start-a) start_leg "$A_EXP" "$A_DEVICES" ;;
   start-b) start_leg "$B_EXP" "$B_DEVICES" ;;
   start-c) start_leg "$C_EXP" "$C_DEVICES" ;;
+  start-d) start_leg "$D_EXP" "$D_DEVICES" ;;
+  # 守护脚本靠它取步数预算 —— 规则只有 budget_for 一处
+  budget)
+    [ $# -ge 2 ] || { echo "用法: $0 budget <实验名>" >&2; exit 1; }
+    budget_for "$2" | sed -n 's/.*--total-steps \([0-9]\+\).*/\1/p' ;;
   stop)
     bash "$REPO/scripts/train.sh" stop "$A_EXP"
     bash "$REPO/scripts/train.sh" stop "$B_EXP"
@@ -144,6 +170,7 @@ case "${1:-}" in
   stop-a) bash "$REPO/scripts/train.sh" stop "$A_EXP" ;;
   stop-b) bash "$REPO/scripts/train.sh" stop "$B_EXP" ;;
   stop-c) bash "$REPO/scripts/train.sh" stop "$C_EXP" ;;
+  stop-d) bash "$REPO/scripts/train.sh" stop "$D_EXP" ;;
   status)
     for e in "$A_EXP" "$B_EXP" "$C_EXP"; do
       echo "=== $e ==="

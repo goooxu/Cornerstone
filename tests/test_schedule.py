@@ -206,24 +206,42 @@ def test_stable_checkpoint_is_preserved_on_entering_decay(tmp_path):
 
 
 def test_wsd_fields_live_in_the_experiment_script_not_env():
-    """WSD 的三个字段必须写在 `ab_experiment.sh` 的 COMMON 里。
+    """WSD 的三个字段必须写在 `ab_experiment.sh` 里，而不是靠环境变量传。
 
     `save_checkpoint` 存了 `asdict(cfg)`，但 `load_checkpoint` **从不读它** ——
     学习率曲线的形状 100% 由本次命令行决定。而守护脚本自动恢复时只转交实验名
     与设备：任何靠环境变量传进来的旋钮都会在那一刻悄悄退回默认值。
     `v2-fp8` 的 `parallel_games` 就是这么在第 12.8 万步被从 4096 改成 2048 的。
 
-    顺带钉住 `watch_training.sh` 的 `total_steps()` 还抠得出来 ——
-    它是 `sed | head -1`，往 COMMON 里多塞一个带数字的步数参数就会抠错。
+    日程形状拆成两处：`--lr-schedule wsd` 全跑共用，放 COMMON；
+    三个步数字段按实验名变（加长跑要 22 万），放 `budget_for()`。
+    两处都必须真的被 `start_leg` 用上。
     """
-    import re
     sh = open(os.path.join(REPO, "scripts", "ab_experiment.sh"), encoding="utf-8").read()
     common = sh[sh.index("COMMON=("):sh.index(")", sh.index("COMMON=("))]
-    for flag in ("--lr-schedule wsd", "--lr-horizon-steps", "--lr-decay-steps"):
-        assert flag in common, f"{flag} 不在 COMMON 里"
+    assert "--lr-schedule wsd" in common
 
-    hits = re.findall(r"--total-steps (\d+)", sh)
-    assert hits == ["111000"], f"--total-steps 出现了 {len(hits)} 次：{hits}"
+    fn = sh[sh.index("budget_for()"):sh.index("}", sh.index("budget_for()"))]
+    for flag in ("--total-steps", "--lr-horizon-steps", "--lr-decay-steps"):
+        assert flag in fn, f"{flag} 不在 budget_for 里"
+    assert "220000" in fn and "111000" in fn, "两种预算都要在"
+    assert '$(budget_for "$exp")' in sh, "budget_for 定义了却没被 start_leg 用上"
+
+
+def test_watchdog_asks_the_experiment_script_for_the_budget():
+    """守护脚本判「跑满没有」时**调用** `ab_experiment.sh budget`，不自己解析文件。
+
+    原来是 `sed ... | head -1` 抠第一条 `--total-steps`。所有跑共用一个预算时
+    凑合能用；一旦按实验名分派，它会给出别人的数字 —— 表现为
+    「`v4-bf16-long` 刚到 11.1 万就被判定跑满、不再拉起」，而日志上只写着
+    「训练完成」，看不出是判据错了。同一套规则不能写在两个地方。
+    """
+    sh = open(os.path.join(REPO, "scripts", "watch_training.sh"), encoding="utf-8").read()
+    fn = sh[sh.index("total_steps()"):sh.index("}", sh.index("total_steps()"))]
+    assert "ab_experiment.sh" in fn and "budget" in fn, "还在自己解析步数"
+    assert "sed" not in fn, "total_steps 里不该再有 sed 解析"
+    # 调用点都要把实验名传进去，否则等于没分派
+    assert 'total_steps "$exp"' in sh
 
 
 def test_watchdog_refuses_to_launch_an_arm_it_cannot_classify():
@@ -235,17 +253,29 @@ def test_watchdog_refuses_to_launch_an_arm_it_cannot_classify():
     """
     sh = open(os.path.join(REPO, "scripts", "watch_training.sh"), encoding="utf-8").read()
     body = sh[sh.index("start_training()"):]
-    for pat, arm in (("*fp4*", "start-c"), ("*fp8*", "start-b"), ("*bf16*", "start-a")):
-        i = body.index(pat)
-        assert arm in body[i:i + 200], f"{pat} 没有分派到 {arm}"
+    # 匹配 case 分支本身而不是裸模式串 —— 注释里也会出现 `*bf16*` 之类的字样，
+    # 用裸串会把注释的位置当成分支的位置，序关系就判错了（写这条时踩了一次）。
+    # 用正则是因为分支之间为了对齐用了不同数量的空格。
+    import re
+    pos = {}
+    for pat, arm in (("*-long", "start-d"), ("*fp4*", "start-c"),
+                     ("*fp8*", "start-b"), ("*bf16*", "start-a")):
+        m = re.search(re.escape(pat) + r'\)\s+arm="' + arm + '"', body)
+        assert m, f"{pat} 没有分派到 {arm}"
+        pos[pat] = m.start()
+    # **`-long` 必须排在 `*bf16*` 前面**：`v4-bf16-long` 两者都匹配，
+    # 落到 start-a 的话预算退回 11.1 万，加长跑会在半路被判定跑满
+    assert pos["*-long"] < pos["*bf16*"], "-long 没有排在 *bf16* 之前"
     assert "return 1" in body[:body.index("esac")], "认不出精度时必须拒绝拉起"
 
 
 def test_experiment_script_derives_precision_from_the_run_name():
     """精度也按实验名分派、写死在脚本里，理由与 extra_for 完全相同。"""
     sh = open(os.path.join(REPO, "scripts", "ab_experiment.sh"), encoding="utf-8").read()
-    fn = sh[sh.index("precision_for()"):sh.index("}", sh.index("precision_for()"))]
-    assert '*-fp4) echo "fp4"' in fn and '*-fp8) echo "fp8"' in fn
-    assert 'echo "bf16"' in fn
+    fn = sh[sh.index("precision_for()"):sh.index("esac", sh.index("precision_for()"))]
+    assert '*fp4*)' in fn and '*fp8*)' in fn and '*bf16*)' in fn
+    # **不能后缀锚定**：`*-fp8)` 匹配不上 `v4-fp8-long`，那条跑会被静默当成 bf16
+    assert "*-fp8)" not in fn and "*-fp4)" not in fn, "精度分派又用回了后缀锚定"
+    assert "exit 1" in fn, "认不出精度时必须报错退出，不能默默回退到 bf16"
     assert '--precision "$(precision_for "$exp")"' in sh
     assert "--fp8" not in sh, "还留着老的 --fp8 开关，那个参数已经不存在了"

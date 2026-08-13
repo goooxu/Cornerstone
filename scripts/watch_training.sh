@@ -64,7 +64,10 @@ is_training() {
 # 现在三组各有各的 case，落不进任何一条就直接报错，不猜。
 start_training() {
   local host="$1" exp="$2" devs="$3" arm vars
+  # **`-long` 要排在最前面**：`v4-bf16-long` 同时匹配 `*bf16*`，
+  # 落到 start-a 的话步数预算就退回 11.1 万，加长跑会在半路被判定跑满。
   case "$exp" in
+    *-long) arm="start-d"; vars="D_EXP=$exp D_DEVICES=$devs" ;;
     *fp4*)  arm="start-c"; vars="C_EXP=$exp C_DEVICES=$devs" ;;
     *fp8*)  arm="start-b"; vars="B_EXP=$exp B_DEVICES=$devs" ;;
     *bf16*) arm="start-a"; vars="A_EXP=$exp A_DEVICES=$devs" ;;
@@ -79,8 +82,13 @@ start_training() {
 
 # 配置里的总步数。从 ab_experiment.sh 里取，而不是在这儿再抄一份 ——
 # 抄一份就迟早对不上（这个教训在启动参数上已经吃过一次）。
+# 步数预算**问 ab_experiment.sh 要**，不自己解析它的文件。
+# 原来是 `sed ... | head -1` 抠第一条 --total-steps —— 那在「所有跑共用一个
+# 预算」时凑合能用，一旦按实验名分派（`v4-bf16-long` 要 22 万而不是 11.1 万）
+# 就会给出别人的数字，表现为「加长跑刚到 11.1 万就被判定跑满、不再拉起」。
+# 同一套规则写在两个地方，迟早对不上。
 total_steps() {
-  sed -n 's/.*--total-steps \([0-9]\+\).*/\1/p' "$REPO/scripts/ab_experiment.sh" | head -1
+  bash "$REPO/scripts/ab_experiment.sh" budget "$1" 2>/dev/null
 }
 
 # 训练是不是已经跑满了。
@@ -91,7 +99,7 @@ total_steps() {
 # 「恢复失败，下一轮重试」刷满 —— 而它根本不是失败。
 finished() {
   local exp="$1" f="$RUNS/$exp/logs/metrics.jsonl" total step
-  total="$(total_steps)"
+  total="$(total_steps "$exp")"
   [ -n "$total" ] && [ -f "$f" ] || return 1
   step="$(tail -1 "$f" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("step",0))' 2>/dev/null)"
   [ -n "$step" ] || return 1
@@ -127,7 +135,7 @@ check_once() {
     if finished "$exp"; then
       # 只记一条就够，别每 3 分钟往日志里刷一遍
       if [ ! -f "$RUNS/$exp/.done" ]; then
-        log "[$exp] 已跑满 $(total_steps) 步，训练完成，不再拉起（$(progress "$exp")）"
+        log "[$exp] 已跑满 $(total_steps "$exp") 步，训练完成，不再拉起（$(progress "$exp")）"
         : >"$RUNS/$exp/.done"
       fi
       continue
