@@ -165,6 +165,18 @@ def test_published_checkpoints_are_still_readable(run):
     model, step = load_checkpoint(path, device=dev)
     assert isinstance(step, int) and step > 0
     assert all(p.dtype is torch.bfloat16 for p in model.parameters())
+
+    # **精度必须原样读回来。** 这两份 blob 的 model_config 里只有老的
+    # `fp8: bool`，没有 `precision` —— 而 `load_checkpoint` 对未知键做静默过滤、
+    # te.Linear 与 nn.Linear 的 state_dict 键名又都是 `weight`。
+    # 兼容别名一旦断掉，v2-fp8 会**静默降级成 BF16 模型**，不抛任何异常，
+    # 只是「复现 FP8 那条腿」悄悄变成了复现 BF16。
+    want = "fp8" if run.endswith("fp8") else "bf16"
+    assert model.cfg.precision == want, f"{run} 读回来是 {model.cfg.precision}"
+    if want == "fp8":
+        import transformer_engine.pytorch as te
+        assert any(isinstance(m, te.Linear) for m in model.modules()), \
+            "FP8 checkpoint 读出来一个 te.Linear 都没有 —— 静默降级了"
     with torch.no_grad(), torch.autocast(dev, dtype=torch.bfloat16,
                                          enabled=dev == "cuda"):
         pol, wdl, _ = model(*[t.to(dev) for t in _inputs(8)])
