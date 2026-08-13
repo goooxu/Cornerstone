@@ -170,3 +170,31 @@ def test_default_simulations_is_the_product_setting():
     m = re.search(r'"--simulations",\s*type=int,\s*default=(\d+)', src)
     assert m, "找不到 --simulations 的定义，这条测试本身该更新了"
     assert int(m.group(1)) == 64, "默认口径退回纯策略了 —— 那会让排名反过来"
+
+
+# ---- net_arena 的方向自检：该拦的要拦，不该拦的不能拦，而且不能吃掉数据 ----
+
+def test_direction_check_is_scoped_to_a_single_run():
+    """「晚的档打得过早的档」只在**同一条跑内部**才是不变量。
+
+    跨跑比较时它恰恰是被测的假设：`v4-bf16-long`（从第 10 万步续训到 22 万）
+    的终点实测**打不过** `v4-bf16` 第 9 万步那档 —— 那是真结果，不是表颠倒。
+    原实现不分跑，把这次完全正确的比较判成了「表颠倒」。
+    """
+    src = open(os.path.join(REPO, "tools", "net_arena.py"), encoding="utf-8").read()
+    i = src.index("SPAN = 100_000")
+    blk = src[i:i + 600]
+    assert "len(runs) == 1" in blk, "步数跨度那条自检没有限定在同一条跑内"
+    assert "os.path.dirname" in blk, "没有从 spec 推出跑名"
+
+
+def test_results_are_written_before_the_direction_check():
+    """自检必须排在**写盘之后**。
+
+    它原先在写盘前 `SystemExit`，一次误报就把 28 对、1.5 小时的对局数据一起
+    带走了 —— 而那些数据本身是好的。落盘是廉价且不可再生的，自检是可再议的，
+    次序不能反。
+    """
+    src = open(os.path.join(REPO, "tools", "net_arena.py"), encoding="utf-8").read()
+    assert src.index('已写入') < src.index("方向自检失败"), \
+        "方向自检出现在写盘之前 —— 一次误报会把整场对局数据吃掉"
