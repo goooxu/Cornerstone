@@ -196,6 +196,7 @@ class Trainer:
         self._compile_hot_modules()
         self.pool = None
         self._stable_saved = False      # WSD：stable 终点的永久档是否已落
+        self._snap_bucket = -1          # 已经存过快照的最大里程碑桶
         self.buffer = ReplayBuffer(cfg.replay_capacity)
         self.step = 0
         self.iteration = 0
@@ -589,6 +590,26 @@ class Trainer:
     def save_snapshot(self, name: str = "replay.npz") -> None:
         # 热数据在本地盘，快照写工作目录 —— 换机器后靠它恢复
         self.buffer.save_shard(os.path.join(self.snapshot_dir, name))
+
+    def maybe_snapshot_milestone(self) -> str | None:
+        """每跨过一个里程碑桶，额外存一份**带步数的** replay 快照。
+
+        默认只有一份 `replay.npz`、每次覆盖。那对续训够用（只需要最后一份），
+        但**做不了「从第 N 万步分叉」这件事** —— 分叉要的是那一刻的 replay，
+        而不是跑完时的。拿后者去分叉，退火段吃的是更晚、更强的模型产的数据，
+        等于给分叉点开了后门。
+
+        代价是每份约 450 MB。只在里程碑上存（默认每 1 万步），
+        所以一条 9 万步的跑多占约 4 GB —— 换来的是分叉点可复现。
+        """
+        every = max(1, self.cfg.milestone_every_steps)
+        bucket = self.step // every
+        if bucket <= self._snap_bucket:
+            return None
+        self._snap_bucket = bucket
+        name = f"step{self.step:08d}.npz"
+        self.save_snapshot(name)
+        return name
 
     def maybe_save_stable(self) -> bool:
         """WSD 跨进 decay 段的那一刻，额外留一份**永久**的 stable 档 + replay 快照。
