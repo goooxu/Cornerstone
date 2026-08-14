@@ -115,8 +115,26 @@ seed_for() {
   esac
 }
 
+# `-aNNN` = 从 stable 段某一步分叉，在第 NNN 千步收工（退火占 horizon 的 10%，
+# 与交付点 A 的 11k/111k 同比例）。用来回答「退火点设在哪一步最强」——
+# WSD 的分叉点让这件事不用重训，每个只花十几分钟。
 budget_for() {
   case "$1" in
+    # `-x190` = 把 stable 段从第 10 万步延到 19 万，全程 2e-3 不退火
+    # （horizon 22 万、退火 2 万 -> 退火点在 20 万，跑到 19 万停，始终在平顶）。
+    # 每个里程碑存一份 replay 快照，供后面 `-aNNN` 分叉用。
+    *-x190) echo "--total-steps 190000 --lr-horizon-steps 220000 --lr-decay-steps 20000" ;;
+    # `-aNNN` = 从 stable 段第 (NNN-decay) 千步分叉，退火占 horizon 的 11%
+    # （与交付点 A 的 11k/111k 同比例），在第 NNN 千步收工
+    *-a122) echo "--total-steps 122000 --lr-horizon-steps 122000 --lr-decay-steps 12000" ;;
+    *-a133) echo "--total-steps 133000 --lr-horizon-steps 133000 --lr-decay-steps 13000" ;;
+    *-a144) echo "--total-steps 144000 --lr-horizon-steps 144000 --lr-decay-steps 14000" ;;
+    *-a155) echo "--total-steps 155000 --lr-horizon-steps 155000 --lr-decay-steps 15000" ;;
+    *-a167) echo "--total-steps 167000 --lr-horizon-steps 167000 --lr-decay-steps 17000" ;;
+    *-a178) echo "--total-steps 178000 --lr-horizon-steps 178000 --lr-decay-steps 18000" ;;
+    *-a189) echo "--total-steps 189000 --lr-horizon-steps 189000 --lr-decay-steps 19000" ;;
+    *-a200) echo "--total-steps 200000 --lr-horizon-steps 200000 --lr-decay-steps 20000" ;;
+    *-a211) echo "--total-steps 211000 --lr-horizon-steps 211000 --lr-decay-steps 21000" ;;
     *-long) echo "--total-steps 220000 --lr-horizon-steps 220000 --lr-decay-steps 20000" ;;
     *)      echo "--total-steps 111000 --lr-horizon-steps 111000 --lr-decay-steps 11000" ;;
   esac

@@ -167,6 +167,11 @@ def main() -> int:
 
         # WSD：跨进退火段的那一刻留一份永久的 stable 档，供将来分叉出别的终点
         trainer.maybe_save_stable()
+        # 每个里程碑存一份带步数的 replay 快照 —— 「从第 N 万步分叉」要的是
+        # 那一刻的 replay，不是跑完时的那一份
+        snap = trainer.maybe_snapshot_milestone()
+        if snap:
+            print(f"[里程碑] replay 快照 {snap}", flush=True)
         if trainer.maybe_checkpoint():
             pass
         if cfg.snapshot_every_iters and trainer.iteration % cfg.snapshot_every_iters == 0:
