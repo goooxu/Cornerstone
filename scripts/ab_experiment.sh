@@ -77,6 +77,9 @@ D_DEVICES="${D_DEVICES:-cuda:0,cuda:1,cuda:2,cuda:3}"
 # 留着这个钩子是因为下一轮还要拿它挂 value_from_score / simulations 之类的臂。
 extra_for() {
   case "$1" in
+    # 退火分叉只要终点那一份档 —— 不留里程碑、只留最近 1 份、不周期性存快照。
+    # 27 个分叉全量保留约 46 GB，而磁盘只剩 100 GB 出头。
+    *-a1??|*-a2??) echo "--keep-last 1 --milestone-every-steps 500000 --snapshot-every-iters 0" ;;
     *)  echo "" ;;
   esac
 }
