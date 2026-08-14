@@ -79,7 +79,7 @@ extra_for() {
   case "$1" in
     # 退火分叉只要终点那一份档 —— 不留里程碑、只留最近 1 份、不周期性存快照。
     # 27 个分叉全量保留约 46 GB，而磁盘只剩 100 GB 出头。
-    *-a1??|*-a2??) echo "--keep-last 1 --milestone-every-steps 500000 --snapshot-every-iters 0" ;;
+    *-a??|*-a???) echo "--keep-last 1 --milestone-every-steps 500000 --snapshot-every-iters 0" ;;
     *)  echo "" ;;
   esac
 }
@@ -127,8 +127,22 @@ budget_for() {
     # （horizon 22 万、退火 2 万 -> 退火点在 20 万，跑到 19 万停，始终在平顶）。
     # 每个里程碑存一份 replay 快照，供后面 `-aNNN` 分叉用。
     *-x190) echo "--total-steps 190000 --lr-horizon-steps 220000 --lr-decay-steps 20000" ;;
+    # `-e100` = 从零重训到 10 万步，**日程与 v4-bf16 的前 10 万步逐字相同**
+    # （horizon 11.1 万、退火 1.1 万 -> 退火点在 10 万，跑到 10 万整段都在平顶）。
+    # 目的只有一个：拿到 11.1 万步**以前**的分叉点 —— 原跑那些档在收割时删了，
+    # 而 v4-bf16-s2 虽然档还在，却没有逐档 replay 快照。
+    *-e100) echo "--total-steps 100000 --lr-horizon-steps 111000 --lr-decay-steps 11000" ;;
     # `-aNNN` = 从 stable 段第 (NNN-decay) 千步分叉，退火占 horizon 的 11%
     # （与交付点 A 的 11k/111k 同比例），在第 NNN 千步收工
+    *-a67)  echo "--total-steps 67000 --lr-horizon-steps 67000 --lr-decay-steps 7000" ;;
+    *-a78)  echo "--total-steps 78000 --lr-horizon-steps 78000 --lr-decay-steps 8000" ;;
+    *-a89)  echo "--total-steps 89000 --lr-horizon-steps 89000 --lr-decay-steps 9000" ;;
+    *-a100) echo "--total-steps 100000 --lr-horizon-steps 100000 --lr-decay-steps 10000" ;;
+    # a111 = 从 e100 的第 10 万步分叉退火 —— **这条跑自己的交付点 A**。
+    # 需要它是因为同 seed 重训并不复现原跑（多进程自博弈的 RNG 依赖调度时序、
+    # CUDA 不确定、torch.compile），所以早期退火点只能和同一条跑内的 a111 比，
+    # 不能直接跨到原跑的 111389 上。
+    *-a111) echo "--total-steps 111000 --lr-horizon-steps 111000 --lr-decay-steps 11000" ;;
     *-a122) echo "--total-steps 122000 --lr-horizon-steps 122000 --lr-decay-steps 12000" ;;
     *-a133) echo "--total-steps 133000 --lr-horizon-steps 133000 --lr-decay-steps 13000" ;;
     *-a144) echo "--total-steps 144000 --lr-horizon-steps 144000 --lr-decay-steps 14000" ;;
