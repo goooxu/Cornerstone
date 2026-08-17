@@ -118,6 +118,86 @@ seed_for() {
   esac
 }
 
+# 宽度也从实验名推，理由和精度一样：**能选就能选错**，而选错的表现是
+# 「A/B 里混进了第二个变量」，没有任何症状。`v5-` 打头的一律 dim=384。
+#
+# 为什么加宽：v4 那轮把精度和步数两根轴都测到头了 —— 三个精度的峰值落在
+# 14 Elo 之内（FP8 +13.5、BF16 0、FP4 -4.5），而每个精度练过自己的峰值都是
+# 净损失（-25~-51）。两根轴都封顶，说明限制在容量。旁证：FP4 最早饱和（78k），
+# 更像「容量先到顶」而不是「数值精度不够」。
+#
+# 为什么是 384 不是 512：512 的自博弈吞吐实测掉 2.1 倍，384 约掉 1.5 倍；
+# 384 也仍然满足量化 GEMM 两维被 32 整除。
+# 骨干形状。`qwen-` 打头的走 Qwen3-0.6B 形状的全注意力层（cornerstone/qwen_block.py）。
+#
+# **只借形状，不载任何预训练权重 —— 全部随机初始化。** 名字里带 Qwen 很容易被
+# 后来的人读成「从 Qwen3-0.6B 微调来的」，而那正是本项目最防的那类误读：
+# 不报错、跑得通、结论全错。
+#
+# 不叫 `v7-`：v4/v5/v6 是同一根 poly 骨干在改宽度和学习率，编号连着走是有含义的。
+arch_for() {
+  case "$1" in
+    qwen-*) echo qwen ;;
+    *)      echo poly ;;
+  esac
+}
+
+dim_for() {
+  case "$1" in
+    qwen-*) echo 1024 ;;
+    v6-*) echo 512 ;;
+    v5-*) echo 384 ;;
+    *)    echo 256 ;;
+  esac
+}
+
+# 学习率同样按实验名分派 —— 而且**它必须跟着宽度走**。
+#
+# 这条是 v5 那轮踩出来的：dim 256->384 时我把 lr 留在 2e-3 没动，注释里还写着
+# 「除 --precision 和 --dim 外逐字相同」当作严谨。实测同预算（111k 步、只差
+# 宽度）加宽后**掉 77.0 ± 13.5 Elo**（1200 局，见 runs/arena_v5-width.json）。
+#
+# 「保持不变」对宽度不是中性的：按 µP / 宽度缩放，隐藏层的学习率大致该随宽度
+# 反比缩小。384/256 = 1.5 倍宽 -> 2e-3 / 1.5 ≈ 1.3e-3。
+# `-lr13` 这条跑就是去验证这个解释 —— 如果它把那 77 分追回来，说明加宽本身没错，
+# 错的是没重调学习率；如果追不回来，那问题在数据量或别处。
+#
+# **不要后缀锚定。** 写成 `*-lr13)` 的话，从它分叉出来的 `v5-bf16-lr13-a111`
+# 会落到兜底上、退火段悄悄用回 2e-3 —— 这个文件里 `precision_for` 已经栽过
+# 同一个坑（`v4-fp8-long` 被当成 bf16），日志上完全看不出来。
+#
+# **已测出的规律：lr 大致按 1/宽度 缩放。** 基准 dim=256 -> 2e-3，于是
+# 384 -> 1.3e-3、512 -> 1.0e-3。实测支撑（同预算、同精度，只差 lr）：
+#
+#   BF16 dim=384   lr 2e-3 -70.6 ± 10.7  ->  lr 1.3e-3 -24.2 ± 10.2   (+46.4)
+#   FP4  dim=384   lr 2e-3 -158.0 ± 11.5 ->  lr 1.3e-3 +21.8 ± 11.2   (+179.8)
+#
+# FP4 的救回量是 BF16 的近 4 倍 —— NVFP4 数值余量最小，lr 偏高时它最先失稳。
+#
+# 仍然逐条写死而不按公式算：历史跑要能原样复现（`v5-bf16` 当时就是 dim=384
+# 配 2e-3 跑的，那是个**错误**，但它的结论建立在那个配置上，脚本不能改写它）。
+lr_for() {
+  case "$1" in
+    *-lr13*) echo 0.0013 ;;
+    qwen-*)  echo 0.0005 ;;     # hidden=1024，按 1/宽度：2e-3 * 256/1024
+    v6-*)    echo 0.001  ;;     # dim=512
+    *)       echo 0.002  ;;     # dim=256 的基准；v5-* 不带 -lr13 的是未调那一版
+  esac
+}
+
+# qwen 骨干的层数与头形。poly 用 COMMON 里的默认值，这里只给 qwen 那一组。
+#
+# **必须排在 `${COMMON[@]}` 之后展开**（见 start_leg）：COMMON 里有 `--blocks 16`，
+# argparse 取最后一个同名参数。放在前面的话 28 会被静默顶成 16 ——
+# 第一次起 qwen-bf16 就是这么建出了一个 256.3M 的模型（应为 445.1M），
+# 而日志上除了参数量那一行没有任何异常。
+shape_for() {
+  case "$1" in
+    qwen-*) echo "--blocks 28 --heads 16 --kv-heads 8 --head-dim 128 --intermediate 3072" ;;
+    *)      echo "" ;;
+  esac
+}
+
 # `-aNNN` = 从 stable 段某一步分叉，在第 NNN 千步收工（退火占 horizon 的 10%，
 # 与交付点 A 的 11k/111k 同比例）。用来回答「退火点设在哪一步最强」——
 # WSD 的分叉点让这件事不用重训，每个只花十几分钟。
@@ -134,6 +214,9 @@ budget_for() {
     *-e100) echo "--total-steps 100000 --lr-horizon-steps 111000 --lr-decay-steps 11000" ;;
     # `-aNNN` = 从 stable 段第 (NNN-decay) 千步分叉，退火占 horizon 的 11%
     # （与交付点 A 的 11k/111k 同比例），在第 NNN 千步收工
+    # a40 是给 qwen 那一轮配的同步数 poly 对照 —— qwen 骨干只跑 4 万步
+    # （445M 参数、70 步/分，144k 要 34 小时），poly 要在同一步数上退火才可比。
+    *-a40)  echo "--total-steps 40000 --lr-horizon-steps 40000 --lr-decay-steps 4400" ;;
     *-a67)  echo "--total-steps 67000 --lr-horizon-steps 67000 --lr-decay-steps 7000" ;;
     *-a78)  echo "--total-steps 78000 --lr-horizon-steps 78000 --lr-decay-steps 8000" ;;
     *-a89)  echo "--total-steps 89000 --lr-horizon-steps 89000 --lr-decay-steps 9000" ;;
@@ -153,6 +236,26 @@ budget_for() {
     *-a200) echo "--total-steps 200000 --lr-horizon-steps 200000 --lr-decay-steps 20000" ;;
     *-a211) echo "--total-steps 211000 --lr-horizon-steps 211000 --lr-decay-steps 21000" ;;
     *-long) echo "--total-steps 220000 --lr-horizon-steps 220000 --lr-decay-steps 20000" ;;
+    # `v5-*` = 加宽到 dim=384 的那一轮，跑到 14.4 万（退火 1.4 万，仍是 11%）。
+    #
+    # 不用 11.1 万的理由：v4 那轮实测判断点选错会让结论翻符号 —— FP8 在 111k 处
+    # 是 -20.8，在 144k 处是 +13.5。加宽是纯加容量，峰值只会比 dim=256 更靠后
+    # （v4 里有效容量最低的 FP4 饱和最早，78k），用 111k 量它等于低估。
+    # 14.4 万覆盖了 v4 三个精度峰值的全部范围（10 万~14.4 万）。
+    #
+    # 不用 19 万的理由：吞吐掉 1.5 倍，19 万要 ~12 小时跨两三个 Slurm 作业；
+    # 先花那么多赌一个可能在 11.1 万就见顶的模型不划算。里程碑快照留着，
+    # 真在爬坡就从快照分叉续，不用重跑。
+    #
+    # **必须放在 `-aNNN` 之后**：否则 `v5-bf16-a111` 会先撞上这一条。
+    v5-*|v6-*) echo "--total-steps 144000 --lr-horizon-steps 144000 --lr-decay-steps 14000" ;;
+    # `qwen-*` = 全注意力骨干（445M）。**只跑 4 万步**，退火仍占 11%。
+    #
+    # 实测吞吐 18.1 局/s、70 步/分 —— 144k 要 34.3 小时、跨 5~6 个 Slurm 作业，
+    # 而本轮已经在跨作业上出过三次事故（CUDA IPC、磁盘满、重复启动）。
+    # 4 万步约 9.5 小时，且 v4 实测「92% 的棋力在 8 万步到手」，
+    # 4 万步足以看出这根骨干救不救得回来；好就接着跑，不好就省下 25 小时。
+    qwen-*) echo "--total-steps 40000 --lr-horizon-steps 40000 --lr-decay-steps 4400" ;;
     *)      echo "--total-steps 111000 --lr-horizon-steps 111000 --lr-decay-steps 11000" ;;
   esac
 }
@@ -172,11 +275,11 @@ budget_for() {
 # 到 2e-4 @ 111,000。选 10 万做 stable 的依据是实测「92% 的棋力在 8 万步到手」，
 # 之后每万步的增量（+2~+12 Elo）已落在测量误差 ±9.6 之内。
 COMMON=(
-  --dim 256 --blocks 16 --attn-every 4
+  --blocks 16 --attn-every 4
   --parallel-games 4096 --games-per-iter 2048
   --simulations 64 --max-considered 16 --temperature-plies 12
   --batch-size 1024 --steps-per-iter 400
-  --lr 0.002 --warmup-steps 500 --lr-schedule wsd
+  --warmup-steps 500 --lr-schedule wsd
   --milestone-every-steps 10000
 )
 
@@ -184,9 +287,11 @@ COMMON=(
 start_leg() {
   local exp="$1" devs="$2"
   bash "$REPO/scripts/train.sh" start "$exp" --precision "$(precision_for "$exp")" \
+    --dim "$(dim_for "$exp")" --lr "$(lr_for "$exp")" \
+    --arch "$(arch_for "$exp")" \
     --device "${devs%%,*}" --selfplay-devices "$devs" \
     "${COMMON[@]}" $(budget_for "$exp") --seed "$(seed_for "$exp")" \
-    $(extra_for "$exp")
+    $(extra_for "$exp") $(shape_for "$exp")
 }
 
 case "${1:-}" in
