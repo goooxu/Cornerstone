@@ -286,3 +286,19 @@ def test_experiment_script_derives_precision_from_the_run_name():
     assert "*-s2) echo 2" in sf and "*) *echo 1" not in sf
     assert '--seed "$(seed_for "$exp")"' in sh, "seed_for 定义了却没被 start_leg 用上"
     assert "--seed 1\n" not in sh, "COMMON 里还写死着 --seed 1"
+
+
+def test_shape_overrides_win_over_the_common_table():
+    """`shape_for` 必须在 `${COMMON[@]}` **之后**展开。
+
+    COMMON 里写着 `--blocks 16`，而 argparse 取最后一个同名参数。
+    放在前面的话，qwen 那组的 `--blocks 28` 会被静默顶成 16 —— 实际发生过：
+    第一次起 qwen-bf16 建出了 256.3M 的模型（16 层），应为 445.1M（28 层），
+    而日志上除了参数量那一行没有任何异常。
+    """
+    sh = open(os.path.join(REPO, "scripts", "ab_experiment.sh"), encoding="utf-8").read()
+    body = sh[sh.index("start_leg()"):]
+    body = body[:body.index("\n}")]
+    assert "COMMON[@]" in body and "shape_for" in body
+    assert body.index("COMMON[@]") < body.index("shape_for"), \
+        "shape_for 排在 COMMON 之前，--blocks 会被顶回 16"

@@ -24,8 +24,14 @@ const S = {
   sid: null,
   state: null,
   legal: new Set(),
-  piece: null,          // 选中的棋子 id
-  ori: null,            // 选中的朝向 id
+  // 交互是**先点位置、再选摆法**：点棋盘一个格，右侧列出会盖住它的合法着法。
+  // 原先是「先挑棋子、再找位置」—— 21 枚棋子、91 种朝向，等于让人先在脑子里
+  // 做一遍搜索；而且展开朝向要用浮层，浮层必然盖住邻居，改了三次都不对。
+  pickCell: null,       // 点中的棋盘格 [r,c]；非空时右侧显示候选而不是托盘
+  pickPiece: null,      // 展开的棋子 id（null = 还在第一层）
+  pickOri: null,        // 选中的朝向 id；同一朝向有多个位置时由鼠标在棋盘上滑动决定
+  oriActions: null,     // 该朝向的全部可放位置
+  preview: null,        // 悬停候选时在棋盘上预览的着法
   hover: null,          // [r, c]
   analysis: null,
   busy: false,
@@ -89,22 +95,6 @@ function cellAt(ev) {
   return (r >= 0 && r < n && c >= 0 && c < n) ? [r, c] : null;
 }
 
-function actionFor(r, c) {
-  if (S.ori === null) return null;
-  return S.ori * S.meta.num_cells + r * S.meta.board_n + c;
-}
-
-// 当前朝向所有合法的锚点（左上角）
-function legalAnchors() {
-  const out = [];
-  if (S.ori === null) return out;
-  const base = S.ori * S.meta.num_cells;
-  for (let i = 0; i < S.meta.num_cells; i++) {
-    if (S.legal.has(base + i)) out.push([Math.floor(i / S.meta.board_n), i % S.meta.board_n]);
-  }
-  return out;
-}
-
 function oriCells(oriId) {
   for (const p of S.meta.pieces) {
     for (const o of p.orientations) if (o.id === oriId) return o.cells;
@@ -149,28 +139,34 @@ function draw() {
     }
   }
 
-  // 选中朝向的合法锚点
   const humanToMove = S.phase === 'playing' && st && !st.terminal
     && st.players[st.current_player] === null;
-  if (humanToMove) {
-    CTX.fillStyle = seatColor(st.current_player) + '66';
-    for (const [r, c] of legalAnchors()) {
+
+  // 还没选格：把「点了有候选」的格标出来，告诉人可以点哪儿
+  if (humanToMove && !S.pickCell) {
+    CTX.fillStyle = seatColor(st.current_player) + '55';
+    for (const [r, c] of playableCells()) {
       CTX.beginPath();
       CTX.arc(PAD + (c + 0.5) * CELL, PAD + (r + 0.5) * CELL, 3.5, 0, Math.PI * 2);
       CTX.fill();
     }
   }
 
-  // 悬停预览
-  if (humanToMove && S.hover && S.ori !== null) {
-    const [hr, hc] = S.hover;
-    const a = actionFor(hr, hc);
-    const ok = S.legal.has(a);
-    CTX.fillStyle = ok ? seatColor(st.current_player) + 'bb' : '#f8717166';
-    CTX.strokeStyle = ok ? '#ffffff88' : '#f87171';
+  // 选中的那个格描个框
+  if (humanToMove && S.pickCell) {
+    const [pr, pc] = S.pickCell;
+    CTX.strokeStyle = seatColor(st.current_player);
+    CTX.lineWidth = 2.5;
+    roundRect(PAD + pc * CELL + 1.5, PAD + pr * CELL + 1.5, CELL - 3, CELL - 3, 4);
+    CTX.stroke();
+  }
+
+  // 悬停某个候选时，把它整块画在棋盘上
+  if (humanToMove && S.preview !== null) {
+    CTX.fillStyle = seatColor(st.current_player) + 'bb';
+    CTX.strokeStyle = '#ffffff88';
     CTX.lineWidth = 1.5;
-    for (const [dr, dc] of oriCells(S.ori)) {
-      const r = hr + dr, c = hc + dc;
+    for (const [r, c] of actionCells(S.preview)) {
       if (r < 0 || r >= n || c < 0 || c >= n) continue;
       roundRect(PAD + c * CELL + 1.5, PAD + r * CELL + 1.5, CELL - 3, CELL - 3, 4);
       CTX.fill(); CTX.stroke();
@@ -299,11 +295,218 @@ function trayPlan() {
   }));
 }
 
+// ---------------------------------------------------------------- 候选
+//
+// 点棋盘一个格，右侧列出所有会**盖住这个格**的合法着法。
+//
+// 必须分两层：实测点开局的起始格有 414 个候选（首手必须盖住它，于是全部合法
+// 着法都符合）。按棋子分组之后，第一层最多 21 个（就是全部棋子）、第二层中位数
+// 只有 1~4 —— 第 20 手后中位数就是 1，绝大多数时候点一下就定了。
+
+/** 会盖住 (r,c) 的合法着法，三层：Map<pieceId, Map<oriId, action[]>>。
+ *
+ * 三层各自的规模是实测的（角点口径）：
+ *   开局    棋子 21、朝向中位 4、**位置中位 5**
+ *   第 6 手 棋子 18、朝向中位 2、**位置中位 1**（最大 2）
+ *   第 20 手 棋子 7、朝向中位 1、**位置中位 1**（最大 2）
+ *
+ * 「位置」这一层绝大多数时候只有 1 个 —— 所以它不该占一次点击，
+ * 而是由鼠标在棋盘上滑动决定（见 pickPlacement）。
+ */
+function candidatesAt(r, c) {
+  const out = new Map();
+  if (!S.state) return out;
+  const n = S.meta.board_n, cells = S.meta.num_cells;
+  for (const p of S.meta.pieces) {
+    for (const o of p.orientations) {
+      const base = o.id * cells;
+      for (const [dr, dc] of o.cells) {
+        // 该朝向要盖住 (r,c)，锚点就得在 (r-dr, c-dc)
+        const ar = r - dr, ac = c - dc;
+        if (ar < 0 || ar >= n || ac < 0 || ac >= n) continue;
+        const a = base + ar * n + ac;
+        if (!S.legal.has(a)) continue;
+        if (!out.has(p.id)) out.set(p.id, new Map());
+        const byOri = out.get(p.id);
+        if (!byOri.has(o.id)) byOri.set(o.id, []);
+        const arr = byOri.get(o.id);
+        if (!arr.includes(a)) arr.push(a);
+      }
+    }
+  }
+  return out;
+}
+
+/** 一个格上「棋子 x 朝向」共多少项 —— 决定要不要把这两步合成一步。 */
+function pairCount(groups) {
+  let n = 0;
+  for (const byOri of groups.values()) n += byOri.size;
+  return n;
+}
+
+// 项数不超过这个数就把「选棋子」和「选朝向」合成一步。
+// 实测：开局 91 项、第 6 手中位 44、第 20 手中位 8 —— 于是残局一步到位，
+// 而残局正是选择最紧张、最不想多点一下的时候。
+const MERGE_LIMIT = 24;
+
+/** 选中朝向后，鼠标停在 (mr,mc) 时该用哪个位置。
+ *
+ * 优先取「棋子盖住了鼠标所在格」的那个；都没盖住就取重心离鼠标最近的。
+ * 位置中位数是 1，所以这个函数多数时候只有一个候选可选。
+ */
+function pickPlacement(actions, mouse) {
+  if (actions.length <= 1 || !mouse) return actions[0];
+  const [mr, mc] = mouse;
+  let best = actions[0], bestD = Infinity;
+  for (const a of actions) {
+    const cs2 = actionCells(a);
+    if (cs2.some(([r, c]) => r === mr && c === mc)) return a;
+    let sr = 0, sc = 0;
+    for (const [r, c] of cs2) { sr += r; sc += c; }
+    const d = Math.hypot(sr / cs2.length - mr, sc / cs2.length - mc);
+    if (d < bestD) { bestD = d; best = a; }
+  }
+  return best;
+}
+
+/** 一个着法覆盖哪些格 —— 预览和高亮都用它。 */
+function actionCells(a) {
+  const n = S.meta.board_n, cells = S.meta.num_cells;
+  const r0 = Math.floor((a % cells) / n), c0 = (a % cells) % n;
+  return oriCells(Math.floor(a / cells)).map(([dr, dc]) => [r0 + dr, c0 + dc]);
+}
+
+/** 可以点的格：**当前方的角点**，开局时就是那一个起始格。
+ *
+ * 这是 Blokus 的落子规则本身 —— 新棋子必须斜接自己已有的棋子、不能边接。
+ * 服务端直接给（`state.anchors`，来自引擎的 `Board.anchor_cells()`），
+ * **前端不重算**：合法性判断只有 C++ 引擎那一份，训练、评测、试玩共用，
+ * 在这里抄一份迟早两边对不上（见文件开头那条硬规则）。
+ *
+ * 早先这里返回的是「任何合法着法盖得住的格」—— 那是个大得多的集合
+ * （开局 41 个格），点哪儿都有候选，反而看不出该往哪儿走。
+ *
+ * 还要**滤掉放不下东西的角点**：实测第 20 手时 12 个角点里有 4 个没有任何
+ * 合法着法盖得住（剩下的棋子都太大）。留着它们可点，人点下去只会看到
+ * 「这个格放不下任何棋子」—— 算得出来的事不该让人去试。
+ */
+function playableCells() {
+  const st = S.state;
+  if (!st || !st.anchors) return [];
+  const key = `${S.sid}:${st.ply}`;
+  if (_playable.key === key) return _playable.cells;
+  const cells = (st.anchors[st.current_player] || [])
+    .filter(([r, c]) => candidatesAt(r, c).size > 0);
+  _playable = { key, cells };
+  return cells;
+}
+// 缓存键带手数：一局之内每走一手合法集合就变而 sid 不变，只用 sid 会发馊。
+let _playable = { key: null, cells: [] };
+
+// 点了格之后，右侧这块从「棋子托盘」切成「这个格能放什么」。
+//
+// 层次是 棋子 -> 朝向 -> 位置，但**两处自动折叠**：
+//   * 项数 <= MERGE_LIMIT 时「棋子」和「朝向」合成一步（残局中位 8 项）
+//   * 「位置」不占点击，选中朝向后由鼠标在棋盘上滑动决定（中位数就是 1）
+function renderCandidates(wrap) {
+  const [r, c] = S.pickCell;
+  const groups = candidatesAt(r, c);
+  const card = document.createElement('div');
+  card.className = 'card';
+  const merged = pairCount(groups) <= MERGE_LIMIT;
+
+  const h = document.createElement('h2');
+  h.innerHTML = `第 ${r + 1} 行 ${c + 1} 列 可放`
+    + `<small>${groups.size} 种棋子 · 点棋盘空白处或按 Esc 返回</small>`;
+  card.appendChild(h);
+
+  if (!groups.size) {
+    const p = document.createElement('div');
+    p.className = 'hint';
+    p.textContent = '这个格放不下任何棋子 —— 换一格试试。';
+    card.appendChild(p);
+    wrap.appendChild(card);
+    return;
+  }
+
+  const seat = S.state.current_player;
+  const list = document.createElement('div');
+  list.className = 'cand';
+
+  const item = (cells, count) => {
+    const b = document.createElement('div');
+    b.className = 'cand-item';
+    b.appendChild(miniCanvas(cells, 11, seatColor(seat)));
+    if (count > 1) {
+      const n = document.createElement('span');
+      n.className = 'cand-n';
+      n.textContent = count;
+      b.appendChild(n);
+    }
+    return b;
+  };
+
+  // 选中某个朝向：不立刻落子，交给鼠标在棋盘上挑位置
+  const chooseOri = (oriId, actions) => {
+    if (actions.length === 1) { play(actions[0]); return; }   // 只有一处，直接落
+    S.pickOri = oriId;
+    S.oriActions = actions;
+    S.preview = actions[0];
+    renderTrays(); draw();
+  };
+
+  if (S.pickOri !== null) {
+    // 第三层：位置由鼠标决定，这里只给提示和退路
+    const tip = document.createElement('div');
+    tip.className = 'hint';
+    tip.textContent = `这个形态有 ${S.oriActions.length} 处可放 —— 在棋盘上移动鼠标选位置，点击落子。`;
+    card.appendChild(tip);
+    const back = document.createElement('button');
+    back.textContent = '← 换一个形态';
+    back.onclick = () => { S.pickOri = null; S.oriActions = null; S.preview = null; renderTrays(); draw(); };
+    card.appendChild(back);
+  } else if (merged || S.pickPiece !== null) {
+    // 一步到位（项数少），或已经选了棋子、现在列它的朝向
+    for (const [pid, byOri] of groups) {
+      if (!merged && pid !== S.pickPiece) continue;
+      for (const [oriId, actions] of byOri) {
+        const b = item(oriCells(oriId), actions.length);
+        b.onclick = () => chooseOri(oriId, actions);
+        b.onmouseenter = () => { S.preview = actions[0]; draw(); };
+        b.onmouseleave = () => { S.preview = null; draw(); };
+        list.appendChild(b);
+      }
+    }
+    if (!merged) {
+      const back = document.createElement('button');
+      back.textContent = '← 换一枚棋子';
+      back.onclick = () => { S.pickPiece = null; S.preview = null; renderTrays(); draw(); };
+      card.appendChild(back);
+    }
+  } else {
+    // 项数多：先选棋子
+    for (const [pid, byOri] of groups) {
+      const total = [...byOri.values()].reduce((n, a) => n + a.length, 0);
+      const b = item(S.meta.pieces[pid].orientations[0].cells, byOri.size);
+      b.onclick = () => {
+        if (total === 1) { play([...byOri.values()][0][0]); return; }
+        S.pickPiece = pid; S.preview = null; renderTrays(); draw();
+      };
+      b.onmouseenter = () => { S.preview = [...byOri.values()][0][0]; draw(); };
+      b.onmouseleave = () => { S.preview = null; draw(); };
+      list.appendChild(b);
+    }
+  }
+  card.appendChild(list);
+  wrap.appendChild(card);
+}
+
 function renderTrays() {
   const wrap = $('pieces-wrap');
   wrap.innerHTML = '';
   const st = S.state;
   if (!st) return;
+  if (S.pickCell) { renderCandidates(wrap); return; }
 
   for (const { seat, interactive } of trayPlan()) {
     const card = document.createElement('div');
@@ -312,7 +515,7 @@ function renderTrays() {
     const h = document.createElement('h2');
     h.innerHTML = dotHtml(seat) + '棋子'
       + `<small>剩 ${st.remaining[seat].filter(Boolean).length} 枚 · 已占 ${st.scores[seat]} 格`
-      + (interactive ? ' · 悬停选形态' : ' · 只读') + '</small>';
+      + (interactive ? ' · 点棋盘格子选位置' : ' · 只读') + '</small>';
     card.appendChild(h);
 
     const tray = document.createElement('div');
@@ -321,50 +524,13 @@ function renderTrays() {
       const div = document.createElement('div');
       const used = !st.remaining[seat][p.id];
       div.className = 'piece' + (used ? ' used' : '')
-        + (interactive && S.piece === p.id ? ' sel' : '');
+        ;
       div.appendChild(miniCanvas(p.orientations[0].cells, 9, seatColor(seat)));
-      if (interactive && !used) div.appendChild(orientRing(p, seat));
       tray.appendChild(div);
     }
     card.appendChild(tray);
     wrap.appendChild(card);
   }
-}
-
-// 把 k 个朝向均匀摆在一个圆周上，从正上方开始顺时针。
-// 半径随 k 增大，否则 8 个朝向（4 旋转 x 2 镜像的满配）会挤在一起。
-function orientRing(p, me) {
-  const ring = document.createElement('div');
-  ring.className = 'ring';
-  const oris = p.orientations;
-  const k = oris.length;
-  // 圈是**浮层**，不受托盘格子大小限制（一路 overflow: visible，z-index 抬到最上）。
-  // 之前按格子宽度去收半径纯属多虑 —— 底下有暗底盖着，压住邻居没关系，
-  // 反倒是圈太小、缩略图太挤才真的难选。
-  const radius = k <= 2 ? 62 : k <= 4 ? 80 : 100;
-  // 圆形暗底的大小跟着半径走，由 CSS 用 calc 加上按钮尺寸
-  ring.style.setProperty('--r', radius + 'px');
-
-  // 靠边那几列把圈整体往中间挪一点，否则最右一列的圈会顶出页面、
-  // 逼出一条横向滚动条。7 列，第 3 列居中不动。
-  const col = p.id % 7;
-  ring.style.transform = `translateX(${((3 - col) / 3 * radius * 0.6).toFixed(0)}px)`;
-
-  oris.forEach((o, i) => {
-    const ang = -Math.PI / 2 + (i * 2 * Math.PI) / k;
-    const btn = document.createElement('div');
-    btn.className = 'ori-btn' + (S.piece === p.id && S.ori === o.id ? ' sel' : '');
-    btn.style.left = `calc(50% + ${(radius * Math.cos(ang)).toFixed(1)}px)`;
-    btn.style.top = `calc(50% + ${(radius * Math.sin(ang)).toFixed(1)}px)`;
-    btn.appendChild(miniCanvas(o.cells, 13, seatColor(me)));
-    btn.onclick = (ev) => {
-      ev.stopPropagation();
-      S.piece = p.id; S.ori = o.id;
-      renderTrays(); draw();
-    };
-    ring.appendChild(btn);
-  });
-  return ring;
 }
 
 // ---------------------------------------------------------------- 状态渲染
@@ -402,10 +568,9 @@ function applyState(st, analysis) {
   // 这里按人的座位索引，noHuman 时直接清空，绝不拿 -1 去索引。
   const noHuman = st.human_player < 0;
   if (noHuman) {
-    S.piece = null; S.ori = null;
+    clearPick();
   } else {
     const seat = st.human_player;             // 走到这里一定 >= 0
-    if (S.piece !== null && !st.remaining[seat][S.piece]) { S.piece = null; S.ori = null; }
   }
 
   syncControls();
@@ -633,13 +798,34 @@ function onConfigChange(ev) {
 
 // ---------------------------------------------------------------- 开始 / 结束
 
+// 这一局的随机开局种子。**null = 不注入**。
+//
+// 只有连打多局才随机：多局是量棋力，随机开局能绕开自博弈那个「所有局都走同一手」
+// 的漏斗；单局是看棋，而「网络自己开什么」恰恰是想看的东西。
+// 一对里的两局用**同一个**种子 —— 开局逐手相同、先后手已翻，先手优势对双方
+// 各记一半，正是 arena 的成对口径。
+function openingSeedForThisGame() {
+  const s = S.series;
+  if (!s || s.total <= 1) return null;
+  if (!s.swap) s.openingSeed = Math.floor(Math.random() * 2 ** 31);
+  return s.openingSeed;
+}
+
 // 开一局新棋（不动战绩）
 async function newSession() {
+  // 换边在这里做，不在 recordResult 里：终局后棋盘还摆着，那时翻会让颜色对调。
+  // 第一局（played === 0）不翻。**必须在取开局种子之前**，否则 `!swap`
+  // 判「新一对开始」会错位，成对口径就破了。
+  if (S.series && S.series.played > 0) S.series.swap = !S.series.swap;
   const o = orderedForThisGame();          // 连续对战时逐局交换先后手
-  const r = await post('/api/new', { players: o.players, sims: o.sims });
+  const r = await post('/api/new', {
+    players: o.players, sims: o.sims,
+    opening_seed: openingSeedForThisGame(),
+  });
   S.sid = r.sid;
   S.labels = r.labels || null;
-  S.analysis = null; S.piece = null; S.ori = null;
+  S.analysis = null; S.pickCell = null; S.pickPiece = null;
+  S.pickOri = null; S.oriActions = null; S.preview = null;
   applyState(r.state, null);
 }
 
@@ -709,7 +895,7 @@ function seatDesc(i) {
 // 因此战绩必须按**引擎**记，不能按座位记 —— 座位每局都在换。
 function newSeries(total) {
   S.series = {
-    total: total, played: 0, swap: false,
+    total: total, played: 0, swap: false, openingSeed: null,
     wins: [0, 0], draws: 0, squares: [0, 0], plies: 0,
     firstWins: [0, 0], secondWins: [0, 0],
     names: [seatDesc(0), seatDesc(1)],   // 开局前的占位，拿到服务端 label 后覆盖
@@ -741,7 +927,9 @@ function recordResult(st) {
   s.squares[0] += sa; s.squares[1] += sb;
   s.plies += st.ply;
   s.played++;
-  s.swap = !s.swap;                        // 下一局换边
+  // **这里不翻 swap。** 颜色是从 swap 现算的（seatColor -> engineOfSeat），
+  // 终局那一刻翻的话，刚下完、还摆在屏幕上的这一局会当场被按下一局的座位重画 ——
+  // 表现就是「一局打完双方颜色对调」。翻边属于「开下一局」，见 newSession()。
   renderSeries();
 }
 
@@ -831,7 +1019,7 @@ async function aiMove() {
 async function play(action) {
   await guard(async () => {
     const st = await post('/api/move', { sid: S.sid, action });
-    S.piece = null; S.ori = null;
+    clearPick();
     applyState(st, null);
   });
   // pump 里那个 while 顺带覆盖了「AI 走完对方仍无法落子（停手）」的情况
@@ -842,18 +1030,42 @@ CV.addEventListener('mousemove', (ev) => {
   const cell = cellAt(ev);
   const changed = JSON.stringify(cell) !== JSON.stringify(S.hover);
   S.hover = cell;
+  // 选中朝向后，位置由鼠标决定 —— 这一层不占点击，因为实测位置数中位就是 1
+  if (S.pickOri !== null && S.oriActions && changed) {
+    S.preview = pickPlacement(S.oriActions, cell);
+  }
+  // 只有角点可点，光标跟着变 —— 省得人对着不能点的格反复试
+  const st = S.state;
+  const canPick = st && !st.terminal && S.phase === 'playing'
+    && st.players[st.current_player] === null && cell && isPlayable(cell);
+  CV.style.cursor = canPick ? 'pointer' : 'default';
   if (changed) draw();
 });
 CV.addEventListener('mouseleave', () => { S.hover = null; draw(); });
+// 点棋盘 = **选位置**，不是落子；落子在右侧候选列表里点。
 CV.addEventListener('click', (ev) => {
   const st = S.state;
-  if (S.phase !== 'playing' || !st || st.terminal || S.ori === null) return;
+  if (S.phase !== 'playing' || !st || st.terminal) return;
   if (st.players[st.current_player] !== null) return;      // 轮到 AI，人不能替它下
   const cell = cellAt(ev);
-  if (!cell) return;
-  const a = actionFor(cell[0], cell[1]);
-  if (S.legal.has(a)) play(a);
+  // 已经选好形态、正在用鼠标挑位置：这一下就是落子
+  if (S.pickOri !== null && S.preview !== null) { play(S.preview); return; }
+  // **只有角点能点**：新棋子必须斜接自己已有的棋子，点别处没有任何合法着法。
+  // 点非角点就退回托盘，不进入选位置状态 —— 否则会出现「点了个格、右侧空空」。
+  if (!cell || !isPlayable(cell)) { clearPick(); return; }
+  S.pickCell = cell; S.pickPiece = null; S.preview = null;
+  renderTrays(); draw();
 });
+
+function isPlayable([r, c]) {
+  return playableCells().some(([ar, ac]) => ar === r && ac === c);
+}
+
+function clearPick() {
+  S.pickCell = null; S.pickPiece = null; S.pickOri = null;
+  S.oriActions = null; S.preview = null;
+  renderTrays(); draw();
+}
 
 // 绑定一律走这里，不直接 $('x').onclick = ...
 //
@@ -880,18 +1092,13 @@ on('sims1', 'onchange', onConfigChange);
 on('series-count', 'onchange', onConfigChange);
 
 document.addEventListener('keydown', (ev) => {
-  // 没人在座就没有「选棋子」这回事，快捷键一并停掉
-  if (S.state && S.state.human_player < 0) return;
-  if (S.piece === null) return;
-  const oris = S.meta.pieces[S.piece].orientations;
-  const idx = oris.findIndex(o => o.id === S.ori);
-  if (ev.key === 'r' || ev.key === 'R') {
-    S.ori = oris[(idx + 1) % oris.length].id; renderTrays(); draw();
-  } else if (ev.key === 'f' || ev.key === 'F') {
-    S.ori = oris[(idx + Math.ceil(oris.length / 2)) % oris.length].id; renderTrays(); draw();
-  } else if (ev.key === 'Escape') {
-    S.piece = null; S.ori = null; renderTrays(); draw();
-  }
+  if (S.state && S.state.human_player < 0) return;   // 没人在座就没有选位置这回事
+  if (ev.key !== 'Escape') return;
+  if (S.pickOri !== null) {            // 退回形态列表
+    S.pickOri = null; S.oriActions = null; S.preview = null; renderTrays(); draw();
+  } else if (S.pickPiece !== null) {   // 退回棋子列表
+    S.pickPiece = null; renderTrays(); draw();
+  } else if (S.pickCell) clearPick();  // 退回托盘
 });
 
 // ---------------------------------------------------------------- 启动

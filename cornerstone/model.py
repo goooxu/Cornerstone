@@ -31,6 +31,7 @@ BOARD = E.BOARD_N
 CELLS = E.NUM_CELLS
 PLANES = E.NUM_PLANES
 SCALARS = E.NUM_SCALARS
+PIECES = E.NUM_PIECES
 ORI = E.NUM_ORI
 ACTIONS = E.NUM_ACTIONS
 
@@ -42,6 +43,13 @@ class ModelConfig:
     mlp_ratio: int = 4
     attn_every: int = 4          # 每隔几个 block 插一层全局注意力，0 表示不插
     heads: int = 8
+    # 骨干形状。**默认 poly，一切现存跑与 checkpoint 行为不变。**
+    #   poly —— 深度卷积 + 每 attn_every 层一次注意力 + SwiGLU（本项目自研）
+    #   qwen —— Qwen3-0.6B 形状的全注意力层，见 qwen_block.py（只借形状、随机初始化）
+    arch: str = "poly"
+    kv_heads: int = 8            # GQA 的 KV 头数，仅 arch="qwen" 用
+    head_dim: int = 0            # 0 = dim // heads；Qwen3 里它与 dim 解耦
+    intermediate: int = 0        # 0 = dim * mlp_ratio；Qwen3-0.6B 是 3072
     dw_kernel: int = 5           # 深度可分离卷积核大小
     # 主干 GEMM 的计算精度：bf16 | fp8(MXFP8) | fp4(NVFP4)。三者的**参数存储完全
     # 相同**，差别只在 te.Linear 前向时用哪个量化配方。
@@ -65,6 +73,9 @@ class ModelConfig:
         # `tools/train.py` 的 CLI 是从 dataclass 自动生成的，没有 choices 校验 ——
         # `--precision fp16` 这种手误会安静地建出一个错配置，这句 assert 是唯一防线。
         assert self.precision in ("bf16", "fp8", "fp4"), f"未知精度 {self.precision!r}"
+        # 同一个理由：CLI 从 dataclass 自动生成、没有 choices 校验，
+        # `--arch qwen3` 这种手误会安静地建出一个 poly 模型。
+        assert self.arch in ("poly", "qwen"), f"未知骨干 {self.arch!r}"
 
     @property
     def quantized(self) -> bool:
@@ -73,7 +84,13 @@ class ModelConfig:
 
     @property
     def hidden(self) -> int:
-        return self.dim * self.mlp_ratio
+        """SwiGLU 的中间宽度。`intermediate` 显式给了就用它（Qwen3 与 dim 解耦）。"""
+        return self.intermediate or self.dim * self.mlp_ratio
+
+    @property
+    def attn_head_dim(self) -> int:
+        """注意力头宽。Qwen3-0.6B 是 128，而 16*128=2048 != dim(1024) —— 有意的。"""
+        return self.head_dim or self.dim // self.heads
 
     @property
     def torch_param_dtype(self) -> torch.dtype:
@@ -214,23 +231,27 @@ class CornerNet(nn.Module):
         self.cfg = cfg = cfg or ModelConfig()
         d = cfg.dim
 
-        self.stem = nn.Conv2d(PLANES, d, 3, padding=1, bias=True)
-        self.pos = nn.Parameter(torch.zeros(1, CELLS, d))
-        # 双方剩余棋子 + 占格数 -> 广播到每个格
-        self.scalar_mlp = nn.Sequential(
-            nn.Linear(SCALARS, d), nn.SiLU(), nn.Linear(d, d)
-        )
-
         last = cfg.blocks - 1
-        self.blocks = nn.ModuleList([
-            PolyBlock(
-                cfg,
-                with_attn=(cfg.attn_every > 0 and (i + 1) % cfg.attn_every == 0),
-                # 首尾 block 对精度最敏感，FP8 时不走 FP8 GEMM
-                force_bf16=(cfg.fp8_first_last_bf16 and i in (0, last)),
+        force_bf16_at = lambda i: cfg.fp8_first_last_bf16 and i in (0, last)
+
+        if cfg.arch == "poly":
+            self.stem = nn.Conv2d(PLANES, d, 3, padding=1, bias=True)
+            self.pos = nn.Parameter(torch.zeros(1, CELLS, d))
+            # 双方剩余棋子 + 占格数 -> 广播到每个格
+            self.scalar_mlp = nn.Sequential(
+                nn.Linear(SCALARS, d), nn.SiLU(), nn.Linear(d, d)
             )
-            for i in range(cfg.blocks)
-        ])
+            self.blocks = nn.ModuleList([
+                PolyBlock(
+                    cfg,
+                    with_attn=(cfg.attn_every > 0 and (i + 1) % cfg.attn_every == 0),
+                    # 首尾 block 对精度最敏感，FP8 时不走 FP8 GEMM
+                    force_bf16=force_bf16_at(i),
+                )
+                for i in range(cfg.blocks)
+            ])
+        else:
+            self._build_qwen(cfg, d, force_bf16_at)
         self.norm_out = nn.RMSNorm(d)
 
         # 策略头：每个格给出 91 个朝向的 logit。动作编号 = ori*196 + 格号
@@ -242,8 +263,66 @@ class CornerNet(nn.Module):
 
         self.reset_parameters()
 
+    def _build_qwen(self, cfg, d: int, force_bf16_at) -> None:
+        """Qwen3 形状的骨干 + 结构化的 240 token 输入。
+
+        序列 = 196 个格 + 21 个己方棋子 + 21 个对方棋子 + 2 个占格数。
+        棋子和占格数不再像 poly 那样压成一个向量广播到每格，而是各自成 token ——
+        双向注意力于是能直接建立「这枚棋子放得下哪些格」这种关系。
+        """
+        from .qwen_block import QwenLayer, rope2d_tables
+
+        n_extra = 2 * PIECES + 2
+        self.n_tokens = CELLS + n_extra
+
+        # 格 token：逐格线性投影。骨干里没有卷积了，局部性交给注意力。
+        self.cell_proj = nn.Linear(PLANES, d)
+        # 棋子 token：每枚棋子「在手/已用」两种状态各一个可学习向量
+        self.piece_emb = nn.Embedding(2 * PIECES, d)
+        # 占格数 token：两个标量各投一个
+        self.score_proj = nn.Linear(1, d)
+        # 四类 token 各一个类型嵌入 + 非棋盘 token 的可学习位置
+        self.type_emb = nn.Parameter(torch.zeros(4, d))
+        self.pos = nn.Parameter(torch.zeros(1, self.n_tokens, d))
+
+        cos, sin = rope2d_tables(CELLS, BOARD, cfg.attn_head_dim, n_extra)
+        # **非持久**：pool._layout() 只遍历参数、load_weights() 对未知键抛错。
+        # 它是 cfg 的确定性函数，每个工作进程各建一份必然相同。
+        self.register_buffer("rope_cos", cos, persistent=False)
+        self.register_buffer("rope_sin", sin, persistent=False)
+
+        self.blocks = nn.ModuleList([
+            QwenLayer(cfg, make_linear, match_dtype, SwiGLU, force_bf16=force_bf16_at(i))
+            for i in range(cfg.blocks)
+        ])
+
+    def _qwen_tokens(self, planes: torch.Tensor, scalars: torch.Tensor) -> torch.Tensor:
+        b = planes.shape[0]
+        d = self.cfg.dim
+        # (B, PLANES, 14, 14) -> (B, 196, PLANES)
+        cells = planes.permute(0, 2, 3, 1).reshape(b, CELLS, PLANES)
+        cell_tok = self.cell_proj(cells) + self.type_emb[0]
+
+        # scalars 前 2*PIECES 项是双方每枚棋子的剩余标志（1=在手）
+        flags = scalars[:, : 2 * PIECES]
+        idx = torch.arange(2 * PIECES, device=planes.device)
+        # 在手 -> idx，已用 -> idx + 2*PIECES 落不到表里，所以用两张表拼：
+        # 表大小 2*PIECES，索引 = 棋子序号；用 flag 在「在手向量」与 0 之间选
+        piece_tok = self.piece_emb(idx).unsqueeze(0) * flags.unsqueeze(-1).to(self.piece_emb.weight.dtype)
+        own = piece_tok[:, :PIECES] + self.type_emb[1]
+        opp = piece_tok[:, PIECES:] + self.type_emb[2]
+
+        sc = scalars[:, 2 * PIECES :].unsqueeze(-1)          # (B, 2, 1)
+        score_tok = self.score_proj(sc) + self.type_emb[3]
+
+        x = torch.cat([cell_tok, own, opp, score_tok], dim=1)
+        return x + self.pos
+
     def reset_parameters(self) -> None:
         nn.init.trunc_normal_(self.pos, std=0.02)
+        if self.cfg.arch == "qwen":
+            nn.init.trunc_normal_(self.type_emb, std=0.02)
+            nn.init.trunc_normal_(self.piece_emb.weight, std=0.02)
         # 策略头零初始化 -> 训练一开始策略就是均匀分布，不会给 MCTS 一个随机的强先验
         nn.init.zeros_(self.policy.weight)
         nn.init.zeros_(self.policy.bias)
@@ -262,6 +341,15 @@ class CornerNet(nn.Module):
         return self.to(self.cfg.torch_param_dtype)
 
     def trunk(self, planes: torch.Tensor, scalars: torch.Tensor) -> torch.Tensor:
+        if self.cfg.arch == "qwen":
+            x = self._qwen_tokens(planes, scalars)
+            with self._fp8_scope():
+                for blk in self.blocks:
+                    x = blk(x, self.rope_cos, self.rope_sin)
+            # 只把前 196 个格 token 交给头部 —— 头的形状与 poly 逐字一致，
+            # 动作编号 ori*196+cell 和 mask_logits 都不用改。
+            return self.norm_out(x)[:, :CELLS]
+
         b = planes.shape[0]
         x = self.stem(planes.to(memory_format=torch.channels_last))
         x = x.permute(0, 2, 3, 1).reshape(b, CELLS, self.cfg.dim)

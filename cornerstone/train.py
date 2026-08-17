@@ -38,6 +38,13 @@ class TrainConfig:
     dim: int = 256
     blocks: int = 16
     attn_every: int = 4
+    # 骨干形状。默认 poly（本项目自研）；qwen = Qwen3-0.6B 形状的全注意力层，
+    # **只借形状、随机初始化**，见 cornerstone/qwen_block.py
+    arch: str = "poly"
+    heads: int = 8
+    kv_heads: int = 8            # GQA 的 KV 头数，仅 arch=qwen 用
+    head_dim: int = 0            # 0 = dim // heads
+    intermediate: int = 0        # 0 = dim * 4
     # 主干 GEMM 的计算精度：bf16 | fp8(MXFP8) | fp4(NVFP4)。
     # **直接换掉了老的 `fp8: bool`**（不像 ModelConfig 要留兼容别名）——
     # TrainConfig 不需要读老 checkpoint，让老命令行 `--fp8 true` 硬报错才是对的：
@@ -189,7 +196,9 @@ class Trainer:
         # 等于一开始就丢一半精度，而训练看不出任何异常。
         self.model = CornerNet(ModelConfig(
             dim=cfg.dim, blocks=cfg.blocks, attn_every=cfg.attn_every,
-            precision=cfg.precision,
+            precision=cfg.precision, arch=cfg.arch, heads=cfg.heads,
+            kv_heads=cfg.kv_heads, head_dim=cfg.head_dim,
+            intermediate=cfg.intermediate,
         )).to(self.device)
         self.opt = self._make_optimizer()
         self.model.to_param_dtype()

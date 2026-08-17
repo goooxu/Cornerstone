@@ -221,9 +221,26 @@ def test_sim_choices_are_sane():
     assert server.SIM_CHOICES == sorted(server.SIM_CHOICES)
     assert server.DEFAULT_SIMS in server.SIM_CHOICES
     assert all(0 <= n <= server.MAX_SIMS for n in server.SIM_CHOICES)
-    # 界面上只留这四档
-    assert server.SIM_CHOICES == [0, 64, 256, 800]
+    # 界面上只留这三档
+    assert server.SIM_CHOICES == [64, 256, 800]
     assert server.PURE_POLICY == 0
+
+
+def test_pure_policy_is_not_offered_in_the_ui():
+    """纯策略不进界面，但 API 仍然接受。
+
+    它会给出**相反**的排名：同一批 checkpoint，纯策略口径下「训练越久越差」，
+    带搜索重打则终点最强，直接头对头从 0.527 翻成 0.485（docs/08）。
+    摆在试玩界面里等于请人用一把已知会读反的尺子比较模型，而界面上看不出异常。
+
+    仍然保留 API 与 `_choose_by_policy` 那条代码路径 —— net_arena 和 diag
+    工具要用它做研究口径，那里有文档说明。
+    """
+    assert server.PURE_POLICY not in server.SIM_CHOICES, "界面不该提供纯策略"
+    assert min(server.SIM_CHOICES) > 0
+    # 代码路径还在
+    import inspect
+    assert "_choose_by_policy" in inspect.getsource(server.NetBrain)
 
 
 def test_pure_policy_is_accepted(client):
@@ -370,6 +387,36 @@ def test_undo_in_ai_vs_ai_pops_one_ply(client):
 
     after = len(client.post("/api/undo", json={"sid": sid}).json()["history"])
     assert after == before - 1, "AI 对战悔棋应只退一手"
+
+
+def test_undo_never_pops_into_the_injected_opening(client):
+    """注入的开局是地板 —— 它不是谁走的手，退进去也没法重来同一个开局。"""
+    r = client.post("/api/new", json={
+        "players": ["rule:greedy-area", "rule:corner-min"], "opening_seed": 7})
+    sid = r.json()["sid"]
+    client.post("/api/ai", json={"sid": sid})
+    for _ in range(6):                              # 使劲退
+        got = client.post("/api/undo", json={"sid": sid}).json()["history"]
+    assert len(got) == server.OPENING_PLIES, "悔棋不该退掉注入的开局"
+
+
+def test_config_is_not_locked_by_the_injected_opening(client):
+    """开局是注入的、不是走出来的，所以对局还没「开始」，配置仍可改。
+
+    判据要是写成 `board.ply > 0`，注入之后对局一出生就 ply=2，
+    配置当场锁死 —— 界面上表现为「刚点开始就再也改不了双方」。
+    """
+    r = client.post("/api/new", json={
+        "players": ["rule:greedy-area", "rule:corner-min"],
+        "sims": [16, 512], "opening_seed": 7})
+    assert r.json()["state"]["ply"] == server.OPENING_PLIES
+    sid = r.json()["sid"]
+    rr = client.post("/api/backend", json={"sid": sid, "sims": [800, 32]})
+    assert rr.status_code == 200, rr.text
+    # 真走了一手之后才该锁上
+    client.post("/api/ai", json={"sid": sid})
+    rr = client.post("/api/backend", json={"sid": sid, "sims": [64, 64]})
+    assert rr.status_code == 400
 
 
 def test_undo_in_human_game_returns_to_human(client):
@@ -776,7 +823,10 @@ def test_series_alternates_sides():
     assert "function orderedForThisGame" in js
     assert re.search(r"swap\)\s*\?\s*\{ players: \[p\[1\], p\[0\]\], sims: \[m\[1\], m\[0\]\] \}", js), \
         "换边时 players 和 sims 要一起换 —— 引擎带着自己的模拟数走"
-    assert "s.swap = !s.swap" in js, "每局结束要翻转"
+    # 只断言「会翻」，**不绑在哪儿翻** —— 时机曾经写在 recordResult 里，
+    # 而那正是「一局打完颜色对调」的成因（颜色从 swap 现算）。
+    # 时机由 test_sides_do_not_swap_colors_at_game_end 单独守。
+    assert re.search(r"swap = !\s*S?\.?series\.swap|swap = !s\.swap", js), "要逐局翻边"
     assert "function seatOfA" in js and "const a = seatOfA()" in js, "战绩要按引擎记"
     assert "orderedForThisGame()" in js and "o.players" in js, "开局要用换过边的顺序"
 
@@ -857,21 +907,215 @@ def test_status_shows_which_game_when_playing_a_series():
     assert re.search(r"第 \$\{s\.played\} / \$\{s\.total\} 局", js)
 
 
-def test_orientation_ring_is_not_limited_by_the_cell():
-    """朝向圈是浮层，尺寸不该被托盘格子宽度绑住。
+def test_engine_games_get_a_paired_random_opening():
+    """引擎对战默认注入随机开局两手，且同一个种子给出逐手相同的开局。
 
-    一路 overflow: visible + z-index 抬到最上，底下还有暗底盖着，
-    压住邻居没关系；圈太小、缩略图太挤才真的难选。
+    为什么必须有：自博弈的开局会塌到只剩一种首手（docs/08：第 8 万步之后
+    512 局里每局同一手）。不注入的话两个网络打 400 局，量到的是「这条特定
+    开局线上谁强」，纯策略档更是 400 局全同。三把尺子的 Elo 刻度就是按
+    `play_pair(opening_plies=2)` 量的，web 不对齐就不是同一个口径。
+
+    成对靠**同一对的两局传同一个种子**：开局逐手相同、先后手已翻。
+    """
+    two = ["rule:greedy-area", "rule:corner-min"]
+    a = server.new_game_for_test(players=two, opening_seed=1234)
+    b = server.new_game_for_test(players=two, opening_seed=1234)
+    c = server.new_game_for_test(players=two, opening_seed=5678)
+    assert len(a) == server.OPENING_PLIES, "引擎对战该走满开局手数"
+    assert a == b, "同种子必须给出逐手相同的开局，否则成不了对"
+    assert a != c, "不同种子该给出不同开局"
+
+
+def test_single_game_gets_no_random_opening():
+    """不传种子 = 不注入。单局的用途是**看棋**，而「网络自己开什么」恰恰是
+    想看的东西（自博弈开局塌到只剩一种首手，见 docs/08）—— 随机掉前两手
+    反而把它盖住了。单局也谈不上「双方各执先一次」，成对的理由只在多局成立。
+
+    前端据此决定：`series.total <= 1` 时 opening_seed 传 null。
+    """
+    two = ["rule:greedy-area", "rule:corner-min"]
+    assert server.new_game_for_test(players=two, opening_seed=None) == []
+
+
+def test_client_only_seeds_openings_for_multi_game_series():
+    """把「单局不随机」这条钉在前端那一行上。"""
+    js = _code("app.js")
+    m = re.search(r"function openingSeedForThisGame\(\)\s*\{(.*?)\n\}", js, re.S)
+    assert m, "找不到 openingSeedForThisGame"
+    assert "s.total <= 1" in m.group(1) and "return null" in m.group(1), \
+        "单局必须传 null（不注入）"
+
+
+def test_human_games_get_no_random_opening():
+    """人机对局不注入 —— 随机掉人的前两手没有意义。"""
+    got = server.new_game_for_test(players=[None, "rule:greedy-area"], opening_seed=1234)
+    assert got == [], "有人参与的局不该被注入开局"
+
+
+def test_opening_plies_matches_the_arena_protocol():
+    """web 的开局手数必须和 arena 的默认值一致，否则两边刻度对不上。"""
+    import inspect
+    from cornerstone import arena
+    sig = inspect.signature(arena.play_pair)
+    assert "opening_plies" in sig.parameters
+    from cornerstone import evaluate
+    assert inspect.signature(evaluate.evaluate_vs_baseline).parameters[
+        "opening_plies"].default == server.OPENING_PLIES
+
+
+def test_sides_do_not_swap_colors_at_game_end():
+    """翻边必须在**开下一局**时做，不能在终局那一刻做。
+
+    颜色是从 swap 现算的（seatColor -> engineOfSeat）。在 recordResult 里翻的话，
+    刚下完、还摆在屏幕上的这一局会当场被按下一局的座位重画 —— 表现就是
+    「一局打完，双方棋子颜色对调」。实际发生过。
+
+    顺带守住成对开局：newSession 里必须**先翻 swap 再取种子**，
+    否则 `!swap` 判「新一对开始」会错位，成对口径就破了。
+    """
+    js = _code("app.js")
+    rec = js[js.index("function recordResult"):]
+    rec = rec[:rec.index("\nfunction ")]
+    assert "swap = !" not in rec, "终局时翻边会让刚下完那局的颜色对调"
+
+    ns = js[js.index("async function newSession"):]
+    ns = ns[:ns.index("\n}")]
+    assert "swap = !" in ns, "换边要在开下一局时做"
+    assert ns.index("swap = !") < ns.index("openingSeedForThisGame"), \
+        "必须先翻 swap 再取开局种子，否则成对判据错位"
+
+
+def test_placement_first_interaction_has_no_overlay():
+    """选子改成「先点棋盘格、右侧列候选」，**不能再有浮层**。
+
+    原先是「先挑棋子、再展开朝向圈选摆法」。圆盘是个直径近 300px 的覆盖物，
+    而托盘每排只有 56px —— 展开必然压住上下两排。由此派生出三个真实故障：
+    飞向按钮时圈被邻居抢走、吃事件后指针被困住、opacity:0 的隐形按钮铺满托盘
+    导致某些格根本点不开。改了三次都没治本，因为根子是「浮层盖住邻居」。
+
+    现在一律平铺：点格 -> 右侧列出会盖住它的棋子 -> 点开某枚列具体摆法。
+    实测点开局起始格有 414 个候选（首手必须盖住它），所以**必须分两层**：
+    按棋子分组后第一层最多 21 个、第二层中位数只有 1~4。
     """
     js, css = _code("app.js"), _front("style.css")
-    m = re.search(r"radius = k <= 2 \? (\d+) : k <= 4 \? (\d+) : (\d+)", js)
-    assert m, "找不到半径设置"
-    assert int(m.group(3)) >= 90, f"最大半径 {m.group(3)} 太小"
-    # 卡片和主区都不能裁剪，否则圈会被切掉
-    assert re.search(r"\.card \{[^}]*overflow: visible", css, re.S)
-    assert "overflow: visible" in css
-    # 靠边的列要往中间挪，否则最右一列会顶出页面
-    assert "translateX" in js and "(3 - col) / 3" in js
+    for gone in ("orientRing", "ringPiece", "scheduleRing", "holdRing"):
+        assert gone not in js, f"{gone} 应随圆盘一并移除"
+    assert ".ring" not in css and "ori-btn" not in css, "圆盘样式应已删除"
+
+    assert "function candidatesAt" in js, "缺少候选计算"
+    assert "S.pickCell = cell" in js, "点棋盘要选位置"
+
+
+def test_only_anchor_cells_are_clickable():
+    """只有**当前方的角点**能点 —— 那是 Blokus 的落子规则：新棋子必须斜接
+    自己已有的棋子。开局角点只有一个（起始格）。
+
+    角点由**服务端**给（`state.anchors`，来自引擎的 `Board.anchor_cells()`）。
+    前端不重算 —— 合法性判断只有 C++ 引擎那一份，训练、评测、试玩共用，
+    在 JS 里抄一份迟早两边对不上（见 app.js 开头那条硬规则）。
+    """
+    js = _code("app.js")
+    fn = js[js.index("function playableCells"):]
+    fn = fn[:fn.index("\n}")]
+    assert "st.anchors" in fn, "可点格要用服务端给的角点"
+    # 不能在前端重算角点
+    for reinvent in ("对角", "diagonal", "dr * dc", "Math.abs(dr) === 1 && Math.abs(dc) === 1"):
+        assert reinvent not in fn, f"疑似在前端重算规则：{reinvent}"
+    assert "isPlayable(cell)" in js, "点非角点不该进入选位置状态"
+    # 放不下东西的角点要滤掉：实测第 20 手时 12 个角点里有 4 个没有候选
+    assert "candidatesAt(r, c).size > 0" in fn, "没有候选的角点不该可点"
+
+
+def test_state_payload_carries_anchors():
+    """服务端必须把角点传给前端，否则前端只能自己重算规则。"""
+    import cornerstone as cs
+    b = cs.Board()
+    assert b.anchor_cells(0) == [(4, 4)], "开局角点应只有起始格"
+    assert '"anchors"' in open(os.path.join(REPO, "web", "server.py"),
+                               encoding="utf-8").read()
+
+
+def test_css_braces_and_comments_are_balanced():
+    """CSS 的大括号与注释必须配平。
+
+    **grep 看不出这个错。** 曾经用 `s.index("/* 朝向圈")` 定位要替换的段落，
+    结果匹配到的是 `.tray .piece` 规则里的**行内注释**「/* 朝向圈以它为定位原点 */」，
+    于是新内容插进了那条规则中间、把它的 `}` 挤掉。后面所有规则一并失效，
+    候选面板的 flex 布局没生效、变成一列 —— 而 `grep '.cand'` 照样能匹配到，
+    因为它分不清文本在不在注释里。
+    """
+    css = _front("style.css")
+    assert css.count("{") == css.count("}"), \
+        f"大括号不配平：{{ {css.count('{')} 个、}} {css.count('}')} 个"
+    assert css.count("/*") == css.count("*/"), "注释不配平"
+    # **嵌套深度不能超过 1** —— 这条才是真正抓得住那个故障的判据。
+    # 本项目的 CSS 没有嵌套规则也没有 @media，一条规则若没闭合就开下一条，
+    # 深度会变成 2。光看括号总数是抓不到的：被挤掉的 `}` 往往被后面某条
+    # 规则的 `}` 凑平，总数照样配平。
+    flat = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    depth = worst = 0
+    for ch in flat:
+        if ch == "{":
+            depth += 1
+            worst = max(worst, depth)
+        elif ch == "}":
+            depth -= 1
+    assert worst <= 1, f"出现了未闭合就开下一条的规则（最大嵌套深度 {worst}）"
+    assert depth == 0, "大括号未回到 0"
+
+
+def test_candidate_levels_collapse_when_few():
+    """层次是 棋子 -> 朝向 -> 位置，但两处**自动折叠**。
+
+    实测（角点口径）：
+      开局    棋子 21、朝向中位 4、位置中位 5   -> 棋子x朝向 91 项
+      第 6 手 棋子 18、朝向中位 2、位置中位 1   -> 44 项
+      第 20 手 棋子 7、朝向中位 1、位置中位 1   -> **8 项**
+
+    所以：项数少时把「选棋子」和「选朝向」合成一步（残局中位 8 项，
+    而残局正是最不想多点一下的时候）；「位置」那一层中位数就是 1，
+    根本不该占一次点击，改由鼠标在棋盘上滑动决定。
+    """
+    js = _code("app.js")
+    assert "MERGE_LIMIT" in js and "pairCount" in js, "要按项数决定合不合并"
+    assert "function pickPlacement" in js, "位置要由鼠标决定"
+    # 同一朝向只有一处可放时直接落子，不让人再滑一次
+    assert re.search(r"actions\.length === 1.*play\(actions\[0\]\)", js), \
+        "只有一处可放时应直接落子"
+    # 鼠标移动要能切换位置
+    mm = js[js.index("CV.addEventListener('mousemove'"):]
+    mm = mm[:mm.index("});")]
+    assert "pickPlacement" in mm, "鼠标在棋盘上移动时要跟着切位置"
+
+
+def test_candidate_preview_is_immediate():
+    """悬停候选 -> 棋盘上立刻出现预览，**不许有任何延迟**。
+
+    圆盘那一版曾经为了防「飞向按钮途中被邻居抢走」加过 150ms 的悬停意图延迟。
+    现在没有浮层、没有可抢的邻居，那个理由不存在了；加延迟只会让预览发黏。
+    """
+    js = _code("app.js")
+    fn = js[js.index("function renderCandidates"):]
+    fn = fn[:fn.index("\nfunction ")]
+    assert "onmouseenter" in fn and "draw();" in fn, "悬停要同步设预览并重画"
+    assert "setTimeout" not in fn, "悬停路径里不许有 setTimeout"
+    # 预览必须是同步赋值 + 立刻重画，不能排队
+    assert re.search(r"onmouseenter = \(\) => \{ S\.preview = [^;]+; draw\(\); \}", fn), \
+        "悬停应立刻设预览并重画"
+
+
+def test_playable_cells_cache_is_keyed_on_the_position():
+    """可点格缓存必须带上手数。
+
+    只用 sid 做键的话，一局之内每走一手合法集合就变、而 sid 不变，
+    缓存会发馊 —— 棋盘上画出的是上一手的可点格，而且不报任何错。
+    """
+    js = _code("app.js")
+    fn = js[js.index("function playableCells"):]
+    fn = fn[:fn.index("\n}")]
+    assert "key" in fn and "return" in fn, \
+        "playableCells 应有缓存 —— draw() 被 mousemove 频繁调用，而它要对每个角点算候选"
+    assert "st.ply" in fn, "缓存键要带手数，否则走一手之后就馊了"
 
 
 def test_background_is_css_only():
@@ -955,8 +1199,15 @@ def test_board_only_ever_paints_the_two_engine_colors():
     """
     js = _code("app.js")
     assert "#818cf8" not in js, "棋盘上不该有第三种颜色"
-    for gone in ("function highlight", "S.hoverMove", "onmouseenter", "setLineDash"):
+    for gone in ("function highlight", "S.hoverMove", "setLineDash"):
         assert gone not in js, f"{gone} 应已随悬停高亮一起移除"
+    # 原先这里还拦 `onmouseenter` 整个词，当作「高亮删干净了」的代理。
+    # **范围太宽**：棋子托盘的朝向圈用悬停意图控制展开（见 style.css 的 .ring），
+    # 那是另一件事，正当用途。改成只盯 top 着法列表这一段。
+    tm = js[js.index("function renderAnalysis()"):]
+    tm = tm[:tm.index("\nfunction ")]
+    for gone in ("onmouseenter", "onmouseleave", "onmouseover"):
+        assert gone not in tm, f"top 着法列表不该再挂 {gone}"
     # 画棋盘时允许的颜色：双方色走 seatColor()，其余只有这几个
     body = js[js.index("function draw()"):js.index("function verdict(")]
     hexes = set(re.findall(r"#[0-9a-fA-F]{3,8}", body))

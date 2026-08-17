@@ -20,6 +20,7 @@ import argparse
 import glob
 import hashlib
 import os
+import random
 import re
 import sys
 import threading
@@ -41,6 +42,15 @@ RUNS_DIR = os.path.join(os.path.dirname(REPO), "runs")
 # 网络后端只从发布包目录里找。训练档（ckpt/）带着 AdamW 动量与 RNG，
 # 那是续训的东西；web 只做推理，读发布包。见 cornerstone/export.py
 MODEL_SUBDIR = "model"
+# 尺子目录：三个精度各自的峰值模型，刻度已量定，是下拉里默认该选的那几个。
+RULER_DIR = "_ruler"
+# 标签里带上 Elo，省得还要回去翻 README。基准是 BF16 峰值 = 0，
+# 数字来自六场独立 arena 的合并拟合（关键格 23,200 局）。
+RULER_LABELS = {
+    "v4-bf16-111k.pt": "BF16 峰值 @111k（基准 0）",
+    "v4-fp8-144k.pt":  "FP8 峰值 @144k（+13.5 ± 3.8）",
+    "v4-fp4-100k.pt":  "FP4 峰值 @100k（−4.5 ± 6.8）",
+}
 
 # 界面上直接选模拟数，不再套「简单/普通/困难」这层名字 ——
 # 两个座位可以各选各的，用来比「同一个网络多搜一倍值多少棋力」这种事，
@@ -50,7 +60,17 @@ MODEL_SUBDIR = "model"
 # 少量模拟反而是随机性最大的情形（改进策略里 sigma≈51 会让一次随机采样
 # 到的 q 盖过整个 log 先验）。这一点起初判断错过，详见 docs/05。
 PURE_POLICY = 0
-SIM_CHOICES = [PURE_POLICY, 64, 256, 800]
+# **界面上不提供纯策略**（API 仍然接受，见 validate_sims —— net_arena 和 diag
+# 工具还要用它做研究口径）。
+#
+# 理由是它会给出**相反**的排名：同一批 checkpoint，纯策略口径下「训练越久越差」
+# （终点比峰值低 18.9~22.2），带 64 次搜索重打则终点最强，直接头对头从 0.527
+# 翻成 0.485（docs/08）。机制是后期的进步主要存进价值头，而纯策略每手只做一次
+# 前向、落 argmax(prior)，把价值头整个丢掉。
+#
+# 摆在试玩界面里，等于请人用一把已知会读反的尺子去比较模型 —— 而界面上
+# 看不出任何异常。研究要用就走命令行，那里有文档说明口径。
+SIM_CHOICES = [64, 256, 800]
 # 「连续对战」的可选局数。这只是界面上的一个选项：一局下完自动开下一局，
 # 棋盘照常逐手显示，统计在前端累加 —— 服务端不需要知道有这回事。
 SERIES_COUNTS = [1, 100, 200, 400]
@@ -64,6 +84,21 @@ MAX_SIMS = 2000
 RULE_BACKENDS = ["greedy-area", "corner-min", "greedy-mobility"]
 
 DEFAULT_BACKEND = "rule:greedy-mobility"
+
+# 随机开局的手数。**只在连打多局时注入**，由调用方传 `opening_seed` 决定 ——
+# 不传就不注入。
+#
+# 为什么多局要有：自博弈的开局会塌到只剩一种首手（docs/08 实测：第 8 万步之后
+# 512 局里每局都走同一手）。不注入的话，两个网络打 400 局，量到的是「这一条
+# 特定开局线上谁强」，而不是整体棋力；纯策略档更是确定性的，400 局全同。
+# 手数取 2，与 `play_pair` 的默认值一致 —— 三把尺子的 Elo 刻度就是这么量的。
+#
+# 为什么单局不注入：单局的用途是**看棋**，而「网络自己开什么」正是想看的东西
+# （开局塌缩本身就是个观察点）；随机掉前两手反而把它盖住了。而且单局也谈不上
+# 「双方各执先一次」—— 成对的理由只在多局时成立。
+#
+# 另外**人机对局一律不注入**：随机掉人的前两手没有意义。
+OPENING_PLIES = 2
 
 
 # --------------------------------------------------------------------- 后端发现
@@ -107,6 +142,16 @@ def resolve_backend(backend: str) -> tuple[str, str]:
         raise ValueError(f"无法识别的后端: {backend}")
     rel = backend[4:]
     run, _, fname = rel.partition("/")
+
+    # 尺子（三个精度各自的峰值）平铺在 runs/_ruler/ 下，没有 model/ 子目录，
+    # 文件名也刻意不带 `step`（否则 net_arena 会拿 step(\d+) 命名参赛者，
+    # 和被测跑里同步数的档撞名后被悄悄合并成同一个）。所以单独一条路径。
+    if run == RULER_DIR:
+        path = os.path.join(RUNS_DIR, RULER_DIR, os.path.basename(fname))
+        if not os.path.exists(path):
+            raise ValueError(f"尺子不存在：{os.path.basename(fname)}")
+        return "net", path
+
     model_dir = os.path.join(RUNS_DIR, run, MODEL_SUBDIR)
     if not os.path.isdir(model_dir):
         raise ValueError(f"找不到 {run} 的发布包目录（先跑 tools/export_model.py harvest）")
@@ -126,9 +171,22 @@ def resolve_backend(backend: str) -> tuple[str, str]:
 
 
 def discover_backends() -> list[dict]:
-    """列出当前可选的对手。每次调用都重新扫盘，好让新导出的发布包能出现。"""
-    out = [{"id": f"rule:{n}", "label": n, "group": "规则基线", "kind": "rule"}
-           for n in RULE_BACKENDS]
+    """列出当前可选的对手。每次调用都重新扫盘，好让新导出的发布包能出现。
+
+    **尺子排在最前面。** 实验跑攒到几十条之后，每条又有十几个里程碑，
+    下拉里几百项，想找「当前最强」反而找不到。尺子是三个精度各自的峰值、
+    刻度已经量定（见 `runs/_ruler/README.md`），是默认该选的那几个。
+    """
+    out: list[dict] = []
+
+    for path in sorted(glob.glob(os.path.join(RUNS_DIR, RULER_DIR, "*.pt"))):
+        name = os.path.basename(path)
+        out.append({"id": f"net:{RULER_DIR}/{name}",
+                    "label": RULER_LABELS.get(name, name[:-3]),
+                    "group": "尺子（各精度峰值）", "kind": "net"})
+
+    out += [{"id": f"rule:{n}", "label": n, "group": "规则基线", "kind": "rule"}
+            for n in RULE_BACKENDS]
 
     for model_dir in sorted(glob.glob(os.path.join(RUNS_DIR, "*", MODEL_SUBDIR))):
         run = os.path.basename(os.path.dirname(model_dir))
@@ -321,6 +379,10 @@ class Session:
     # 每个座位各自的模拟数。规则基线不搜索，这一项对它无效。
     sims: list[int] = field(default_factory=lambda: [DEFAULT_SIMS, DEFAULT_SIMS])
     created: float = field(default_factory=time.time)
+    # 注入的随机开局有几手。**它不是任何人走的手**，所以：
+    #   * 判「对局是否已开始」要跳过它（否则一出生配置就被锁死）
+    #   * 悔棋不能退进去（那不是谁的失误，退了也没法重来同一个开局）
+    opening_len: int = 0
 
     @property
     def human_player(self) -> int:
@@ -408,6 +470,39 @@ except ImportError:                      # 只在没装 fastapi 的环境里导�
 # 这三个模型必须放在**模块级**：本文件开头有 from __future__ import annotations，
 # 注解都成了字符串，FastAPI 要靠函数的 __globals__ 去解析。
 # 定义在 build_app 内部的话解析不到，参数会被当成 query 而不是 body（422）。
+def apply_random_opening(s: "Session", seed: int | None) -> None:
+    """在空盘上走 OPENING_PLIES 手均匀随机的合法着法。
+
+    种子决定这几手走什么，所以**同一个种子跑两遍会得到逐手相同的开局** ——
+    连续对战靠这一点做成对：一对里两局传同一个种子、先后手互换，
+    先手优势对双方各记一半。引擎侧的等价实现见 `engine/src/mcts.cpp`
+    里 `paired_second` 那段（它是存/恢复 rng，效果一样）。
+
+    走的是**均匀随机**而不是网络自己的先验：目的正是绕开自博弈那个
+    「所有局都走同一手」的漏斗（docs/08）。
+    """
+    rng = random.Random(seed)
+    for _ in range(OPENING_PLIES):
+        if s.board.terminal:
+            break
+        mv = s.board.legal_moves().tolist()
+        if not mv:
+            break
+        a = int(mv[rng.randrange(len(mv))])
+        s.board.play(a)
+        s.history.append(a)
+    s.opening_len = len(s.history)
+
+
+def new_game_for_test(players, opening_seed):
+    """按 new_game 的规则造一局，返回被注入的开局着法。只给测试用。"""
+    s = Session(players=list(players))
+    if opening_seed is not None and all(p is not None for p in players):
+        apply_random_opening(s, opening_seed)
+    assert s.opening_len == len(s.history)
+    return list(s.history)
+
+
 class NewGame(BaseModel):
     # players[i] = 该座位的后端 ID，None 表示人来下。
     # 不给就退回 human_player + backend 这组旧参数。
@@ -415,6 +510,10 @@ class NewGame(BaseModel):
     sims: list[int] | None = None
     human_player: int = 0
     backend: str | None = None
+    # 随机开局的种子。**不传就不注入**（单局观战走这条）。
+    # 连打时同一对的两局要传同一个 —— 于是开局逐手相同而先后手已翻，
+    # 正是 arena 的成对口径（见 engine/src/mcts.cpp 里 paired_second 那段）。
+    opening_seed: int | None = None
 
 
 class MoveReq(BaseModel):
@@ -573,7 +672,7 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
         """
         s = get(req.sid)
         if (req.players is not None or req.sims is not None) \
-                and s.board.ply > 0 and not s.board.terminal:
+                and len(s.history) > s.opening_len and not s.board.terminal:
             raise HTTPException(400, "对局进行中，不能改双方或模拟数；请先开新局")
         if req.players is not None:
             s.players = validate_players(req.players)
@@ -609,6 +708,9 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
         sims = validate_sims(req.sims) if req.sims is not None \
             else [DEFAULT_SIMS, DEFAULT_SIMS]
         s = Session(players=players, sims=sims)
+        # 不传种子 = 不注入（单局观战、人机对局）
+        if req.opening_seed is not None and all(p is not None for p in players):
+            apply_random_opening(s, req.opening_seed)
         SESSIONS[sid] = s
         return {"sid": sid, "state": state_of(s), "labels": seat_labels(s)}
 
@@ -656,11 +758,11 @@ def build_app(pool: BrainPool, default_backend: str = DEFAULT_BACKEND):
         if s.human_player < 0:
             # AI 对战没有「轮到人类」这回事。照原逻辑找下去会一路 pop 到空棋盘，
             # 看起来像「悔棋把整局都撤了」。这里就退一手。
-            if hist:
+            if len(hist) > s.opening_len:
                 hist.pop()
         else:
-            # 退回到轮到人类且至少撤掉一手为止
-            while hist:
+            # 退回到轮到人类且至少撤掉一手为止（注入的开局是地板，不退进去）
+            while len(hist) > s.opening_len:
                 hist.pop()
                 probe = cs.Board()
                 for a in hist:

@@ -192,35 +192,25 @@ button.gone, .row.gone { display: none; }
 
 .tray .piece.used { opacity: .22; }
 .tray .piece.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-/* 悬停时把这一格提到最上层，否则圈会被右边和下面的棋子盖住 */
-.tray .piece:hover { z-index: 40; border-color: var(--accent); }
 
-/* 朝向圈。默认不显示，也不吃鼠标事件；只有里面的按钮吃 ——
-   这样圈本身不会挡住旁边棋子的悬停，而鼠标停在按钮上时
-   .piece:hover 仍然成立（按钮是 .piece 的后代），圈不会闪掉。 */
-.ring { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
-.tray .piece:hover .ring { opacity: 1; }
-
-/* 圈底下垫一层圆形暗底。没有它的话，朝向缩略图会和下面压着的
-   邻居棋子糊在一起，根本分不清哪个是可点的选项。
-   --r 由 JS 按朝向个数设置（个数越多圈越大）。 */
-.ring::before {
-  content: ''; position: absolute; left: 50%; top: 50%;
-  width: calc(var(--r) * 2 + 86px); height: calc(var(--r) * 2 + 86px);
-  transform: translate(-50%, -50%);
-  border-radius: 50%;
-  background: #0b0e15f2; border: 1px solid var(--line);
-  box-shadow: 0 10px 30px #000b;
-}
-.ring .ori-btn {
-  position: absolute; transform: translate(-50%, -50%);
+/* 候选面板：点了棋盘格之后，右侧这块从「棋子托盘」切成「这个格能放什么」。
+   一律平铺，没有任何浮层 —— 圆盘那套反复改不好的根子就是它是个直径近 300px
+   的覆盖物，而托盘每排只有 56px，展开必然压住上下两排。 */
+.cand { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.cand-item {
+  position: relative;
   background: var(--panel-2); border: 1px solid var(--line);
-  border-radius: 8px; padding: 7px; cursor: pointer;
-  pointer-events: auto;
+  border-radius: 8px; padding: 9px; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
 }
-.ring .ori-btn:hover { border-color: var(--accent); background: var(--panel); }
-.ring .ori-btn.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cand-item:hover { border-color: var(--accent); background: var(--panel); }
+/* 右上角小数字 = 这枚棋子在该格有几种摆法。为 1 时不显示，点下去直接落子。 */
+.cand-n {
+  position: absolute; top: -6px; right: -6px;
+  background: var(--accent); color: #10121a;
+  font-size: 11px; font-weight: 700; line-height: 1;
+  border-radius: 999px; padding: 3px 6px;
+}
 
 .winbar {
   position: relative; height: 26px; border-radius: 7px; overflow: hidden;
