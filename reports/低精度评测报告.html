@@ -768,61 +768,74 @@
   </p>
 
   <figure style="max-width:min(100%,1008px)">
-  <svg viewBox="0 0 840 430" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
-<style>.ax{font-size:11.5px;fill:#6b6b6b}.nm{font-size:13.5px;font-weight:600}.wy{font-size:11px;fill:#6b6b6b}.vl{font-size:12px;font-weight:600}.bl{font-size:12px;fill:#8a3a3a}</style>
-<line x1="287.6" y1="72" x2="287.6" y2="346" stroke="#eee" stroke-width="1"/>
-<text class="ax" x="287.6" y="366" text-anchor="middle">-20</text>
-<line x1="381.6" y1="72" x2="381.6" y2="346" stroke="#eee" stroke-width="1"/>
-<text class="ax" x="381.6" y="366" text-anchor="middle">-10</text>
-<line x1="475.6" y1="72" x2="475.6" y2="346" stroke="#aaa" stroke-width="1.3"/>
-<text class="ax" x="475.6" y="366" text-anchor="middle">+0</text>
-<line x1="569.6" y1="72" x2="569.6" y2="346" stroke="#eee" stroke-width="1"/>
-<text class="ax" x="569.6" y="366" text-anchor="middle">+10</text>
-<line x1="663.6" y1="72" x2="663.6" y2="346" stroke="#eee" stroke-width="1"/>
-<text class="ax" x="663.6" y="366" text-anchor="middle">+20</text>
-<text class="nm" x="12" y="106" fill="#2e8b57">FP8-QAT</text>
-<text class="wy" x="12" y="121">FP8 训练 → FP8 推理</text>
-<line x1="473.3" y1="102" x2="709.1" y2="102" stroke="#2e8b57" stroke-width="2"/>
-<line x1="473.3" y1="96" x2="473.3" y2="108" stroke="#2e8b57" stroke-width="2"/>
-<line x1="709.1" y1="96" x2="709.1" y2="108" stroke="#2e8b57" stroke-width="2"/>
-<circle cx="591.2" cy="102" r="6" fill="#2e8b57"/>
-<text class="vl" x="591.2" y="89" text-anchor="middle" fill="#2e8b57">+12.3</text>
-<text class="nm" x="12" y="152" fill="#1a5fb4">BF16</text>
-<text class="wy" x="12" y="167">BF16 训练 → BF16 推理</text>
-<circle cx="475.6" cy="148" r="6" fill="#1a5fb4"/>
-<text class="vl" x="475.6" y="135" text-anchor="middle" fill="#1a5fb4">0</text>
-<text class="nm" x="12" y="198" fill="#2e8b57">FP8-PTQ</text>
-<text class="wy" x="12" y="213">BF16 训练 → FP8 推理</text>
-<line x1="319.1" y1="194" x2="555.0" y2="194" stroke="#2e8b57" stroke-width="2"/>
-<line x1="319.1" y1="188" x2="319.1" y2="200" stroke="#2e8b57" stroke-width="2"/>
-<line x1="555.0" y1="188" x2="555.0" y2="200" stroke="#2e8b57" stroke-width="2"/>
-<circle cx="437.1" cy="194" r="6" fill="#2e8b57"/>
-<text class="vl" x="437.1" y="181" text-anchor="middle" fill="#2e8b57">-4.1</text>
-<text class="nm" x="12" y="244" fill="#c07000">FP4-PTQ</text>
-<text class="wy" x="12" y="259">BF16 训练 → FP4 推理</text>
-<line x1="309.7" y1="240" x2="545.6" y2="240" stroke="#c07000" stroke-width="2"/>
-<line x1="309.7" y1="234" x2="309.7" y2="246" stroke="#c07000" stroke-width="2"/>
-<line x1="545.6" y1="234" x2="545.6" y2="246" stroke="#c07000" stroke-width="2"/>
-<circle cx="427.7" cy="240" r="6" fill="#c07000"/>
-<text class="vl" x="427.7" y="227" text-anchor="middle" fill="#c07000">-5.1</text>
-<text class="nm" x="12" y="290" fill="#c07000">FP4-QAT</text>
-<text class="wy" x="12" y="305">FP4 训练 → FP4 推理</text>
-<line x1="295.6" y1="286" x2="524.0" y2="286" stroke="#c07000" stroke-width="2"/>
-<line x1="295.6" y1="280" x2="295.6" y2="292" stroke="#c07000" stroke-width="2"/>
-<line x1="524.0" y1="280" x2="524.0" y2="292" stroke="#c07000" stroke-width="2"/>
-<circle cx="409.8" cy="286" r="6" fill="#c07000"/>
-<text class="vl" x="409.8" y="273" text-anchor="middle" fill="#c07000">-7.0</text>
-<line x1="242" y1="392" x2="720" y2="392" stroke="#ccc" stroke-width="1"/>
-<circle cx="220" cy="392" r="6" fill="#8a3a3a"/>
-<text class="bl" x="206" y="396" text-anchor="end">greedy-mobility</text>
-<text class="bl" x="220" y="414" text-anchor="middle">−855.7</text>
-<text class="ax" x="485" y="414" text-anchor="middle">（规则基线，轴外 —— 对上面任一模型的得分率只有 0.005）</text>
-<text class="ax" x="485" y="40" text-anchor="middle">五个模型的全距 19 Elo，只有「会不会下棋」那 856 分的 1/45</text>
-<text class="ax" x="485" y="390" text-anchor="middle" opacity="0">.</text>
-<text class="ax" x="485" y="416" text-anchor="middle">Elo（相对 BF16）　误差条为 95% 置信区间　两场合并共 42,006 局</text>
+  <svg viewBox="0 0 840 392" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+<defs>
+  <marker id="asg" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+    <polygon points="0 0, 9 3.5, 0 7" fill="#666"/>
+  </marker>
+</defs>
+<style>
+  .bs{fill:none;stroke-width:1.2;rx:5}
+  .ts{font-size:13px;fill:#1a1a1a}
+  .ss{font-size:11px;fill:#6b6b6b}
+  .ls{stroke:#666;stroke-width:1.4;marker-end:url(#asg);fill:none}
+  .hs{font-size:12.5px;font-weight:600;fill:#1a5fb4}
+</style>
+
+<rect class="bs" x="20" y="150" width="96" height="46" stroke="#7ba7d7"/>
+<text class="ts" x="68" y="172" text-anchor="middle">x</text>
+<text class="ss" x="68" y="189" text-anchor="middle">256</text>
+
+<rect class="bs" x="168" y="122" width="128" height="102" stroke="#c4c4c4"/>
+<text class="ts" x="232" y="156" text-anchor="middle">up</text>
+<text class="ss" x="232" y="176" text-anchor="middle">Linear</text>
+<text class="ss" x="232" y="194" text-anchor="middle">256 → 2048</text>
+<text class="ss" x="232" y="242" text-anchor="middle">一个融合层，输出切两半</text>
+
+<rect class="bs" x="348" y="88" width="112" height="52" stroke="#d9a066"/>
+<text class="ts" x="404" y="110" text-anchor="middle">gate</text>
+<text class="ss" x="404" y="128" text-anchor="middle">1024</text>
+
+<rect class="bs" x="348" y="206" width="112" height="52" stroke="#c4c4c4"/>
+<text class="ts" x="404" y="228" text-anchor="middle">val</text>
+<text class="ss" x="404" y="246" text-anchor="middle">1024</text>
+
+<rect class="bs" x="500" y="88" width="104" height="52" stroke="#d9a066"/>
+<text class="ts" x="552" y="110" text-anchor="middle">SiLU</text>
+<text class="ss" x="552" y="128" text-anchor="middle">平滑的门控值</text>
+
+<circle cx="660" cy="173" r="19" fill="none" stroke="#d9a066" stroke-width="1.6"/>
+<text class="ts" x="660" y="179" text-anchor="middle">×</text>
+<text class="ss" x="660" y="214" text-anchor="middle">逐元素</text>
+
+<rect class="bs" x="712" y="122" width="112" height="102" stroke="#c4c4c4"/>
+<text class="ts" x="768" y="156" text-anchor="middle">down</text>
+<text class="ss" x="768" y="176" text-anchor="middle">Linear</text>
+<text class="ss" x="768" y="194" text-anchor="middle">1024 → 256</text>
+
+<path class="ls" d="M116 173 H163"/>
+<path class="ls" d="M296 152 H322 V114 H343"/>
+<path class="ls" d="M296 194 H322 V232 H343"/>
+<path class="ls" d="M460 114 H495"/>
+<path class="ls" d="M604 114 H636 V158"/>
+<path class="ls" d="M460 232 H636 V188"/>
+<path class="ls" d="M679 173 H707"/>
+
+<text class="hs" x="420" y="38" text-anchor="middle">门控：gate 决定 val 的每一个通道让过多少</text>
+<text class="ss" x="420" y="312" text-anchor="middle">
+  SiLU(g) = g · sigmoid(g) —— 负值不是硬截断为 0，而是平滑地压小，梯度不会整段消失
+</text>
+<text class="ss" x="420" y="338" text-anchor="middle">
+  与普通 MLP（一层 Linear + 激活）相比，多出的 gate 分支让每个通道的通过量由输入自己决定
+</text>
+<text class="ss" x="420" y="366" text-anchor="middle">
+  每层参数 256×2048 + 1024×256 = 786,432　×16 层 = 12,582,912，占全网 88.7%
+</text>
 </svg>
-  <figcaption>图 4-1　五个模型的棋力，相对 BF16。规则基线画在轴外 ——
-  它与任一模型的差距是模型彼此差距的四十余倍。</figcaption>
+  <figcaption>图 2-3　SwiGLU。<span class="mono">up</span> 是一个融合的
+  256→2048 线性层，输出切成 <span class="mono">gate</span> 与
+  <span class="mono">val</span> 两半；<span class="mono">gate</span> 过 SiLU 后
+  与 <span class="mono">val</span> 逐元素相乘，再由 <span class="mono">down</span> 投回 256。</figcaption>
   </figure>
 
   <p>
@@ -1822,7 +1835,8 @@
 <text class="ax" x="470" y="372" text-anchor="middle">Elo（相对 BF16）　误差条为 95% 置信区间</text>
 <text class="ax" x="420.0" y="386" text-anchor="middle">五个模型的区间几乎完全重叠 —— 无论低精度是训出来的还是压出来的，棋力都一样</text>
 </svg>
-  
+  <figcaption>图 4-1　五个模型的棋力，相对 BF16。规则基线画在轴外 ——
+  它与任一模型的差距，是模型彼此差距的四十余倍。</figcaption>
   </figure>
 
   <table>
