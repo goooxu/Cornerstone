@@ -574,7 +574,6 @@
   （随机落子、贪心占格、纯 rollout MCTS），因为没有棋谱可以当测试集。
   </p>
 
-
   <h2>二、模型结构</h2>
 
   <p>
@@ -2096,25 +2095,7 @@
   这正是本项目作为低精度方法评测平台的价值所在。
   </p>
 
-
 </div>
 
-<script>
-// 编辑文件后自动刷新 —— 方便边写边看，不用手动按 F5。
-// 用 HEAD 请求比对 Last-Modified，比轮询整页省。
-(async function () {
-  let seen = null;
-  const poll = async () => {
-    try {
-      const r = await fetch(location.pathname, { method: 'HEAD', cache: 'no-store' });
-      const t = r.headers.get('Last-Modified');
-      if (seen && t && t !== seen) return location.reload();
-      if (t) seen = t;
-    } catch (e) { /* 服务重启时会短暂失败，忽略 */ }
-  };
-  await poll();
-  setInterval(poll, 2000);
-})();
-</script>
 </body>
 </html>
