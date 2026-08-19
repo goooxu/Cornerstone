@@ -32,3 +32,7 @@ watchdog.pause
 
 # 进程崩溃时留下的 core dump，动辄几 GB
 core.*
+
+# 开发机信息，不进 git（CLAUDE.md：commit 中不得出现开发机地址/用户名/配置）
+.devhosts
+.nodes-seed
