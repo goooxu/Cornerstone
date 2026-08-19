@@ -1,0 +1,2120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用可完全量化的能力评测低精度训练 · Cornerstone</title>
+<style>
+  :root {
+    --ink: #1a1a1a; --dim: #6b6b6b; --line: #e2e2e2;
+    --accent: #1a5fb4; --panel: #f6f6f4;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--ink);
+    /* 页面底色：明确带颜色的冷灰蓝，左上偏蓝、右侧偏暖，
+       再叠一层能看见的细网点。正文仍是 #1a1a1a，对比度足够。 */
+    background:
+      radial-gradient(circle at 1px 1px, rgba(40,64,100,0.10) 1px, transparent 0),
+      radial-gradient(900px 560px at 4% -8%, #cfe0f4 0%, rgba(207,224,244,0) 60%),
+      radial-gradient(950px 800px at 106% 22%, #f5e4cd 0%, rgba(245,228,205,0) 54%),
+      linear-gradient(172deg, #eef2f8 0%, #e4eaf3 55%, #dbe2ed 100%);
+    background-size: 20px 20px, auto, auto, auto;
+    background-attachment: fixed, fixed, fixed, fixed;
+    min-height: 100vh;
+    font: 16px/1.75 "Source Han Sans SC", "Noto Sans CJK SC", "PingFang SC",
+          "Microsoft YaHei", -apple-system, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* 纸面加宽到能容下配图；正文另行限宽到 860，保持中文阅读的舒适行长 */
+  .wrap {
+    max-width: 1080px; margin: 0 auto; padding: 64px 40px 110px;
+    background: rgba(255,255,255,0.78);
+    box-shadow: 0 1px 40px rgba(30,50,80,0.08);
+  }
+  .wrap > h1, .wrap > h2, .wrap > h3, .wrap > h4, .wrap > p,
+  .wrap > ul, .wrap > ol, .wrap > table, .wrap > pre,
+  .wrap > blockquote, .wrap > .key, .wrap > .sub, .wrap > .placeholder {
+    max-width: 860px; margin-left: auto; margin-right: auto;
+  }
+
+  h1 { font-size: 32px; line-height: 1.3; margin: 0 0 8px; letter-spacing: -0.01em; }
+  .sub {
+    color: var(--dim); font-size: 17px; line-height: 1.6;
+    margin: 12px 0 44px; padding-bottom: 20px; border-bottom: 1px solid var(--line);
+  }
+  h2 {
+    font-size: 22px; margin: 56px 0 16px; padding-bottom: 8px;
+    border-bottom: 2px solid var(--line);
+  }
+  h3 { font-size: 17px; margin: 32px 0 12px; }
+  p { margin: 0 0 16px; }
+
+  table { border-collapse: collapse; width: 100%; margin: 20px 0; font-size: 15px; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; }
+  th { background: var(--panel); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  code, .mono {
+    font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.9em;
+  }
+  code { background: var(--panel); padding: 1px 5px; border-radius: 3px; }
+  pre {
+    background: var(--panel); padding: 16px 18px; border-radius: 6px;
+    overflow-x: auto; font-size: 13.5px; line-height: 1.6;
+    border-left: 3px solid var(--line);
+  }
+  pre code { background: none; padding: 0; }
+
+  blockquote {
+    margin: 20px 0; padding: 12px 18px; background: var(--panel);
+    border-left: 3px solid var(--accent); color: #333;
+  }
+  /* 配图冲出文本列：正文保持 860px 易读宽度，图放大到 1280px。
+     viewBox 840 的图原本按 ~796px 渲染（≈1:1），冲出后整体放大约 1.5 倍，
+     图内 11.5px 的小字实际渲染到 ~17px。 */
+  figure { margin: 36px auto; width: 100%; }
+  figure svg { display: block; width: 100%; height: auto; }
+  figcaption {
+    max-width: 820px; margin: 14px auto 0;
+    font-size: 14px; color: var(--dim); text-align: center; line-height: 1.6;
+  }
+  .key {
+    margin: 20px 0; padding: 14px 18px; background: #f0f5fb;
+    border-left: 3px solid var(--accent); font-size: 15px;
+  }
+  .key strong { color: var(--accent); }
+  ul { margin: 0 0 16px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  .placeholder {
+    margin: 80px 0; padding: 48px; text-align: center;
+    border: 2px dashed var(--line); border-radius: 8px; color: var(--dim);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>用可完全量化的能力评测低精度训练</h1>
+  <div class="sub">
+    Cornerstone · 从零构建的 Blokus Duo 对弈 AI 上的 BF16 / FP8 / FP4 对比
+  </div>
+
+  <h2>一、这个模型是做什么的</h2>
+
+  <p>
+  Cornerstone 是一套<strong>从零构建</strong>的 Blokus Duo 对弈 AI —— 棋类引擎、
+  自博弈强化学习训练、低精度推理、评测体系与人机试玩界面全部自研，
+  不使用任何棋谱、不复用任何开源 Blokus 实现。
+  </p>
+
+  <h3>1.1 任务：Blokus Duo</h3>
+
+  <p>
+  14×14 棋盘，双方各持 21 枚形状互异的方块（1~5 格的多联骨牌，共 89 格）。
+  从各自的起始格出发轮流落子，每一步必须满足两条约束：
+  <strong>新落的子要与己方已有棋子至少角接触，且不得与己方棋子边接触</strong>
+  （与对方棋子则没有限制）。无子可落者停手，双方都停手则终局。
+  </p>
+
+  <div class="key">
+  <strong>胜负规则</strong>：本项目采用<strong>占格多者胜、相同为和局</strong>，
+  不使用「用完全部棋子 +15、最后一枚是单格再 +5」的加分制。
+  和局是真实且不罕见的结果 —— 随机对局下约 4.5%，强度接近的对手之间更高。
+  </div>
+
+  <figure style="max-width:min(100%,760px)">
+<svg viewBox="0 0 634 424" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+<style>.lg{font-size:13.5px;fill:#1a1a1a}.cap{font-size:11.5px;fill:#6b6b6b}</style>
+<rect x="30" y="30" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="56" y="30" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="82" y="30" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="108" y="30" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="134" y="30" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="160" y="30" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="186" y="30" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="212" y="30" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="238" y="30" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="264" y="30" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="290" y="30" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="316" y="30" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="342" y="30" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="368" y="30" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="30" y="56" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="56" y="56" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="82" y="56" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="108" y="56" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="134" y="56" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="160" y="56" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="186" y="56" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="212" y="56" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="238" y="56" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="264" y="56" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="290" y="56" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="316" y="56" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="342" y="56" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="368" y="56" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="30" y="82" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="56" y="82" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="82" y="82" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="108" y="82" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="134" y="82" width="26" height="26" fill="#cfe6d3" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="160" y="82" width="26" height="26" fill="#f6d0d0" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="186" y="82" width="26" height="26" fill="#cfe6d3" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="212" y="82" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="238" y="82" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="264" y="82" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="290" y="82" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="316" y="82" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="342" y="82" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="368" y="82" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="30" y="108" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="56" y="108" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="82" y="108" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="108" y="108" width="26" height="26" fill="#cfe6d3" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="134" y="108" width="26" height="26" fill="#f6d0d0" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="160" y="108" width="26" height="26" fill="#4a7fb5" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="186" y="108" width="26" height="26" fill="#f6d0d0" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="212" y="108" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="238" y="108" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="264" y="108" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="290" y="108" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="316" y="108" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="342" y="108" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="368" y="108" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="30" y="134" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="56" y="134" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="82" y="134" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="108" y="134" width="26" height="26" fill="#f6d0d0" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="134" y="134" width="26" height="26" fill="#4a7fb5" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="160" y="134" width="26" height="26" fill="#4a7fb5" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="186" y="134" width="26" height="26" fill="#f6d0d0" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="212" y="134" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="238" y="134" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="264" y="134" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="290" y="134" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="316" y="134" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="342" y="134" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="368" y="134" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="30" y="160" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="56" y="160" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="82" y="160" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="108" y="160" width="26" height="26" fill="#cfe6d3" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="134" y="160" width="26" height="26" fill="#f6d0d0" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="160" y="160" width="26" height="26" fill="#4a7fb5" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="186" y="160" width="26" height="26" fill="#f6d0d0" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="212" y="160" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="238" y="160" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="264" y="160" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="290" y="160" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="316" y="160" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="342" y="160" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="368" y="160" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="30" y="186" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="56" y="186" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="82" y="186" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="108" y="186" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="134" y="186" width="26" height="26" fill="#cfe6d3" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="160" y="186" width="26" height="26" fill="#f6d0d0" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="186" y="186" width="26" height="26" fill="#cfe6d3" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="212" y="186" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="238" y="186" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="264" y="186" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="290" y="186" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="316" y="186" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="342" y="186" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="368" y="186" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="30" y="212" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="56" y="212" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="82" y="212" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="108" y="212" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="134" y="212" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="160" y="212" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="186" y="212" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="212" y="212" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="238" y="212" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="264" y="212" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="290" y="212" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="316" y="212" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="342" y="212" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="368" y="212" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="30" y="238" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="56" y="238" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="82" y="238" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="108" y="238" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="134" y="238" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="160" y="238" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="186" y="238" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="212" y="238" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="238" y="238" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="264" y="238" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="290" y="238" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="316" y="238" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="342" y="238" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="368" y="238" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="30" y="264" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="56" y="264" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="82" y="264" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="108" y="264" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="134" y="264" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="160" y="264" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="186" y="264" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="212" y="264" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="238" y="264" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="264" y="264" width="26" height="26" fill="#d98a3d" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="290" y="264" width="26" height="26" fill="#d98a3d" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="316" y="264" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="342" y="264" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="368" y="264" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="30" y="290" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="56" y="290" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="82" y="290" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="108" y="290" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="134" y="290" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="160" y="290" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="186" y="290" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="212" y="290" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="238" y="290" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="264" y="290" width="26" height="26" fill="#d98a3d" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="290" y="290" width="26" height="26" fill="#d98a3d" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="316" y="290" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="342" y="290" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="368" y="290" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="30" y="316" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="56" y="316" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="82" y="316" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="108" y="316" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="134" y="316" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="160" y="316" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="186" y="316" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="212" y="316" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="238" y="316" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="264" y="316" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="290" y="316" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="316" y="316" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="342" y="316" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="368" y="316" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="30" y="342" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="56" y="342" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="82" y="342" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="108" y="342" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="134" y="342" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="160" y="342" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="186" y="342" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="212" y="342" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="238" y="342" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="264" y="342" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="290" y="342" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="316" y="342" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="342" y="342" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="368" y="342" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="30" y="368" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="56" y="368" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="82" y="368" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="108" y="368" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="134" y="368" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="160" y="368" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="186" y="368" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="212" y="368" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="238" y="368" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="264" y="368" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="290" y="368" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="316" y="368" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="342" y="368" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="368" y="368" width="26" height="26" fill="#fff" stroke="#c8c8c8" stroke-width="0.8"/>
+<rect x="136" y="136" width="22" height="22" fill="none" stroke="#1a3f6b" stroke-width="2"/>
+<rect x="266" y="266" width="22" height="22" fill="none" stroke="#8a5410" stroke-width="2"/>
+<rect x="418" y="48" width="20" height="20" rx="2" fill="#4a7fb5" stroke="#999" stroke-width="0.8"/>
+<text class="lg" x="448" y="57">己方棋子</text>
+<text class="cap" x="448" y="72">起始格 (4,4)</text>
+<rect x="418" y="110" width="20" height="20" rx="2" fill="#d98a3d" stroke="#999" stroke-width="0.8"/>
+<text class="lg" x="448" y="119">对方棋子</text>
+<text class="cap" x="448" y="134">起始格 (9,9)</text>
+<rect x="418" y="172" width="20" height="20" rx="2" fill="#cfe6d3" stroke="#999" stroke-width="0.8"/>
+<text class="lg" x="448" y="181">角点 —— 可落</text>
+<text class="cap" x="448" y="196">与己方仅角接触</text>
+<rect x="418" y="234" width="20" height="20" rx="2" fill="#f6d0d0" stroke="#999" stroke-width="0.8"/>
+<text class="lg" x="448" y="243">边邻 —— 禁止</text>
+<text class="cap" x="448" y="258">与己方边接触</text>
+</svg>
+<figcaption>图 1-1　落子规则。绿色是<strong>角点</strong>（与己方仅角接触，可落）；
+红色是<strong>边邻</strong>（与己方边接触，禁止）。与对方棋子无论怎么接触都不受限。</figcaption>
+</figure>
+
+<figure style="max-width:min(100%,991px)">
+<svg viewBox="0 0 826 324" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+<style>.pn{font-size:12px;fill:#1a1a1a;font-weight:600}.po{font-size:11px;fill:#6b6b6b}</style>
+<rect x="52.5" y="38.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="59.0" y="88" text-anchor="middle">I1</text>
+<text class="po" x="59.0" y="101" text-anchor="middle">1 格 · 1 朝向</text>
+<rect x="163.5" y="38.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="177.5" y="38.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="177.0" y="88" text-anchor="middle">I2</text>
+<text class="po" x="177.0" y="101" text-anchor="middle">2 格 · 2 朝向</text>
+<rect x="274.5" y="38.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="288.5" y="38.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="302.5" y="38.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="295.0" y="88" text-anchor="middle">I3</text>
+<text class="po" x="295.0" y="101" text-anchor="middle">3 格 · 2 朝向</text>
+<rect x="399.5" y="31.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="413.5" y="31.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="399.5" y="45.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="413.0" y="88" text-anchor="middle">V3</text>
+<text class="po" x="413.0" y="101" text-anchor="middle">3 格 · 4 朝向</text>
+<rect x="503.5" y="38.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="517.5" y="38.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="531.5" y="38.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="545.5" y="38.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="531.0" y="88" text-anchor="middle">I4</text>
+<text class="po" x="531.0" y="101" text-anchor="middle">4 格 · 2 朝向</text>
+<rect x="628.5" y="31.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="642.5" y="31.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="656.5" y="31.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="628.5" y="45.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="649.0" y="88" text-anchor="middle">L4</text>
+<text class="po" x="649.0" y="101" text-anchor="middle">4 格 · 8 朝向</text>
+<rect x="753.5" y="31.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="767.5" y="31.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="753.5" y="45.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="767.5" y="45.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="767.0" y="88" text-anchor="middle">O4</text>
+<text class="po" x="767.0" y="101" text-anchor="middle">4 格 · 1 朝向</text>
+<rect x="52.5" y="139.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="66.5" y="139.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="38.5" y="153.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="52.5" y="153.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="59.0" y="196" text-anchor="middle">S4</text>
+<text class="po" x="59.0" y="209" text-anchor="middle">4 格 · 4 朝向</text>
+<rect x="156.5" y="139.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="170.5" y="139.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="184.5" y="139.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="170.5" y="153.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="177.0" y="196" text-anchor="middle">T4</text>
+<text class="po" x="177.0" y="209" text-anchor="middle">4 格 · 4 朝向</text>
+<rect x="288.5" y="132.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="302.5" y="132.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="274.5" y="146.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="288.5" y="146.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="288.5" y="160.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="295.0" y="196" text-anchor="middle">F5</text>
+<text class="po" x="295.0" y="209" text-anchor="middle">5 格 · 8 朝向</text>
+<rect x="378.5" y="146.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="392.5" y="146.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="406.5" y="146.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="420.5" y="146.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="434.5" y="146.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="413.0" y="196" text-anchor="middle">I5</text>
+<text class="po" x="413.0" y="209" text-anchor="middle">5 格 · 2 朝向</text>
+<rect x="503.5" y="139.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="517.5" y="139.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="531.5" y="139.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="545.5" y="139.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="503.5" y="153.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="531.0" y="196" text-anchor="middle">L5</text>
+<text class="po" x="531.0" y="209" text-anchor="middle">5 格 · 8 朝向</text>
+<rect x="635.5" y="139.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="649.5" y="139.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="663.5" y="139.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="621.5" y="153.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="635.5" y="153.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="649.0" y="196" text-anchor="middle">N5</text>
+<text class="po" x="649.0" y="209" text-anchor="middle">5 格 · 8 朝向</text>
+<rect x="753.5" y="132.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="767.5" y="132.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="753.5" y="146.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="767.5" y="146.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="753.5" y="160.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="767.0" y="196" text-anchor="middle">P5</text>
+<text class="po" x="767.0" y="209" text-anchor="middle">5 格 · 8 朝向</text>
+<rect x="38.5" y="240.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="52.5" y="240.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="66.5" y="240.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="52.5" y="254.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="52.5" y="268.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="59.0" y="304" text-anchor="middle">T5</text>
+<text class="po" x="59.0" y="317" text-anchor="middle">5 格 · 4 朝向</text>
+<rect x="156.5" y="247.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="184.5" y="247.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="156.5" y="261.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="170.5" y="261.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="184.5" y="261.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="177.0" y="304" text-anchor="middle">U5</text>
+<text class="po" x="177.0" y="317" text-anchor="middle">5 格 · 4 朝向</text>
+<rect x="274.5" y="240.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="274.5" y="254.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="274.5" y="268.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="288.5" y="268.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="302.5" y="268.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="295.0" y="304" text-anchor="middle">V5</text>
+<text class="po" x="295.0" y="317" text-anchor="middle">5 格 · 4 朝向</text>
+<rect x="392.5" y="240.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="392.5" y="254.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="406.5" y="254.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="406.5" y="268.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="420.5" y="268.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="413.0" y="304" text-anchor="middle">W5</text>
+<text class="po" x="413.0" y="317" text-anchor="middle">5 格 · 4 朝向</text>
+<rect x="524.5" y="240.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="510.5" y="254.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="524.5" y="254.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="538.5" y="254.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="524.5" y="268.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="531.0" y="304" text-anchor="middle">X5</text>
+<text class="po" x="531.0" y="317" text-anchor="middle">5 格 · 1 朝向</text>
+<rect x="649.5" y="233.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="635.5" y="247.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="649.5" y="247.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="649.5" y="261.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="649.5" y="275.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="649.0" y="304" text-anchor="middle">Y5</text>
+<text class="po" x="649.0" y="317" text-anchor="middle">5 格 · 8 朝向</text>
+<rect x="746.5" y="240.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="760.5" y="240.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="760.5" y="254.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="760.5" y="268.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<rect x="774.5" y="268.5" width="13" height="13" rx="2" fill="#7ba7d7" stroke="#4a7fb5" stroke-width="1"/>
+<text class="pn" x="767.0" y="304" text-anchor="middle">Z5</text>
+<text class="po" x="767.0" y="317" text-anchor="middle">5 格 · 4 朝向</text>
+</svg>
+<figcaption>图 1-2　双方各持的 21 枚棋子，共 89 格。朝向数按「4 旋转 × 2 镜像」去重得到，
+加起来正好 91 —— 这就是策略头的第一个维度。</figcaption>
+</figure>
+
+<h3>1.2 模型的职责：给 MCTS 提供先验与评估</h3>
+
+  <p>
+  模型本身不直接选点。它嵌在蒙特卡洛树搜索（MCTS）里，每次搜索到新节点时被调用一次，
+  同时给出三个输出：
+  </p>
+
+  <table>
+  <tr><th>输出</th><th>形状</th><th>作用</th></tr>
+  <tr><td><strong>策略头</strong></td><td class="mono">17836</td>
+      <td>每个合法动作的先验概率，决定搜索优先展开哪些分支</td></tr>
+  <tr><td><strong>价值头</strong></td><td class="mono">3</td>
+      <td>胜 / 和 / 负三分类，回传值取 <code>P(胜) − P(负)</code></td></tr>
+  <tr><td><strong>辅助头</strong></td><td class="mono">1</td>
+      <td>终局占格数差。信号比稀疏的三分类密集得多，用来加速早期收敛</td></tr>
+  </table>
+
+  <div class="key">
+  价值头做成 <strong>WDL 三分类而不是 tanh 标量</strong>，是因为和局在这个规则下是真实结果。
+  tanh 标量分不清「这是和棋局面」与「胜负各半的混沌局面」—— 两者都会给出接近 0 的值，
+  但它们对搜索的含义完全相反。
+  </div>
+
+  <figure style="max-width:min(100%,1008px)">
+<svg viewBox="0 0 840 300" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+<defs>
+  <marker id="am" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+    <polygon points="0 0, 9 3.5, 0 7" fill="#666"/>
+  </marker>
+</defs>
+<style>
+  .bm { stroke:#999; stroke-width:1.2; rx:5; }
+  .tm { font-size:13.5px; fill:#1a1a1a; }
+  .sm2{ font-size:11.5px; fill:#6b6b6b; }
+  .lm { stroke:#666; stroke-width:1.4; marker-end:url(#am); fill:none; }
+  .hd { font-size:13.5px; font-weight:600; fill:#1a5fb4; }
+</style>
+
+<rect stroke="#c4c4c4" x="14" y="96" width="150" height="76" class="bm" fill="none"/>
+<text class="tm" x="89" y="126" text-anchor="middle">① 选择</text>
+<text class="sm2" x="89" y="146" text-anchor="middle">沿 PUCT 下探到</text>
+<text class="sm2" x="89" y="161" text-anchor="middle">一个未展开节点</text>
+
+<rect stroke="#d9a066" x="238" y="76" width="200" height="116" class="bm" fill="none"/>
+<text class="hd" x="338" y="104" text-anchor="middle">② 模型评估</text>
+<text class="sm2" x="338" y="128" text-anchor="middle">输入：9 平面 + 44 标量</text>
+<text class="sm2" x="338" y="148" text-anchor="middle">策略 17836 → 子节点先验</text>
+<text class="sm2" x="338" y="168" text-anchor="middle">价值 3 → P(胜) − P(负)</text>
+
+<rect stroke="#c4c4c4" x="512" y="96" width="150" height="76" class="bm" fill="none"/>
+<text class="tm" x="587" y="126" text-anchor="middle">③ 回传</text>
+<text class="sm2" x="587" y="146" text-anchor="middle">价值沿路径上溯，</text>
+<text class="sm2" x="587" y="161" text-anchor="middle">更新访问数与均值</text>
+
+<rect stroke="#7fb894" x="700" y="96" width="126" height="76" class="bm" fill="none"/>
+<text class="tm" x="763" y="122" text-anchor="middle">落子</text>
+<text class="sm2" x="763" y="142" text-anchor="middle">取访问数最多的</text>
+<text class="sm2" x="763" y="157" text-anchor="middle">根子节点</text>
+
+<path class="lm" d="M164 134 H233"/>
+<path class="lm" d="M438 134 H507"/>
+<path class="lm" d="M662 134 H695"/>
+<path class="lm" d="M587 96 V56 H89 V92"/>
+<text class="sm2" x="338" y="48" text-anchor="middle">重复 N 次（试玩默认 64 / 256 / 800）</text>
+
+<text class="sm2" x="420" y="232" text-anchor="middle">
+  模型只在 ② 出现 —— 它给的是「先看哪里」和「这局面怎么样」，不直接决定落子
+</text>
+<text class="sm2" x="420" y="256" text-anchor="middle">
+  自博弈训练时，③ 累积出的访问分布反过来成为策略头的监督目标
+</text>
+</svg>
+<figcaption>图 1-3　模型在 MCTS 中的位置。每次搜索到新节点调用一次，
+给出子节点先验与局面评估；最终落子由访问数决定，不由模型直接输出。</figcaption>
+</figure>
+
+<h3>1.3 动作空间：91 × 196 = 17836</h3>
+
+  <p>
+  21 枚棋子按「4 旋转 × 2 镜像」展开去重后恰好是 <strong>91 个不同朝向</strong>
+  （引擎在生成时断言这个数）。动作编码为
+  <code>朝向 × 196 + 包围盒左上角格号</code>，正好对应策略头的
+  <span class="mono">91 × 14 × 14</span> 张量。越界与非法动作在 softmax 前用 mask 屏蔽。
+  </p>
+
+  <h3>1.4 训练方式：纯自博弈，无棋谱</h3>
+
+  <p>
+  不使用任何人类棋谱或外部数据。模型与自己对弈产生训练数据，用 MCTS 的访问分布
+  监督策略头、用对局结果监督价值头，如此循环。连<strong>评测基线也必须由规则构造</strong>
+  （随机落子、贪心占格、纯 rollout MCTS），因为没有棋谱可以当测试集。
+  </p>
+
+
+  <h2>二、模型结构</h2>
+
+  <p>
+  下面以 <strong>BF16 模型</strong>为例。三种精度的结构、参数量、
+  输入输出完全相同，本章的一切对 FP8 与 FP4 同样成立。
+  </p>
+
+  <table>
+  <tr><th>项</th><th>值</th><th>项</th><th>值</th></tr>
+  <tr><td>参数量</td><td class="mono">14,183,007（14.2M）</td>
+      <td>隐藏维度 <span class="mono">dim</span></td><td class="mono">256</td></tr>
+  <tr><td>层数</td><td class="mono">16</td>
+      <td>SwiGLU 中间维</td><td class="mono">1024（4×dim）</td></tr>
+  <tr><td>注意力</td><td class="mono">每 4 层一次（第 4/8/12/16 层）</td>
+      <td>注意力头</td><td class="mono">8</td></tr>
+  <tr><td>深度卷积核</td><td class="mono">5 × 5</td>
+      <td>计算精度</td><td class="mono">BF16</td></tr>
+  <tr><td>训练步数</td><td class="mono">111,000</td>
+      <td>发布包大小</td><td class="mono">28.4 MB</td></tr>
+  </table>
+
+  <h3>2.1 整体数据流</h3>
+
+  <figure style="max-width:min(100%,1032px)">
+  <svg viewBox="0 0 860 420" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+    <defs>
+      <marker id="ar" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+        <polygon points="0 0, 9 3.5, 0 7" fill="#666"/>
+      </marker>
+    </defs>
+    <style>
+      .bx { stroke:#999; stroke-width:1.2; rx:5; }
+      .lb { font-size:14px; fill:#1a1a1a; }
+      .sm { font-size:12px; fill:#6b6b6b; }
+      .ln { stroke:#666; stroke-width:1.4; marker-end:url(#ar); fill:none; }
+      .ttl{ font-size:13.5px; font-weight:600; fill:#1a5fb4; }
+    </style>
+
+    <rect stroke="#7ba7d7" class="bx" x="16"  y="18" width="168" height="58" fill="none"/>
+    <text class="lb" x="100" y="42" text-anchor="middle">棋盘平面</text>
+    <text class="sm" x="100" y="61" text-anchor="middle">9 × 14 × 14</text>
+
+    <rect stroke="#7ba7d7" class="bx" x="16"  y="106" width="168" height="58" fill="none"/>
+    <text class="lb" x="100" y="130" text-anchor="middle">标量特征</text>
+    <text class="sm" x="100" y="149" text-anchor="middle">44</text>
+
+    <rect stroke="#c4c4c4" class="bx" x="238" y="18" width="176" height="58" fill="none"/>
+    <text class="lb" x="326" y="42" text-anchor="middle">3×3 卷积 stem</text>
+    <text class="sm" x="326" y="61" text-anchor="middle">→ 196 格 × 256</text>
+
+    <rect stroke="#c4c4c4" class="bx" x="238" y="106" width="176" height="58" fill="none"/>
+    <text class="lb" x="326" y="130" text-anchor="middle">标量 MLP</text>
+    <text class="sm" x="326" y="149" text-anchor="middle">44 → 256，广播到每格</text>
+
+    <circle cx="470" cy="91" r="16" fill="#fff" stroke="#999" stroke-width="1.2"/>
+    <text class="lb" x="470" y="96" text-anchor="middle">+</text>
+    <text class="sm" x="470" y="132" text-anchor="middle">＋位置嵌入</text>
+
+    <rect stroke="#d9a066" class="bx" x="540" y="40" width="300" height="102" fill="none"/>
+    <text class="ttl" x="690" y="66" text-anchor="middle">骨干 · 16 × PolyBlock</text>
+    <text class="sm" x="690" y="88" text-anchor="middle">深度卷积 → [注意力] → SwiGLU</text>
+    <text class="sm" x="690" y="107" text-anchor="middle">前置 RMSNorm，逐子层残差</text>
+    <text class="sm" x="690" y="128" text-anchor="middle">输出 196 × 256</text>
+
+    <rect stroke="#c4c4c4" class="bx" x="320" y="196" width="240" height="42" fill="none"/>
+    <text class="sm" x="440" y="222" text-anchor="middle">全局池化　mean ‖ amax → 512</text>
+
+    <rect stroke="#7fb894" class="bx" x="40"  y="292" width="228" height="86" fill="none"/>
+    <text class="ttl" x="154" y="318" text-anchor="middle">策略头</text>
+    <text class="sm" x="154" y="340" text-anchor="middle">Linear 256 → 91（逐格共享）</text>
+    <text class="sm" x="154" y="360" text-anchor="middle">91 × 196 = 17836</text>
+
+    <rect stroke="#7fb894" class="bx" x="306" y="292" width="228" height="86" fill="none"/>
+    <text class="ttl" x="420" y="318" text-anchor="middle">价值头</text>
+    <text class="sm" x="420" y="340" text-anchor="middle">MLP 512 → 256 → 3</text>
+    <text class="sm" x="420" y="360" text-anchor="middle">胜 / 和 / 负</text>
+
+    <rect stroke="#7fb894" class="bx" x="572" y="292" width="228" height="86" fill="none"/>
+    <text class="ttl" x="686" y="318" text-anchor="middle">辅助头</text>
+    <text class="sm" x="686" y="340" text-anchor="middle">MLP 512 → 256 → 1</text>
+    <text class="sm" x="686" y="360" text-anchor="middle">终局占格数差</text>
+
+    <path class="ln" d="M184 47 H233"/>
+    <path class="ln" d="M184 135 H233"/>
+    <path class="ln" d="M414 47 H449"/>
+    <path class="ln" d="M414 135 H449"/>
+    <path class="ln" d="M487 91 H535"/>
+    <path class="ln" d="M600 142 V168 H154 V287"/>
+    <path class="ln" d="M690 142 V192"/>
+    <path class="ln" d="M420 238 V287"/>
+    <path class="ln" d="M686 238 V287"/>
+    <path d="M690 192 H560" stroke="#666" stroke-width="1.4" fill="none"/>
+    <path d="M560 192 V216 M560 216 H686 M686 216 V238" stroke="#666" stroke-width="1.4" fill="none"/>
+  </svg>
+  <figcaption>图 2-1　整体数据流。骨干输出 196 个格向量：策略头逐格作用，价值与辅助头走全局池化。</figcaption>
+  </figure>
+
+  <h3>2.2 输入表示</h3>
+
+  <p><strong>9 个 14×14 平面</strong>，全部从当前行棋方视角编码（座位无关，便于对称增广）：</p>
+
+  <table>
+  <tr><th class="num">#</th><th>平面</th><th>含义</th></tr>
+  <tr><td class="num">1</td><td>己方占格</td><td>己方棋子覆盖的格</td></tr>
+  <tr><td class="num">2</td><td>对方占格</td><td>对方棋子覆盖的格</td></tr>
+  <tr><td class="num">3</td><td>己方可落区</td><td>空格且不与己方棋子边接触</td></tr>
+  <tr><td class="num">4</td><td><strong>己方角点</strong></td><td>与己方棋子角接触的可落格 —— 落子必经之处</td></tr>
+  <tr><td class="num">5</td><td>对方可落区</td><td>同上，对方视角</td></tr>
+  <tr><td class="num">6</td><td><strong>对方角点</strong></td><td>用于判断「堵死对方」这类攻防</td></tr>
+  <tr><td class="num">7</td><td>己方起始格</td><td>开局第一手的锚点</td></tr>
+  <tr><td class="num">8</td><td>对方起始格</td><td>同上</td></tr>
+  <tr><td class="num">9</td><td>恒为 1</td><td>给网络一个偏置 / 边界参考</td></tr>
+  </table>
+
+  <p><strong>44 个标量</strong>：己方 21 枚棋子的在手标志 + 对方 21 枚 + 双方占格数（各除以总格数归一）。</p>
+
+  <div class="key">
+  特征里<strong>刻意不放手数 <span class="mono">ply</span></strong>。
+  棋盘有 4 个对称变换可用作数据增广，其中 rot180 与反对角变换会把己方起始格映射到
+  另一个座位的起始格，而 <span class="mono">ply</span> 的奇偶性与座位相关 ——
+  放进去会让这两个增广产生分布外样本。改用<strong>座位无关的占格数</strong>，
+  信息量不比 <span class="mono">ply</span> 少（两者之和已隐含对局进度），
+  且四个对称变换全部严格自洽。
+  </div>
+
+  <h3>2.3 骨干：PolyBlock</h3>
+
+  <p>
+  骨干由 16 个 <strong>PolyBlock</strong> 堆叠而成。名字取自「多合一」——
+  与 Transformer 每层只有「注意力 + MLP」不同，它一层里组合了两到三种混合方式：
+  </p>
+
+  <figure style="max-width:min(100%,984px)">
+  <svg viewBox="0 0 820 250" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+    <defs>
+      <marker id="ar2" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+        <polygon points="0 0, 9 3.5, 0 7" fill="#666"/>
+      </marker>
+      <marker id="ar3" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+        <polygon points="0 0, 9 3.5, 0 7" fill="#c07000"/>
+      </marker>
+    </defs>
+    <style>
+      .b2 { stroke:#999; stroke-width:1.2; rx:5; }
+      .t2 { font-size:13.5px; fill:#1a1a1a; }
+      .s2 { font-size:11.5px; fill:#6b6b6b; }
+      .l2 { stroke:#666; stroke-width:1.4; marker-end:url(#ar2); fill:none; }
+      .r2 { stroke:#c07000; stroke-width:1.3; stroke-dasharray:4 3; marker-end:url(#ar3); fill:none; }
+    </style>
+
+    <text class="t2" x="18" y="126" font-weight="600">输入</text>
+    <text class="s2" x="18" y="144">196×256</text>
+
+    <rect stroke="#c4c4c4" class="b2" x="96"  y="98" width="116" height="56" fill="none"/>
+    <text class="t2" x="154" y="121" text-anchor="middle">深度卷积</text>
+    <text class="s2" x="154" y="140" text-anchor="middle">5×5，逐通道</text>
+
+    <rect stroke="#d9a066" class="b2" x="268" y="98" width="136" height="56" fill="none"/>
+    <text class="t2" x="336" y="121" text-anchor="middle">全局注意力</text>
+    <text class="s2" x="336" y="140" text-anchor="middle">8 头，仅每 4 层</text>
+
+    <rect stroke="#c4c4c4" class="b2" x="460" y="98" width="120" height="56" fill="none"/>
+    <text class="t2" x="520" y="121" text-anchor="middle">SwiGLU</text>
+    <text class="s2" x="520" y="140" text-anchor="middle">256→1024→256</text>
+
+    <text class="t2" x="638" y="130" font-weight="600">输出</text>
+
+    <path class="l2" d="M62 126 H92"/>
+    <path class="l2" d="M212 126 H264"/>
+    <path class="l2" d="M404 126 H456"/>
+    <path class="l2" d="M580 126 H632"/>
+
+    <path class="r2" d="M92 98 V62 H212 V94"/>
+    <path class="r2" d="M264 98 V62 H404 V94"/>
+    <path class="r2" d="M456 98 V62 H580 V94"/>
+    <text class="s2" x="152" y="54" text-anchor="middle" fill="#c07000">残差</text>
+    <text class="s2" x="334" y="54" text-anchor="middle" fill="#c07000">残差</text>
+    <text class="s2" x="518" y="54" text-anchor="middle" fill="#c07000">残差</text>
+
+    <text class="s2" x="154" y="180" text-anchor="middle">局部混合 · 每层都有</text>
+    <text class="s2" x="336" y="180" text-anchor="middle">全局混合 · 第 4/8/12/16 层</text>
+    <text class="s2" x="520" y="180" text-anchor="middle">通道混合 · 每层都有</text>
+
+    <text class="s2" x="410" y="218" text-anchor="middle">每个子层前置 RMSNorm，输出以残差相加</text>
+  </svg>
+  <figcaption>图 2-2　PolyBlock 内部。深度卷积与 SwiGLU 每层都有，全局注意力每 4 层插一次。</figcaption>
+  </figure>
+
+  <p>
+  三条支路里 <strong>SwiGLU 占了近九成参数</strong>，也是低精度实验的主要作用面，
+  单独展开一下：
+  </p>
+
+  <figure style="max-width:min(100%,1008px)">
+  <svg viewBox="0 0 840 430" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+<style>.ax{font-size:11.5px;fill:#6b6b6b}.nm{font-size:13.5px;font-weight:600}.wy{font-size:11px;fill:#6b6b6b}.vl{font-size:12px;font-weight:600}.bl{font-size:12px;fill:#8a3a3a}</style>
+<line x1="287.6" y1="72" x2="287.6" y2="346" stroke="#eee" stroke-width="1"/>
+<text class="ax" x="287.6" y="366" text-anchor="middle">-20</text>
+<line x1="381.6" y1="72" x2="381.6" y2="346" stroke="#eee" stroke-width="1"/>
+<text class="ax" x="381.6" y="366" text-anchor="middle">-10</text>
+<line x1="475.6" y1="72" x2="475.6" y2="346" stroke="#aaa" stroke-width="1.3"/>
+<text class="ax" x="475.6" y="366" text-anchor="middle">+0</text>
+<line x1="569.6" y1="72" x2="569.6" y2="346" stroke="#eee" stroke-width="1"/>
+<text class="ax" x="569.6" y="366" text-anchor="middle">+10</text>
+<line x1="663.6" y1="72" x2="663.6" y2="346" stroke="#eee" stroke-width="1"/>
+<text class="ax" x="663.6" y="366" text-anchor="middle">+20</text>
+<text class="nm" x="12" y="106" fill="#2e8b57">FP8-QAT</text>
+<text class="wy" x="12" y="121">FP8 训练 → FP8 推理</text>
+<line x1="473.3" y1="102" x2="709.1" y2="102" stroke="#2e8b57" stroke-width="2"/>
+<line x1="473.3" y1="96" x2="473.3" y2="108" stroke="#2e8b57" stroke-width="2"/>
+<line x1="709.1" y1="96" x2="709.1" y2="108" stroke="#2e8b57" stroke-width="2"/>
+<circle cx="591.2" cy="102" r="6" fill="#2e8b57"/>
+<text class="vl" x="591.2" y="89" text-anchor="middle" fill="#2e8b57">+12.3</text>
+<text class="nm" x="12" y="152" fill="#1a5fb4">BF16</text>
+<text class="wy" x="12" y="167">BF16 训练 → BF16 推理</text>
+<circle cx="475.6" cy="148" r="6" fill="#1a5fb4"/>
+<text class="vl" x="475.6" y="135" text-anchor="middle" fill="#1a5fb4">0</text>
+<text class="nm" x="12" y="198" fill="#2e8b57">FP8-PTQ</text>
+<text class="wy" x="12" y="213">BF16 训练 → FP8 推理</text>
+<line x1="319.1" y1="194" x2="555.0" y2="194" stroke="#2e8b57" stroke-width="2"/>
+<line x1="319.1" y1="188" x2="319.1" y2="200" stroke="#2e8b57" stroke-width="2"/>
+<line x1="555.0" y1="188" x2="555.0" y2="200" stroke="#2e8b57" stroke-width="2"/>
+<circle cx="437.1" cy="194" r="6" fill="#2e8b57"/>
+<text class="vl" x="437.1" y="181" text-anchor="middle" fill="#2e8b57">-4.1</text>
+<text class="nm" x="12" y="244" fill="#c07000">FP4-PTQ</text>
+<text class="wy" x="12" y="259">BF16 训练 → FP4 推理</text>
+<line x1="309.7" y1="240" x2="545.6" y2="240" stroke="#c07000" stroke-width="2"/>
+<line x1="309.7" y1="234" x2="309.7" y2="246" stroke="#c07000" stroke-width="2"/>
+<line x1="545.6" y1="234" x2="545.6" y2="246" stroke="#c07000" stroke-width="2"/>
+<circle cx="427.7" cy="240" r="6" fill="#c07000"/>
+<text class="vl" x="427.7" y="227" text-anchor="middle" fill="#c07000">-5.1</text>
+<text class="nm" x="12" y="290" fill="#c07000">FP4-QAT</text>
+<text class="wy" x="12" y="305">FP4 训练 → FP4 推理</text>
+<line x1="295.6" y1="286" x2="524.0" y2="286" stroke="#c07000" stroke-width="2"/>
+<line x1="295.6" y1="280" x2="295.6" y2="292" stroke="#c07000" stroke-width="2"/>
+<line x1="524.0" y1="280" x2="524.0" y2="292" stroke="#c07000" stroke-width="2"/>
+<circle cx="409.8" cy="286" r="6" fill="#c07000"/>
+<text class="vl" x="409.8" y="273" text-anchor="middle" fill="#c07000">-7.0</text>
+<line x1="242" y1="392" x2="720" y2="392" stroke="#ccc" stroke-width="1"/>
+<circle cx="220" cy="392" r="6" fill="#8a3a3a"/>
+<text class="bl" x="206" y="396" text-anchor="end">greedy-mobility</text>
+<text class="bl" x="220" y="414" text-anchor="middle">−855.7</text>
+<text class="ax" x="485" y="414" text-anchor="middle">（规则基线，轴外 —— 对上面任一模型的得分率只有 0.005）</text>
+<text class="ax" x="485" y="40" text-anchor="middle">五个模型的全距 19 Elo，只有「会不会下棋」那 856 分的 1/45</text>
+<text class="ax" x="485" y="390" text-anchor="middle" opacity="0">.</text>
+<text class="ax" x="485" y="416" text-anchor="middle">Elo（相对 BF16）　误差条为 95% 置信区间　两场合并共 42,006 局</text>
+</svg>
+  <figcaption>图 4-1　五个模型的棋力，相对 BF16。规则基线画在轴外 ——
+  它与任一模型的差距是模型彼此差距的四十余倍。</figcaption>
+  </figure>
+
+  <p>
+  与普通 MLP（一层 Linear 加一个激活函数）相比，SwiGLU 多出一条
+  <strong>门控支路</strong>：<span class="mono">val</span> 携带内容，
+  <span class="mono">gate</span> 决定这些内容每个通道让过多少，
+  而<strong>让过多少由输入自己算出来</strong>，不是固定的。
+  代价是同样的隐藏维要多一份投影 —— 所以 <span class="mono">up</span> 的输出是
+  2048 而不是 1024。
+  </p>
+
+  <div class="key">
+  用 SiLU 而不是 ReLU 做门：<span class="mono">SiLU(g) = g · sigmoid(g)</span>，
+  负值不是硬截断为 0，而是<strong>平滑地压小</strong>。
+  门控支路一旦被硬截断，对应通道的梯度就整段消失、再也回不来；
+  平滑的门则始终保留一点梯度。
+  </div>
+
+  <p>另一条支路是<strong>全局注意力</strong>，只出现在第 4/8/12/16 层：</p>
+
+  <figure style="max-width:min(100%,1008px)">
+  <svg viewBox="0 0 840 470" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+<defs><marker id="aa" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+<polygon points="0 0, 9 3.5, 0 7" fill="#666"/></marker></defs>
+<style>
+ .ba{fill:none;stroke-width:1.2;rx:5}
+ .ta{font-size:13px;fill:#1a1a1a}
+ .sa{font-size:11px;fill:#6b6b6b}
+ .la{stroke:#666;stroke-width:1.4;marker-end:url(#aa);fill:none}
+ .ha{font-size:12.5px;font-weight:600;fill:#1a5fb4}
+</style>
+<text class="ha" x="420" y="26" text-anchor="middle">196 个格 token 两两之间直接建立联系</text>
+<rect class="ba" x="20" y="52" width="104" height="58" stroke="#7ba7d7"/>
+<text class="ta" x="72" y="76" text-anchor="middle">196 × 256</text>
+<text class="sa" x="72" y="95" text-anchor="middle">每格一个向量</text>
+<rect class="ba" x="172" y="52" width="120" height="58" stroke="#c4c4c4"/>
+<text class="ta" x="232" y="76" text-anchor="middle">qkv</text>
+<text class="sa" x="232" y="95" text-anchor="middle">Linear 256 → 768</text>
+<rect class="ba" x="340" y="52" width="60" height="58" stroke="#d9a066"/>
+<text class="ta" x="370" y="80" text-anchor="middle">Q</text>
+<text class="sa" x="370" y="98" text-anchor="middle">8 头 ×32</text>
+<rect class="ba" x="414" y="52" width="60" height="58" stroke="#d9a066"/>
+<text class="ta" x="444" y="80" text-anchor="middle">K</text>
+<text class="sa" x="444" y="98" text-anchor="middle">8 头 ×32</text>
+<rect class="ba" x="488" y="52" width="60" height="58" stroke="#c4c4c4"/>
+<text class="ta" x="518" y="80" text-anchor="middle">V</text>
+<text class="sa" x="518" y="98" text-anchor="middle">8 头 ×32</text>
+<rect class="ba" x="566" y="52" width="130" height="58" stroke="#d9a066"/>
+<text class="ta" x="631" y="76" text-anchor="middle">Q·Kᵀ → softmax</text>
+<text class="sa" x="631" y="95" text-anchor="middle">196×196 注意力权重</text>
+<rect class="ba" x="726" y="52" width="98" height="58" stroke="#c4c4c4"/>
+<text class="ta" x="775" y="76" text-anchor="middle">加权求和</text>
+<text class="sa" x="775" y="95" text-anchor="middle">→ proj 256</text>
+<path class="la" d="M124 81 H167"/>
+<path class="la" d="M292 81 H335"/>
+<path class="la" d="M474 81 H561"/>
+<path class="la" d="M696 81 H721"/>
+<text class="sa" x="420" y="132" text-anchor="middle">Q 问「我需要什么」，K 答「我有什么」，两者点积得出每一对格子的相关度；V 是真正被搬运的内容</text>
+<text class="ha" x="223" y="176" text-anchor="middle">深度卷积（5×5）· 一层</text>
+<rect x="118" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="133" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="148" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="163" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="178" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="193" y="190" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="208" y="190" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="223" y="190" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="238" y="190" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="253" y="190" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="268" y="190" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="283" y="190" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="298" y="190" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="313" y="190" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="118" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="133" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="148" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="163" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="178" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="193" y="205" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="208" y="205" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="223" y="205" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="238" y="205" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="253" y="205" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="268" y="205" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="283" y="205" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="298" y="205" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="313" y="205" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="118" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="133" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="148" y="220" width="15" height="15" fill="#4a7fb5" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="163" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="178" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="193" y="220" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="208" y="220" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="223" y="220" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="238" y="220" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="253" y="220" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="268" y="220" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="283" y="220" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="298" y="220" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="313" y="220" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="118" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="133" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="148" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="163" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="178" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="193" y="235" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="208" y="235" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="223" y="235" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="238" y="235" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="253" y="235" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="268" y="235" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="283" y="235" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="298" y="235" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="313" y="235" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="118" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="133" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="148" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="163" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="178" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="193" y="250" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="208" y="250" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="223" y="250" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="238" y="250" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="253" y="250" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="268" y="250" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="283" y="250" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="298" y="250" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="313" y="250" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="118" y="265" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="133" y="265" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="148" y="265" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="163" y="265" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="178" y="265" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="193" y="265" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="208" y="265" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="223" y="265" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="238" y="265" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="253" y="265" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="268" y="265" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="283" y="265" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="298" y="265" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="313" y="265" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="118" y="280" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="133" y="280" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="148" y="280" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="163" y="280" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="178" y="280" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="193" y="280" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="208" y="280" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="223" y="280" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="238" y="280" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="253" y="280" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="268" y="280" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="283" y="280" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="298" y="280" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="313" y="280" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="118" y="295" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="133" y="295" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="148" y="295" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="163" y="295" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="178" y="295" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="193" y="295" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="208" y="295" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="223" y="295" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="238" y="295" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="253" y="295" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="268" y="295" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="283" y="295" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="298" y="295" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="313" y="295" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="118" y="310" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="133" y="310" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="148" y="310" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="163" y="310" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="178" y="310" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="193" y="310" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="208" y="310" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="223" y="310" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="238" y="310" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="253" y="310" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="268" y="310" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="283" y="310" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="298" y="310" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="313" y="310" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="118" y="325" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="133" y="325" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="148" y="325" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="163" y="325" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="178" y="325" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="193" y="325" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="208" y="325" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="223" y="325" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="238" y="325" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="253" y="325" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="268" y="325" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="283" y="325" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="298" y="325" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="313" y="325" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="118" y="340" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="133" y="340" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="148" y="340" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="163" y="340" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="178" y="340" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="193" y="340" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="208" y="340" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="223" y="340" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="238" y="340" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="253" y="340" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="268" y="340" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="283" y="340" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="298" y="340" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="313" y="340" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="118" y="355" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="133" y="355" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="148" y="355" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="163" y="355" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="178" y="355" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="193" y="355" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="208" y="355" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="223" y="355" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="238" y="355" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="253" y="355" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="268" y="355" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="283" y="355" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="298" y="355" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="313" y="355" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="118" y="370" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="133" y="370" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="148" y="370" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="163" y="370" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="178" y="370" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="193" y="370" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="208" y="370" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="223" y="370" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="238" y="370" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="253" y="370" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="268" y="370" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="283" y="370" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="298" y="370" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="313" y="370" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="118" y="385" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="133" y="385" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="148" y="385" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="163" y="385" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="178" y="385" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="193" y="385" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="208" y="385" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="223" y="385" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="238" y="385" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="253" y="385" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="268" y="385" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="283" y="385" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="298" y="385" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="313" y="385" width="15" height="15" fill="#fff" stroke="#d8d8d8" stroke-width="0.7"/>
+<text class="sa" x="223" y="422" text-anchor="middle">只够到相邻两格</text>
+<text class="ha" x="553" y="176" text-anchor="middle">全局注意力 · 一层</text>
+<rect x="448" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="463" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="478" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="493" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="508" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="523" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="538" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="553" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="568" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="583" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="598" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="613" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="628" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="643" y="190" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="448" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="463" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="478" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="493" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="508" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="523" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="538" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="553" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="568" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="583" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="598" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="613" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="628" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="643" y="205" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="448" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="463" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="478" y="220" width="15" height="15" fill="#4a7fb5" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="493" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="508" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="523" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="538" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="553" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="568" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="583" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="598" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="613" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="628" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="643" y="220" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="448" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="463" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="478" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="493" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="508" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="523" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="538" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="553" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="568" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="583" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="598" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="613" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="628" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="643" y="235" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="448" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="463" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="478" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="493" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="508" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="523" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="538" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="553" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="568" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="583" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="598" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="613" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="628" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="643" y="250" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="448" y="265" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="463" y="265" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="478" y="265" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="493" y="265" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="508" y="265" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="523" y="265" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="538" y="265" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="553" y="265" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="568" y="265" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="583" y="265" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="598" y="265" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="613" y="265" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="628" y="265" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="643" y="265" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="448" y="280" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="463" y="280" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="478" y="280" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="493" y="280" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="508" y="280" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="523" y="280" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="538" y="280" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="553" y="280" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="568" y="280" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="583" y="280" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="598" y="280" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="613" y="280" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="628" y="280" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="643" y="280" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="448" y="295" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="463" y="295" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="478" y="295" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="493" y="295" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="508" y="295" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="523" y="295" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="538" y="295" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="553" y="295" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="568" y="295" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="583" y="295" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="598" y="295" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="613" y="295" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="628" y="295" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="643" y="295" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="448" y="310" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="463" y="310" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="478" y="310" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="493" y="310" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="508" y="310" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="523" y="310" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="538" y="310" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="553" y="310" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="568" y="310" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="583" y="310" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="598" y="310" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="613" y="310" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="628" y="310" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="643" y="310" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="448" y="325" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="463" y="325" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="478" y="325" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="493" y="325" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="508" y="325" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="523" y="325" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="538" y="325" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="553" y="325" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="568" y="325" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="583" y="325" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="598" y="325" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="613" y="325" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="628" y="325" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="643" y="325" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="448" y="340" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="463" y="340" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="478" y="340" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="493" y="340" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="508" y="340" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="523" y="340" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="538" y="340" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="553" y="340" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="568" y="340" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="583" y="340" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="598" y="340" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="613" y="340" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="628" y="340" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="643" y="340" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="448" y="355" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="463" y="355" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="478" y="355" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="493" y="355" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="508" y="355" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="523" y="355" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="538" y="355" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="553" y="355" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="568" y="355" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="583" y="355" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="598" y="355" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="613" y="355" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="628" y="355" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="643" y="355" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="448" y="370" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="463" y="370" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="478" y="370" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="493" y="370" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="508" y="370" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="523" y="370" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="538" y="370" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="553" y="370" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="568" y="370" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="583" y="370" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="598" y="370" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="613" y="370" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="628" y="370" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="643" y="370" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="448" y="385" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="463" y="385" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="478" y="385" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="493" y="385" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="508" y="385" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="523" y="385" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="538" y="385" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="553" y="385" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="568" y="385" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="583" y="385" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="598" y="385" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="613" y="385" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="628" y="385" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<rect x="643" y="385" width="15" height="15" fill="#cfe6d3" stroke="#d8d8d8" stroke-width="0.7"/>
+<text class="sa" x="553" y="422" text-anchor="middle">整盘 196 格全部可达</text>
+<text class="sa" x="420" y="452" text-anchor="middle">蓝色是当前格，绿色是它一层之内能看到的范围。「哪片区域还够得着」「对方角点被堵死没有」这类判断是全局的 ——</text>
+<text class="sa" x="420" y="470" text-anchor="middle">纯卷积要堆 7 层才能让棋盘对角的两格互相看见，注意力一层就够</text>
+</svg>
+  <figcaption>图 2-4　全局注意力。上半是计算流程，下半对比两种混合方式
+  <strong>一层之内的可达范围</strong>。</figcaption>
+  </figure>
+
+  <p>
+  <span class="mono">qkv</span> 是一个融合的 256→768 线性层，切成 Q、K、V 三份，
+  各自再分成 8 个头（每头 32 维）。<strong>Q 问「我需要什么」，K 答「我有什么」</strong>，
+  两者点积过 softmax 得出 196×196 的相关度矩阵，再用它对 V 加权求和。
+  每层参数 <span class="mono">256×768 + 256×256 = 262,144</span>，
+  四层共 1,048,576。
+  </p>
+
+  <div class="key">
+  下半那张对比是这条支路存在的全部理由。深度卷积 5×5 一层只够到相邻两格，
+  要让棋盘对角的两格互相看见得<strong>堆七层</strong>；
+  而 Blokus 的关键判断 ——「哪片区域还够得着」「对方的角点被我堵死没有」——
+  <strong>本质上是全局的</strong>。注意力一层就能让任意两格直接建立联系。
+  </div>
+
+  <div class="key">
+  <strong>为什么注意力只放 1/4 层</strong>：Blokus 的关键判断（「哪片区域还够得着」、
+  「对方的角点被我堵死没有」）是全局的，纯卷积要堆很多层才能把这类信息传播开；
+  但全局注意力在 196 个 token 上是 O(n²)，每层都放代价太高。
+  深度卷积提供廉价的局部归纳偏置（仅占参数量 0.8%），注意力每 4 层「抄一次近路」。
+  </div>
+
+  <h3>2.4 参数分布</h3>
+
+  <table>
+  <tr><th>模块</th><th class="num">参数量</th><th class="num">占比</th><th>说明</th></tr>
+  <tr><td>SwiGLU（16 层）</td><td class="num mono">12,582,912</td><td class="num mono">88.7%</td><td>骨干的绝对主体</td></tr>
+  <tr><td>注意力（4 层）</td><td class="num mono">1,048,576</td><td class="num mono">7.4%</td><td>QKV + 输出投影</td></tr>
+  <tr><td>价值头</td><td class="num mono">132,099</td><td class="num mono">0.9%</td><td></td></tr>
+  <tr><td>辅助头</td><td class="num mono">131,585</td><td class="num mono">0.9%</td><td></td></tr>
+  <tr><td>深度卷积（16 层）</td><td class="num mono">106,496</td><td class="num mono">0.8%</td><td>逐通道，极省参数</td></tr>
+  <tr><td>标量 MLP</td><td class="num mono">77,312</td><td class="num mono">0.5%</td><td></td></tr>
+  <tr><td>位置嵌入</td><td class="num mono">50,176</td><td class="num mono">0.4%</td><td>196 × 256</td></tr>
+  <tr><td>策略头</td><td class="num mono">23,387</td><td class="num mono">0.2%</td><td>逐格共享的 256→91</td></tr>
+  <tr><td>3×3 卷积 stem</td><td class="num mono">20,992</td><td class="num mono">0.1%</td><td></td></tr>
+  <tr><td>RMSNorm 等</td><td class="num mono">9,472</td><td class="num mono">0.1%</td><td></td></tr>
+  <tr><th>合计</th><th class="num mono">14,183,007</th><th class="num mono">100%</th><th></th></tr>
+  </table>
+
+  <p>
+  近九成参数集中在 SwiGLU，这也是低精度实验（MXFP8 / NVFP4）的主要作用面 ——
+  量化只替换骨干里的 GEMM，stem、头部与损失计算全部保持高精度。
+  </p>
+
+  <h2>三、低精度训练</h2>
+
+  <p>
+  本项目并行跑三组：<span class="mono">BF16</span>（基线）、
+  <span class="mono">FP8</span>（MXFP8）、<span class="mono">FP4</span>（NVFP4）。
+  分工是固定的 —— <strong>低精度负责算得快（只用在 GEMM 的输入），
+  高精度负责记得准（主权重、优化器状态、累加器）</strong>。
+  「FP4 训练」指的是矩阵乘的计算精度，<strong>不是权重的存储精度</strong>。
+  </p>
+
+  <figure style="max-width:min(100%,1008px)">
+  <svg viewBox="0 0 840 330" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+<defs>
+  <marker id="ap" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+    <polygon points="0 0, 9 3.5, 0 7" fill="#666"/>
+  </marker>
+</defs>
+<style>
+  .bp { stroke:#999; stroke-width:1.2; rx:5; }
+  .tp { font-size:13.5px; fill:#1a1a1a; }
+  .sp { font-size:11.5px; fill:#6b6b6b; }
+  .lp { stroke:#666; stroke-width:1.4; marker-end:url(#ap); fill:none; }
+  .hp { font-size:13.5px; font-weight:600; fill:#1a5fb4; }
+  .hq { font-size:13.5px; font-weight:600; fill:#c07000; }
+</style>
+
+<text class="hp" x="20" y="26">高精度 —— 负责「记得准」</text>
+<rect stroke="#7ba7d7" class="bp" x="20" y="40" width="180" height="52" fill="none"/>
+<text class="tp" x="110" y="62" text-anchor="middle">主权重 master</text>
+<text class="sp" x="110" y="80" text-anchor="middle">FP32</text>
+
+<rect stroke="#7ba7d7" class="bp" x="20" y="106" width="180" height="52" fill="none"/>
+<text class="tp" x="110" y="128" text-anchor="middle">优化器 m / v</text>
+<text class="sp" x="110" y="146" text-anchor="middle">FP32</text>
+
+<rect stroke="#7ba7d7" class="bp" x="20" y="172" width="180" height="52" fill="none"/>
+<text class="tp" x="110" y="194" text-anchor="middle">损失 / 梯度裁剪</text>
+<text class="sp" x="110" y="212" text-anchor="middle">FP32</text>
+
+<rect stroke="#c4c4c4" class="bp" x="20" y="238" width="180" height="52" fill="none"/>
+<text class="tp" x="110" y="260" text-anchor="middle">计算权重 / 激活</text>
+<text class="sp" x="110" y="278" text-anchor="middle">BF16</text>
+
+<text class="hq" x="300" y="26">低精度 —— 只负责「算得快」</text>
+<rect stroke="#d9a066" class="bp" x="300" y="40" width="250" height="118" fill="none"/>
+<text class="tp" x="425" y="66" text-anchor="middle">骨干 GEMM 的输入</text>
+<text class="sp" x="425" y="90" text-anchor="middle">BF16 组：不量化</text>
+<text class="sp" x="425" y="110" text-anchor="middle">FP8 组：MXFP8（E4M3 / E5M2）</text>
+<text class="sp" x="425" y="130" text-anchor="middle">FP4 组：NVFP4（E2M1 + 两层缩放）</text>
+<text class="sp" x="425" y="150" text-anchor="middle">仅 SwiGLU 与注意力投影，占参数 96%</text>
+
+<rect stroke="#c4c4c4" class="bp" x="300" y="180" width="250" height="110" fill="none"/>
+<text class="tp" x="425" y="204" text-anchor="middle">不量化的部分</text>
+<text class="sp" x="425" y="226" text-anchor="middle">3×3 卷积 stem</text>
+<text class="sp" x="425" y="244" text-anchor="middle">深度卷积 · RMSNorm</text>
+<text class="sp" x="425" y="262" text-anchor="middle">三个输出头</text>
+<text class="sp" x="425" y="280" text-anchor="middle">首尾两层（对精度最敏感）</text>
+
+<rect stroke="#7fb894" class="bp" x="640" y="86" width="180" height="150" fill="none"/>
+<text class="hp" x="730" y="112" text-anchor="middle">三组唯一的差别</text>
+<text class="sp" x="730" y="140" text-anchor="middle">参数张量完全相同</text>
+<text class="sp" x="730" y="160" text-anchor="middle">字节数完全相同</text>
+<text class="sp" x="730" y="180" text-anchor="middle">初值逐位相同</text>
+<text class="sp" x="730" y="206" text-anchor="middle">只有 GEMM 用哪个配方</text>
+<text class="sp" x="730" y="224" text-anchor="middle">不一样</text>
+
+<path class="lp" d="M200 66 H295"/>
+<path class="lp" d="M200 264 H295"/>
+<path class="lp" d="M550 120 H635"/>
+</svg>
+  <figcaption>图 3-1　精度分工。三组的参数张量、字节数、初值完全相同，
+  唯一的差别是骨干 GEMM 用哪个量化配方。</figcaption>
+  </figure>
+
+  <h3>3.1 各部分用什么精度</h3>
+
+  <table>
+  <tr><th>项</th><th>精度</th><th>理由</th></tr>
+  <tr><td>主权重 master</td><td class="mono">FP32</td><td>见 3.2 —— 这条不能省</td></tr>
+  <tr><td>优化器 m / v</td><td class="mono">FP32</td><td>AdamW 二阶矩对精度敏感</td></tr>
+  <tr><td>计算权重 / 激活 / 残差流</td><td class="mono">BF16</td><td>RMSNorm 内部仍走 FP32</td></tr>
+  <tr><td>梯度</td><td class="mono">BF16 → FP32</td><td>上抬后再裁剪</td></tr>
+  <tr><td>损失</td><td class="mono">FP32</td><td>显式 <code>.float()</code></td></tr>
+  <tr><td><strong>FP8 组的 GEMM 输入</strong></td><td class="mono">MXFP8</td><td>前向 E4M3 / 反向 E5M2</td></tr>
+  <tr><td><strong>FP4 组的 GEMM 输入</strong></td><td class="mono">NVFP4</td><td>E2M1 + 两层缩放</td></tr>
+  </table>
+
+  <p>
+  量化只作用在<strong>骨干里的 SwiGLU 与注意力投影</strong>（占参数量 96%）。
+  卷积 stem、深度卷积、RMSNorm、三个输出头以及<strong>首尾两层</strong>全部保持 BF16 ——
+  首尾层对精度最敏感，量化它们的收益远小于风险。
+  </p>
+
+  <div class="key">
+  <strong>三组的初值必须逐位相同</strong>，否则 A/B 里就混进了一个隐藏变量。
+  这不是自动成立的：<span class="mono">te.Linear</span> 默认用
+  <span class="mono">normal(0, 0.023)</span> 初始化而 <span class="mono">nn.Linear</span>
+  用 kaiming_uniform，两者消耗的随机数流长度也不同，会让<strong>后面所有层</strong>
+  （包括不含量化层的卷积和位置嵌入）跟着错位 —— 实测同一 seed 下 126 个参数张量里
+  有 75 个不同。实现上无条件先建一个 FP32 的 <span class="mono">nn.Linear</span>
+  当初始化参考，量化路径再把权重拷进去，随机数消耗与初值就都对齐了。
+  </div>
+
+  <h3>3.2 为什么主权重必须是 FP32</h3>
+
+  <p>
+  这是本项目实测出的、最容易被忽略的一条。取权重的实测量级 0.17
+  （BF16 在此处的 ulp ≈ <span class="mono">9.8e-4</span>），用恒定梯度连更 400 步，
+  比较「有 FP32 master」与「直接在 BF16 上更新」走到的位移：
+  </p>
+
+  <table>
+  <tr><th>学习率</th><th class="num">每步更新量</th><th class="num">有 FP32 master</th><th class="num">无 master（BF16 直更）</th></tr>
+  <tr><td>2e-3（峰值）</td><td class="num mono">2.05 ulp</td><td class="num mono">99.9%</td><td class="num mono">112.1%</td></tr>
+  <tr><td><strong>2e-4（退火终点）</strong></td><td class="num mono">0.20 ulp</td><td class="num mono">100.2%</td><td class="num mono"><strong>0.1%</strong></td></tr>
+  </table>
+
+  <div class="key">
+  退火终点的学习率下，<strong>没有 master 的话更新几乎被完整吞掉</strong> ——
+  权重只走了应走位移的千分之一，而训练曲线一切看着正常。峰值学习率下反而看不出问题
+  （甚至偏大 12%，那是舍入噪声在随机游走）。
+  <strong>所以这个故障只在训练后半程显现，是最难查的那一类。</strong>
+  单测 <span class="mono">test_updates_below_bf16_ulp_survive_only_with_master</span> 守这条。
+  </div>
+
+  <h3>3.3 NVFP4 靠什么撑住 2 位尾数</h3>
+
+  <p>
+  FP4 的数据格式是 <strong>E2M1</strong> —— 4 bit，其中只有 2 位尾数。
+  单靠它无法训练，Transformer Engine 的配方用四件事把它撑起来：
+  </p>
+
+  <table>
+  <tr><th>机制</th><th>作用</th></tr>
+  <tr><td><strong>两层缩放</strong><br><span class="mono" style="font-size:12px;color:#6b6b6b">每 16 元素一个 E4M3 因子 + 整张量一个 FP32 因子</span></td>
+      <td>MXFP8 那种单层 E8M0 缩放在 2 位尾数上完全不够</td></tr>
+  <tr><td><strong>16×16 随机 Hadamard 变换</strong></td>
+      <td>把离群值摊到块内 —— 否则一个大值会吃掉整块的动态范围</td></tr>
+  <tr><td><strong>随机舍入</strong></td>
+      <td>2 位尾数下确定性舍入会系统性地偏置梯度</td></tr>
+  <tr><td><strong>16×16 二维块量化</strong></td>
+      <td>权重的离群结构是二维的，一维分块抓不住</td></tr>
+  </table>
+
+  <p>
+  这四项<strong>不是一律施加</strong>，而是按张量分别配置。下表是本机
+  （TE 2.17 / GB200 sm_100）上实际生效的值：
+  </p>
+
+  <table>
+  <tr><th>张量</th><th class="num">随机 Hadamard</th><th class="num">随机舍入</th><th class="num">二维块量化</th></tr>
+  <tr><td>前向输入 <span class="mono">X</span></td><td class="num">✓</td><td class="num">—</td><td class="num">—</td></tr>
+  <tr><td>前向权重 <span class="mono">W</span></td><td class="num">—</td><td class="num">—</td><td class="num">✓</td></tr>
+  <tr><td>反向梯度 <span class="mono">dY</span></td><td class="num">✓</td><td class="num">✓</td><td class="num">—</td></tr>
+  </table>
+
+  <p>
+  三种处理各有各的理由：<strong>激活</strong>的离群值出现在一维方向上，用 Hadamard 摊开即可；
+  <strong>权重</strong>是静态的、离群结构呈二维，所以走二维块量化而不需要 Hadamard；
+  <strong>梯度</strong>动态范围最宽且对偏置最敏感，两样都要 —— 随机舍入保证量化误差无偏，
+  否则 2 位尾数下的系统性偏置会在几万步里累积成实质漂移。
+  </p>
+
+  <h3>3.4 BF16 与 FP4 的前后向对比</h3>
+
+  <figure style="max-width:min(100%,1008px)">
+  <svg viewBox="0 0 840 660" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+<defs><marker id="aw" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+<polygon points="0 0, 8 3, 0 6" fill="#666"/></marker></defs>
+<style>.t{font-size:12.5px;fill:#1a1a1a}.s{font-size:11.5px;fill:#6b6b6b}
+.h{font-size:14px;font-weight:600}.q{font-size:11.5px;fill:#a05000}
+.sec{font-size:13px;font-weight:600;fill:#1a5fb4}</style>
+<text class="h" x="216.0" y="26" text-anchor="middle">BF16 组</text>
+<text class="h" x="624.0" y="26" text-anchor="middle">FP4 组</text>
+<rect x="40" y="36" width="352" height="2" rx="4" fill="#4a7fb5" stroke="#4a7fb5" stroke-width="1.1"/>
+<rect x="448" y="36" width="352" height="2" rx="4" fill="#c07000" stroke="#c07000" stroke-width="1.1"/>
+<text class="sec" x="40" y="70" text-anchor="start">前向</text>
+<rect x="40" y="84" width="352" height="34" rx="4" fill="none" stroke="#7ba7d7" stroke-width="1.1"/>
+<text class="t" x="216.0" y="106" text-anchor="middle">X (BF16)　　W (BF16)</text>
+<path d="M216.0 118 V136" stroke="#666" stroke-width="1.3" fill="none" marker-end="url(#aw)"/>
+<rect x="40" y="136" width="352" height="46" rx="4" fill="none" stroke="#c4c4c4" stroke-width="1.1"/>
+<text class="t" x="216.0" y="156" text-anchor="middle">GEMM</text>
+<text class="s" x="216.0" y="173" text-anchor="middle">张量核内部 FP32 累加</text>
+<path d="M216.0 182 V200" stroke="#666" stroke-width="1.3" fill="none" marker-end="url(#aw)"/>
+<rect x="40" y="200" width="352" height="30" rx="4" fill="none" stroke="#7ba7d7" stroke-width="1.1"/>
+<text class="t" x="216.0" y="220" text-anchor="middle">Y (BF16)</text>
+<rect x="448" y="84" width="352" height="34" rx="4" fill="none" stroke="#d9a066" stroke-width="1.1"/>
+<text class="t" x="624.0" y="106" text-anchor="middle">X (BF16)　　W (BF16)</text>
+<path d="M538 118 V134" stroke="#666" stroke-width="1.3" fill="none" marker-end="url(#aw)"/>
+<path d="M710 118 V134" stroke="#666" stroke-width="1.3" fill="none" marker-end="url(#aw)"/>
+<rect x="456" y="134" width="164" height="48" rx="4" fill="none" stroke="#c4c4c4" stroke-width="1.1"/>
+<text class="q" x="538" y="152" text-anchor="middle">16×16 随机 Hadamard</text>
+<text class="q" x="538" y="170" text-anchor="middle">量化 → E2M1</text>
+<rect x="628" y="134" width="164" height="48" rx="4" fill="none" stroke="#c4c4c4" stroke-width="1.1"/>
+<text class="q" x="710" y="152" text-anchor="middle">16×16 二维块量化</text>
+<text class="q" x="710" y="170" text-anchor="middle">量化 → E2M1</text>
+<path d="M538 182 V198" stroke="#666" stroke-width="1.3" fill="none" marker-end="url(#aw)"/>
+<path d="M710 182 V198" stroke="#666" stroke-width="1.3" fill="none" marker-end="url(#aw)"/>
+<rect x="448" y="198" width="352" height="46" rx="4" fill="none" stroke="#c4c4c4" stroke-width="1.1"/>
+<text class="t" x="624.0" y="218" text-anchor="middle">FP4 GEMM</text>
+<text class="s" x="624.0" y="235" text-anchor="middle">张量核内部 FP32 累加</text>
+<path d="M624.0 244 V262" stroke="#666" stroke-width="1.3" fill="none" marker-end="url(#aw)"/>
+<rect x="448" y="262" width="352" height="30" rx="4" fill="none" stroke="#d9a066" stroke-width="1.1"/>
+<text class="t" x="624.0" y="282" text-anchor="middle">Y (BF16)</text>
+<text class="sec" x="40" y="330" text-anchor="start">反向</text>
+<rect x="40" y="344" width="352" height="30" rx="4" fill="none" stroke="#7ba7d7" stroke-width="1.1"/>
+<text class="t" x="216.0" y="364" text-anchor="middle">dY (BF16)</text>
+<path d="M216.0 374 V392" stroke="#666" stroke-width="1.3" fill="none" marker-end="url(#aw)"/>
+<rect x="40" y="392" width="352" height="46" rx="4" fill="none" stroke="#c4c4c4" stroke-width="1.1"/>
+<text class="t" x="216.0" y="412" text-anchor="middle">GEMM ×2</text>
+<text class="s" x="216.0" y="429" text-anchor="middle">dX = dY·Wᵀ　dW = Xᵀ·dY</text>
+<path d="M216.0 438 V456" stroke="#666" stroke-width="1.3" fill="none" marker-end="url(#aw)"/>
+<rect x="40" y="456" width="352" height="30" rx="4" fill="none" stroke="#7ba7d7" stroke-width="1.1"/>
+<text class="t" x="216.0" y="476" text-anchor="middle">dX, dW (BF16)</text>
+<rect x="448" y="344" width="352" height="30" rx="4" fill="none" stroke="#d9a066" stroke-width="1.1"/>
+<text class="t" x="624.0" y="364" text-anchor="middle">dY (BF16)</text>
+<path d="M624.0 374 V390" stroke="#666" stroke-width="1.3" fill="none" marker-end="url(#aw)"/>
+<rect x="456" y="390" width="336" height="48" rx="4" fill="none" stroke="#c4c4c4" stroke-width="1.1"/>
+<text class="q" x="624.0" y="408" text-anchor="middle">16×16 随机 Hadamard　+　随机舍入</text>
+<text class="q" x="624.0" y="426" text-anchor="middle">量化 → E2M1</text>
+<path d="M624.0 438 V454" stroke="#666" stroke-width="1.3" fill="none" marker-end="url(#aw)"/>
+<rect x="448" y="454" width="352" height="46" rx="4" fill="none" stroke="#c4c4c4" stroke-width="1.1"/>
+<text class="t" x="624.0" y="474" text-anchor="middle">FP4 GEMM ×2</text>
+<text class="s" x="624.0" y="491" text-anchor="middle">dX = dY·Wᵀ　dW = Xᵀ·dY</text>
+<path d="M624.0 500 V518" stroke="#666" stroke-width="1.3" fill="none" marker-end="url(#aw)"/>
+<rect x="448" y="518" width="352" height="30" rx="4" fill="none" stroke="#d9a066" stroke-width="1.1"/>
+<text class="t" x="624.0" y="538" text-anchor="middle">dX, dW (BF16)</text>
+<rect x="40" y="556" width="768" height="76" rx="4" fill="none" stroke="#7fb894" stroke-width="1.1"/>
+<text class="sec" x="420.0" y="578" text-anchor="middle">两组完全相同的参数更新</text>
+<text class="t" x="420.0" y="600" text-anchor="middle">dW (BF16) → 上抬 FP32 → 梯度裁剪 → AdamW 更新 FP32 主权重</text>
+<text class="t" x="420.0" y="619" text-anchor="middle">→ 写回 BF16 计算权重（下一次前向用它）</text>
+<path d="M216.0 548 V552" stroke="#666" stroke-width="1.3" fill="none" marker-end="url(#aw)"/>
+<path d="M624.0 548 V552" stroke="#666" stroke-width="1.3" fill="none" marker-end="url(#aw)"/>
+</svg>
+  <figcaption>图 3-2　同一个线性层在两组里的计算流程。FP4 组多出的只有量化环节；
+  张量核内部一律 FP32 累加，参数更新两组完全相同。</figcaption>
+  </figure>
+
+  <div class="key">
+  两条路径的差别<strong>只在 GEMM 的入口</strong>：FP4 组在每次矩阵乘之前把输入、权重、
+  梯度各自量化成 E2M1，乘完立刻回到 BF16。
+  <strong>张量核内部的累加两组都是 FP32</strong>，参数更新的那一段（上抬 FP32 → 裁剪 →
+  AdamW 更新 FP32 主权重 → 写回 BF16）也逐字相同。
+  这就是为什么三组的参数张量、字节数、初值能完全一致 —— 低精度从未接触存储层。
+  </div>
+
+  <p>
+  这四项正好是 <span class="mono">NVFP4BlockScaling()</span> 的默认配置，
+  任何 <span class="mono">disable_*</span> 开关都不要动。
+  单测 <span class="mono">test_fp4_recipe_keeps_rht_and_stochastic_rounding</span>
+  钉住实际生效的配方，防止 TE 升级后默认值悄悄变化。
+  </p>
+
+  <h3>3.5 训练环路：专家迭代</h3>
+
+  <p>三组共用完全相同的脚手架与超参：</p>
+
+  <figure style="max-width:min(100%,1008px)">
+  <svg viewBox="0 0 840 250" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+<defs>
+  <marker id="al" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+    <polygon points="0 0, 9 3.5, 0 7" fill="#666"/>
+  </marker>
+</defs>
+<style>
+  .bl { stroke:#999; stroke-width:1.2; rx:5; }
+  .tl { font-size:13.5px; fill:#1a1a1a; }
+  .sl { font-size:11.5px; fill:#6b6b6b; }
+  .ll { stroke:#666; stroke-width:1.4; marker-end:url(#al); fill:none; }
+  .hl { font-size:13.5px; font-weight:600; fill:#1a5fb4; }
+</style>
+
+<rect stroke="#c4c4c4" class="bl" x="20" y="76" width="190" height="88" fill="none"/>
+<text class="hl" x="115" y="102" text-anchor="middle">① 自博弈（GPU×4）</text>
+<text class="sl" x="115" y="124" text-anchor="middle">8192 局并行，每局 64 次模拟</text>
+<text class="sl" x="115" y="142" text-anchor="middle">前 12 手带温度采样</text>
+<text class="sl" x="115" y="158" text-anchor="middle">产出 2048 局 / 轮</text>
+
+<rect stroke="#c4c4c4" class="bl" x="262" y="76" width="176" height="88" fill="none"/>
+<text class="hl" x="350" y="102" text-anchor="middle">② replay 缓冲</text>
+<text class="sl" x="350" y="126" text-anchor="middle">容量 300 万局面</text>
+<text class="sl" x="350" y="146" text-anchor="middle">4 个对称变换增广</text>
+
+<rect stroke="#d9a066" class="bl" x="490" y="76" width="200" height="88" fill="none"/>
+<text class="hl" x="590" y="102" text-anchor="middle">③ 训练（GPU 0）</text>
+<text class="sl" x="590" y="124" text-anchor="middle">400 步 / 轮，batch 1024</text>
+<text class="sl" x="590" y="142" text-anchor="middle">AdamW，fp32 master</text>
+<text class="sl" x="590" y="158" text-anchor="middle">GEMM 走该组的量化配方</text>
+
+<path class="ll" d="M210 120 H257"/>
+<path class="ll" d="M438 120 H485"/>
+<path class="ll" d="M590 164 V196 H115 V168"/>
+<text class="sl" x="360" y="214" text-anchor="middle">新权重广播回自博弈进程 —— CPU 跑 MCTS，GPU 跑批量推理，两者流水重叠</text>
+<text class="sl" x="360" y="46" text-anchor="middle">一轮 = 2048 局自博弈 + 400 步训练；4 万步 = 100 轮</text>
+</svg>
+  <figcaption>图 3-3　自博弈强化学习的一轮。CPU 跑 MCTS 与着法生成，
+  GPU 跑批量推理与训练，通过共享内存攒批把两者流水重叠。</figcaption>
+  </figure>
+
+  <table>
+  <tr><th>超参</th><th>值</th><th>超参</th><th>值</th></tr>
+  <tr><td>并行对局数</td><td class="mono">8192（4 卡均分）</td><td>每轮产出对局</td><td class="mono">2048</td></tr>
+  <tr><td>MCTS 模拟数</td><td class="mono">64</td><td>每轮训练步数</td><td class="mono">400</td></tr>
+  <tr><td>批大小</td><td class="mono">1024</td><td>replay 容量</td><td class="mono">3,000,000</td></tr>
+  <tr><td>峰值学习率</td><td class="mono">2e-3</td><td>优化器</td><td class="mono">AdamW，wd 1e-2</td></tr>
+  <tr><td>warmup</td><td class="mono">500 步</td><td>梯度裁剪</td><td class="mono">1.0</td></tr>
+  <tr><td>损失权重</td><td class="mono">策略 1 · 价值 1 · 辅助 0.25</td><td>温度采样</td><td class="mono">前 12 手</td></tr>
+  </table>
+
+  <p>
+  这个环路有名字：<strong>专家迭代（Expert Iteration, ExIt）</strong>，
+  AlphaZero 是它最有名的实例。核心是<strong>专家与学徒互相抬升</strong>：
+  </p>
+
+  <ul>
+  <li><strong>专家 = 搜索。</strong>MCTS 用当前网络的先验展开若干步，
+      得到一个比网络单次前向更好的着法分布</li>
+  <li><strong>学徒 = 网络。</strong>训练网络去模仿搜索的结果 ——
+      把搜索里那点「想得更远」蒸馏进一次前向</li>
+  <li><strong>闭环。</strong>更好的网络让下一轮搜索的起点更高，
+      搜索又给出更好的目标</li>
+  </ul>
+
+  <div class="key">
+  搜索部分用的是 <strong>Gumbel AlphaZero</strong>，不是原版。
+  这是被任务形状逼出来的：动作空间 <strong>17,836</strong>，
+  单步合法着法常有几百个（开局 414 个），而每步只给 <strong>64 次模拟</strong>。
+  原版靠 PUCT 加 Dirichlet 噪声探索，在这种宽度下要很大的模拟数
+  才能让根节点的访问分布有统计意义。
+  Gumbel-AZ 在根节点用 Gumbel top-k 采出候选、再用 sequential halving 分配预算，
+  <strong>低模拟数下的策略改进有理论保证</strong>。
+  <br><br>
+  64 次模拟就能撑住 17,836 的动作空间，直接决定了自博弈的吞吐 ——
+  这是整个项目机时预算的基础。
+  </div>
+
+  <h4 style="font-size:16px;margin:28px 0 12px">它和强化学习是什么关系</h4>
+
+  <p>
+  <strong>它是强化学习</strong>：没有任何标注数据，全部训练信号来自智能体
+  与环境交互的结果 —— 自己跟自己下完一局，赢了还是输了。
+  奖励是<strong>稀疏且只在终局出现</strong>的，中间每一步都没有反馈。
+  </p>
+
+  <p>
+  <strong>但它不是策略梯度那一类强化学习</strong>（REINFORCE / PPO）。
+  差别在于「策略怎么变好」这一步由谁完成：
+  </p>
+
+  <table>
+  <tr><th></th><th>监督学习</th><th>策略梯度 RL</th><th><strong>本项目（专家迭代）</strong></th></tr>
+  <tr><td>数据从哪来</td><td>给定的数据集</td><td>智能体自己交互</td><td><strong>智能体自己对弈</strong></td></tr>
+  <tr><td>谁负责让策略变好</td><td>—</td><td>回报的梯度</td><td><strong>搜索</strong></td></tr>
+  <tr><td>网络那一步在做什么</td><td>拟合标签</td><td>沿梯度上升</td><td><strong>拟合搜索的结果</strong></td></tr>
+  <tr><td>目标分布</td><td>固定</td><td>随策略漂移</td><td><strong>随策略漂移</strong></td></tr>
+  </table>
+
+  <p>
+  更准确的说法是<strong>近似策略迭代</strong>：MCTS 充当「策略改进算子」，
+  自博弈的胜负充当「策略评估」，神经网络只是把改进后的策略压缩进参数里的函数逼近器。
+  <strong>每一次参数更新本身都是普通的监督学习</strong> ——
+  策略头对着搜索的分布做交叉熵，价值头对着实际胜负做三分类。
+  </p>
+
+  <div class="key">
+  这个结构带来一个很实在的好处：<strong>训练非常稳</strong>。
+  没有奖励缩放、优势估计、KL 惩罚、重要性采样这些策略梯度方法里
+  最容易调坏的东西 —— 每一步都只是在拟合一个明确的目标。
+  代价是它<strong>要求环境有一个够快的模拟器</strong>，
+  快到可以在每一步棋上搜几十次。棋类正好满足，多数现实任务不满足。
+  <br><br>
+  另一个后果不那么友好：<strong>目标分布是随网络一起漂移的。</strong>
+  网络在拟合的是它自己搜索出来的东西，两者一起动。
+  所以 loss 下降只说明「跟得上自己」，说明不了棋力变强 ——
+  这正是第四章末尾那个现象的根源。
+  </div>
+
+  <h3>3.6 学习率日程：WSD</h3>
+
+  <p>
+  用 <strong>warmup–stable–decay</strong>：500 步线性升温，之后<strong>恒定</strong>在 2e-3，
+  最后 11% 的步数线性退到 1/10。
+  </p>
+
+  <div class="key">
+  选 WSD 而不是余弦，是因为<strong>它把「学习率形状」和「总步数」解耦了</strong>。
+  余弦日程下改总步数，整条曲线都变，之前跑的东西作废；
+  WSD 的 stable 段是一条水平线，改预算只影响末尾那 11%。
+  在一个需要反复调整训练预算的项目里，这个性质省下的机时相当可观。
+  </div>
+
+  <h3>3.7 三种精度各自的最优预算不同</h3>
+
+  <p>三条学习曲线的形状不一样 —— <strong>差别不在高度，在长度</strong>：</p>
+
+  <table>
+  <tr><th>精度</th><th class="num">最优训练步数</th><th>特点</th></tr>
+  <tr><td><strong>BF16</strong></td><td class="num mono">111,000</td><td>基准</td></tr>
+  <tr><td><strong>FP8</strong></td><td class="num mono">144,000</td><td>有效训练期最长，练得越久收益越多</td></tr>
+  <tr><td><strong>FP4</strong></td><td class="num mono">100,000</td><td>最早饱和，再练下去不涨</td></tr>
+  </table>
+
+  <div class="key">
+  <strong>选精度和选步数必须一起定。</strong>
+  三者的最优预算相差 44%，把 BF16 调好的步数直接套到 FP8 上，
+  会恰好停在 FP8 还没走完的地方；套到 FP4 上则是白烧四成机时。
+  <strong>只固定一个步数去比精度，得出的结论会与那个步数绑死</strong> ——
+  本项目此前两轮 A/B 之所以给出相反的结果，原因正在于此。
+  </div>
+
+  <p>棋力的横向对比见下一章。</p>
+
+  <h2>四、棋力对比：低精度要不要付出代价</h2>
+
+  <p>
+  低精度可以出现在两个位置 —— <strong>训练时</strong>（全程的 GEMM 就在低精度上，
+  「量化感知训练」）和<strong>推理时</strong>（拿高精度训好的权重压下来，
+  「训练后量化」）。两者的推理开销与交付体积完全相同，差别只在权重怎么来。
+  </p>
+
+  <p>五个模型放进同一场对打，覆盖这两个维度：</p>
+
+  <table>
+  <tr><th>模型</th><th>训练精度</th><th>推理精度</th><th class="num">训练步数</th><th class="num">发布包</th></tr>
+  <tr><td><strong>BF16</strong></td><td class="mono">BF16</td><td class="mono">BF16</td><td class="num mono">111,000</td><td class="num mono">28.4 MB</td></tr>
+  <tr><td><strong>FP8-QAT</strong></td><td class="mono">MXFP8</td><td class="mono">MXFP8</td><td class="num mono">144,000</td><td class="num mono">17.0 MB</td></tr>
+  <tr><td><strong>FP4-QAT</strong></td><td class="mono">NVFP4</td><td class="mono">NVFP4</td><td class="num mono">100,000</td><td class="num mono">11.5 MB</td></tr>
+  <tr><td><strong>FP8-PTQ</strong></td><td class="mono">BF16</td><td class="mono">MXFP8</td><td class="num mono">111,000</td><td class="num mono">17.0 MB</td></tr>
+  <tr><td><strong>FP4-PTQ</strong></td><td class="mono">BF16</td><td class="mono">NVFP4</td><td class="num mono">111,000</td><td class="num mono">11.4 MB</td></tr>
+  </table>
+
+  <p>
+  两个 PTQ 模型由 BF16 模型的计算权重直接重量化得到，未量化的部分与源包<strong>逐位相同</strong>；
+  量化器取自模型自身在前向时用的那一个，与训练时完全一致。
+  </p>
+
+  <p>
+  另加一个<strong>规则基线</strong> <span class="mono">greedy-mobility</span> 作为参照 ——
+  它不用任何网络，给出「完全不训练能到什么水平」的锚点。
+  结果来自<strong>两场独立 arena 合并联合拟合</strong>，共 <strong>42,006 局</strong>。
+  </p>
+
+  <h3>4.1 对打结果</h3>
+
+  <figure style="max-width:min(100%,1008px)">
+  <svg viewBox="0 0 840 400" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+<style>.ax{font-size:11.5px;fill:#6b6b6b}.nm{font-size:13.5px;font-weight:600}.wy{font-size:11px;fill:#6b6b6b}.vl{font-size:12px;font-weight:600}</style>
+<line x1="306.8" y1="62" x2="306.8" y2="328" stroke="#eee" stroke-width="1"/>
+<text class="ax" x="306.8" y="348" text-anchor="middle">-20</text>
+<line x1="377.7" y1="62" x2="377.7" y2="328" stroke="#eee" stroke-width="1"/>
+<text class="ax" x="377.7" y="348" text-anchor="middle">-10</text>
+<line x1="448.7" y1="62" x2="448.7" y2="328" stroke="#aaa" stroke-width="1.3"/>
+<text class="ax" x="448.7" y="348" text-anchor="middle">+0</text>
+<line x1="519.7" y1="62" x2="519.7" y2="328" stroke="#eee" stroke-width="1"/>
+<text class="ax" x="519.7" y="348" text-anchor="middle">+10</text>
+<line x1="590.6" y1="62" x2="590.6" y2="328" stroke="#eee" stroke-width="1"/>
+<text class="ax" x="590.6" y="348" text-anchor="middle">+20</text>
+<line x1="661.6" y1="62" x2="661.6" y2="328" stroke="#eee" stroke-width="1"/>
+<text class="ax" x="661.6" y="348" text-anchor="middle">+30</text>
+<text class="nm" x="12" y="96" fill="#2e8b57">FP8-QAT</text>
+<text class="wy" x="12" y="112">FP8 训练 → FP8 推理</text>
+<line x1="422.1" y1="92" x2="669.7" y2="92" stroke="#2e8b57" stroke-width="2"/>
+<line x1="422.1" y1="86" x2="422.1" y2="98" stroke="#2e8b57" stroke-width="2"/>
+<line x1="669.7" y1="86" x2="669.7" y2="98" stroke="#2e8b57" stroke-width="2"/>
+<circle cx="545.9" cy="92" r="6" fill="#2e8b57"/>
+<text class="vl" x="545.9" y="78" text-anchor="middle" fill="#2e8b57">+13.7</text>
+<text class="nm" x="12" y="148" fill="#c07000">FP4-PTQ</text>
+<text class="wy" x="12" y="164">BF16 训练 → FP4 推理</text>
+<line x1="341.2" y1="144" x2="580.4" y2="144" stroke="#c07000" stroke-width="2"/>
+<line x1="341.2" y1="138" x2="341.2" y2="150" stroke="#c07000" stroke-width="2"/>
+<line x1="580.4" y1="138" x2="580.4" y2="150" stroke="#c07000" stroke-width="2"/>
+<circle cx="460.8" cy="144" r="6" fill="#c07000"/>
+<text class="vl" x="460.8" y="130" text-anchor="middle" fill="#c07000">+1.7</text>
+<text class="nm" x="12" y="200" fill="#2e8b57">FP8-PTQ</text>
+<text class="wy" x="12" y="216">BF16 训练 → FP8 推理</text>
+<line x1="328.5" y1="196" x2="576.1" y2="196" stroke="#2e8b57" stroke-width="2"/>
+<line x1="328.5" y1="190" x2="328.5" y2="202" stroke="#2e8b57" stroke-width="2"/>
+<line x1="576.1" y1="190" x2="576.1" y2="202" stroke="#2e8b57" stroke-width="2"/>
+<circle cx="452.3" cy="196" r="6" fill="#2e8b57"/>
+<text class="vl" x="452.3" y="182" text-anchor="middle" fill="#2e8b57">+0.5</text>
+<text class="nm" x="12" y="252" fill="#1a5fb4">BF16</text>
+<text class="wy" x="12" y="268">BF16 训练 → BF16 推理</text>
+<circle cx="448.7" cy="248" r="6" fill="#1a5fb4"/>
+<text class="vl" x="448.7" y="234" text-anchor="middle" fill="#1a5fb4">0</text>
+<text class="nm" x="12" y="304" fill="#c07000">FP4-QAT</text>
+<text class="wy" x="12" y="320">FP4 训练 → FP4 推理</text>
+<line x1="277.3" y1="300" x2="522.1" y2="300" stroke="#c07000" stroke-width="2"/>
+<line x1="277.3" y1="294" x2="277.3" y2="306" stroke="#c07000" stroke-width="2"/>
+<line x1="522.1" y1="294" x2="522.1" y2="306" stroke="#c07000" stroke-width="2"/>
+<circle cx="399.7" cy="300" r="6" fill="#c07000"/>
+<text class="vl" x="399.7" y="286" text-anchor="middle" fill="#c07000">-6.9</text>
+<text class="ax" x="470" y="372" text-anchor="middle">Elo（相对 BF16）　误差条为 95% 置信区间</text>
+<text class="ax" x="420.0" y="386" text-anchor="middle">五个模型的区间几乎完全重叠 —— 无论低精度是训出来的还是压出来的，棋力都一样</text>
+</svg>
+  
+  </figure>
+
+  <table>
+  <tr><th>模型</th><th class="num">Elo</th><th class="num">±</th><th class="num">对 BF16 的直接对局</th></tr>
+  <tr><td><strong>FP8-QAT</strong></td><td class="num">+12.3</td><td class="num">6.4</td><td class="num">0.509</td></tr>
+  <tr><td><strong>BF16</strong></td><td class="num">0.0</td><td class="num">—</td><td class="num">—</td></tr>
+  <tr><td><strong>FP8-PTQ</strong></td><td class="num">−4.1</td><td class="num">6.4</td><td class="num">0.495</td></tr>
+  <tr><td><strong>FP4-PTQ</strong></td><td class="num">−5.1</td><td class="num">6.4</td><td class="num">0.494</td></tr>
+  <tr><td><strong>FP4-QAT</strong></td><td class="num">−7.0</td><td class="num">6.2</td><td class="num">0.497</td></tr>
+  <tr><td><strong>greedy-mobility</strong>　<span style="color:#6b6b6b">规则基线，无网络</span></td>
+      <td class="num">−855.7</td><td class="num">37.1</td><td class="num">0.005</td></tr>
+  </table>
+
+  <div class="key">
+  <strong>规则基线给出了量级。</strong>
+  <span class="mono">greedy-mobility</span> 是纯手写启发式（贪心最大化己方可落点、
+  堵对方角点，完全不用网络），对上面任何一个模型的得分率都只有
+  <strong>0.005</strong> —— 1200 局里赢不到 7 局。
+  <br><br>
+  于是这张表的两个尺度是：<strong>「会不会下棋」值 856 Elo，
+  「用哪种精度」值 19 Elo</strong>。后者是前者的 1/45。
+  </div>
+
+  <p>
+  换一个更直观的参照：<strong><span class="mono">greedy-mobility</span>
+  这样的贪心策略已经能胜过约 95% 的人类玩家</strong>，
+  而表中的模型对它的得分率是 <strong>0.995</strong>。
+  也就是说，五个模型都远在绝大多数人类之上，
+  <strong>而它们彼此之间的差距（19 Elo）小到需要上万局对局才分辨得出来</strong> ——
+  这正是低精度方案的比较必须用这种量级的对局数来做的原因。
+  </p>
+
+  <blockquote>
+  「胜过 95% 的人类玩家」是对规则基线水平的<strong>估计</strong>，
+  不是本项目测量的结果 —— 报告里其余全部数字都来自实际对局。
+  真要把人类放进同一把尺子，需要一批人机对局；
+  30 局即可给出约 ±130 Elo 的定位，足以回答「人类落在这 856 分跨度的哪一段」。
+  </blockquote>
+
+  <div class="key">
+  <strong>训练后量化几乎一分不损。</strong>
+  把 BF16 训好的权重直接压成 FP8 或 FP4 去推理，对源模型的直接对局得分率是
+  <strong>0.495 / 0.494</strong>，Elo 差 4~5 分而误差是 ±6.4 —— 与五五开无法区分。
+  <strong>矩阵乘从 16 位压到 4 位，棋力没有可测量的损失，而交付体积降到四成。</strong>
+  </div>
+
+  <h3>4.2 低精度训练没有带来额外收益</h3>
+
+  <p>把同一推理精度下的两种来路直接对比：</p>
+
+  <table>
+  <tr><th>推理精度</th><th class="num">训练后量化</th><th class="num">量化感知训练</th><th class="num">差值</th></tr>
+  <tr><td><strong>FP4</strong></td><td class="num">−5.1</td><td class="num">−7.0</td><td class="num"><strong>PTQ 高 1.9</strong></td></tr>
+  <tr><td><strong>FP8</strong></td><td class="num">−4.1</td><td class="num">+12.3</td><td class="num">QAT 高 16.4</td></tr>
+  </table>
+
+  <p>
+  FP4 上两者<strong>相差 1.9 Elo</strong> —— 误差 ±6.4，完全无法区分。
+  训练后量化不比量化感知训练差。
+  </p>
+
+  <div class="key">
+  <strong>FP8 那一行要小心解读。</strong>
+  <span class="mono">FP8-QAT</span> 是全场唯一高出误差条的，但它训练了 <strong>144,000 步</strong>，
+  而 PTQ 那两个来自 BF16 的 <strong>111,000 步</strong>（各自的最优预算，见 3.7）。
+  所以这 13.7 分<strong>分不清是「量化感知训练」的功劳还是「多训了 30%」的功劳</strong>。
+  <br><br>
+  支持后者的证据在同一张表里：两个 PTQ 模型（−4.1 / −5.1）与
+  <span class="mono">BF16</span>（0）的差距都在误差之内，说明<strong>量化这个动作本身几乎零损失</strong>；
+  那么 FP8-QAT 高出的部分只能来自训练预算。
+  </div>
+
+  <p>
+  <strong>实践含义</strong>：要在低精度上部署，不必为此单独跑一条低精度训练 ——
+  拿现成的 BF16 模型压下来即可，省掉一整条训练线的机时。
+  低精度训练的价值需要在别的地方寻找（训练吞吐、显存、更大规模下的行为），
+  而不是在推理端的棋力上。
+  </p>
+
+  <h3>4.3 测量可靠性：为什么打六场而不是一场打大</h3>
+
+  <p>
+  上面每个数字都带着 ±9 的误差条，而<strong>五个模型的全距只有 21 Elo</strong> ——
+  在这个尺度上，测量本身的可信度决定了结论是否成立。
+  </p>
+
+  <p>
+  此前用六场独立 arena（不同种子、不同参赛者组合）交叉验证过同一个量，
+  FP8 对 BF16 的领先在六场里分别是：
+  </p>
+
+  <table>
+  <tr><th>场次</th><th class="num">1</th><th class="num">2</th><th class="num">3</th><th class="num">4</th><th class="num">5</th><th class="num">6</th><th class="num">合并拟合</th></tr>
+  <tr><td>Elo</td><td class="num">+16.9</td><td class="num">+20.3</td><td class="num">+13.0</td><td class="num">+7.8</td><td class="num">+9.4</td><td class="num">+14.2</td><td class="num"><strong>+13.5 ± 3.8</strong></td></tr>
+  </table>
+
+  <div class="key">
+  六场的散布（7.8 ~ 20.3）<strong>明显大于每场自己报出的 ±8~11</strong>。
+  原因是单场的对级自举只覆盖对局采样噪声，
+  <strong>不覆盖「这一场碰巧抽到哪些开局」</strong>。
+  多场独立重复是唯一能暴露这一点的做法。
+  <br><br>
+  代价是机时：仅精度这一个议题，累计打掉了<strong>四万余局</strong>对局。
+  </div>
+
+  <h3>4.4 棋力必须靠真实对局测</h3>
+
+  <p>
+  训练期能免费拿到的标量 —— 总 loss、策略 loss、价值 loss、先手胜率 ——
+  <strong>都预告不了棋力</strong>。本项目实测到过训练后期这些标量全部单调改善、
+  而实际对局棋力下滑数十 Elo 的区间。
+  </p>
+
+  <div class="key">
+  模型对自己搜索结果的拟合一直在变好，棋力却在变差。
+  这不是噪声掩盖了信号，而是<strong>这些量测的根本不是同一件事</strong> ——
+  自博弈的目标是网络自己的搜索结果，网络和目标一起漂移，
+  loss 只说明「跟得上自己」。
+  <br><br>
+  <strong>所以「先训完再打对局」目前没有便宜的替代品。</strong>
+  棋力这个量必须靠真实对局测量，而对局要占用与训练同一批 GPU ——
+  这是本项目机时需求的主要来源之一。
+  </div>
+
+  <h2>结语：一把能量到几个 Elo 的尺子</h2>
+
+  <p>
+  本项目真正的产出不是这三个模型，而是<strong>一套能把「能力」完全量化的评测装置</strong>，
+  以及它带来的一个能力：<strong>客观比较不同的低精度训练与推理方案。</strong>
+  </p>
+
+  <h3>为什么棋类是罕见的合适载体</h3>
+
+  <figure style="max-width:min(100%,1008px)">
+  <svg viewBox="0 0 840 330" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif">
+<defs><marker id="ai" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+<polygon points="0 0, 9 3.5, 0 7" fill="#666"/></marker></defs>
+<style>
+ .bi{stroke:#999;stroke-width:1.2;rx:5}
+ .ti{font-size:13px;fill:#1a1a1a}
+ .si{font-size:11.5px;fill:#6b6b6b}
+ .li{stroke:#666;stroke-width:1.4;marker-end:url(#ai);fill:none}
+ .hi{font-size:14px;font-weight:600;fill:#1a5fb4}
+ .hx{font-size:14px;font-weight:600;fill:#a33}
+</style>
+
+<text class="hx" x="200" y="30" text-anchor="middle">一般机器学习任务</text>
+<rect stroke="#cc9999" class="bi" x="40" y="46" width="320" height="52" fill="none"/>
+<text class="ti" x="200" y="68" text-anchor="middle">代理指标</text>
+<text class="si" x="200" y="88" text-anchor="middle">loss · benchmark 分数 · 人工评分</text>
+<path class="li" d="M200 98 V126"/>
+<rect stroke="#c4c4c4" class="bi" x="40" y="126" width="320" height="72" fill="none"/>
+<text class="si" x="200" y="150" text-anchor="middle">测试集会污染 · 分数会饱和</text>
+<text class="si" x="200" y="170" text-anchor="middle">与真实能力未必同向</text>
+<text class="si" x="200" y="190" text-anchor="middle">想更准也没有办法</text>
+<path class="li" d="M200 198 V226"/>
+<rect stroke="#cc9999" class="bi" x="40" y="226" width="320" height="48" fill="none"/>
+<text class="ti" x="200" y="255" text-anchor="middle">「这个改动有没有用」难有定论</text>
+
+<text class="hi" x="640" y="30" text-anchor="middle">本项目</text>
+<rect stroke="#7ba7d7" class="bi" x="480" y="46" width="320" height="52" fill="none"/>
+<text class="ti" x="640" y="68" text-anchor="middle">直接对局</text>
+<text class="si" x="640" y="88" text-anchor="middle">两个模型对弈，数谁赢</text>
+<path class="li" d="M640 98 V126"/>
+<rect stroke="#c4c4c4" class="bi" x="480" y="126" width="320" height="72" fill="none"/>
+<text class="si" x="640" y="150" text-anchor="middle">无测试集，无从污染</text>
+<text class="si" x="640" y="170" text-anchor="middle">量的就是要的那个能力</text>
+<text class="si" x="640" y="190" text-anchor="middle">想更准就多打几局</text>
+<path class="li" d="M640 198 V226"/>
+<rect stroke="#7fb894" class="bi" x="480" y="226" width="320" height="48" fill="none"/>
+<text class="ti" x="640" y="255" text-anchor="middle">差 4.5 Elo 还是 13.5 Elo，能说清</text>
+
+<text class="si" x="420" y="308" text-anchor="middle">
+  精度方案的差异往往只有几个 Elo —— 只有能量到这个尺度，才谈得上比较
+</text>
+</svg>
+  <figcaption>图 5-1　评测方式的差别。低精度方案之间的差异往往只有几个 Elo，
+  只有能量到这个尺度，「哪个更好」才谈得上是一个能回答的问题。</figcaption>
+  </figure>
+
+  <p>
+  在多数机器学习任务里，「这个改动有没有用」要靠代理指标回答 ——
+  loss、benchmark 分数、人工评分。这些指标各有各的问题：测试集会被污染、
+  分数会饱和、与真实能力未必同向，而且<strong>想测得更准也往往没有办法</strong>。
+  </p>
+
+  <p>两个模型下棋分胜负，绕开了全部这些问题：</p>
+
+  <table>
+  <tr><th>性质</th><th>含义</th></tr>
+  <tr><td><strong>量的就是要的</strong></td>
+      <td>棋力不是能力的代理，它<strong>就是</strong>这个模型的能力。不存在「指标涨了但实际没变强」</td></tr>
+  <tr><td><strong>无从污染</strong></td>
+      <td>没有测试集，也就没有测试集泄漏。对手是另一个模型，不是一批固定题目</td></tr>
+  <tr><td><strong>精度可以买</strong></td>
+      <td>误差随局数按 <span class="mono">1/√n</span> 收窄。要 ±3 Elo 就多打几万局 —— 这是纯粹的算力换精度</td></tr>
+  <tr><td><strong>结论是绝对的</strong></td>
+      <td>「A 对 B 的得分率 0.518」是一个事实，不依赖任何评判者、任何题目选择</td></tr>
+  </table>
+
+  <div class="key">
+  这一点在本项目里被反复用到，也被反复验证过它的必要性：
+  <strong>训练期的全部免费标量都预告不了棋力</strong> ——
+  实测到过 loss、策略 loss、价值 loss、先手胜率同时单调改善，
+  而真实对局棋力下滑数十 Elo 的区间。
+  <strong>任何依赖 loss 去判断低精度方案好坏的做法，在这里都被直接证伪了。</strong>
+  </div>
+
+  <h3>这把尺子已经量出了什么</h3>
+
+  <table>
+  <tr><th>问题</th><th>结论</th><th class="num">精度</th></tr>
+  <tr><td>FP4 训练要不要付出棋力代价？</td>
+      <td><strong>不要。</strong>三种精度各取最优预算后打平，全距不到 20 Elo</td>
+      <td class="num mono">±3.8 ~ ±6.8</td></tr>
+  <tr><td>低精度能省多少交付体积？</td>
+      <td>发布包 <span class="mono">28.4 → 11.5 MB</span>，降到 <strong>四成</strong></td>
+      <td class="num mono">精确</td></tr>
+  <tr><td>低精度训练值不值得？</td>
+      <td><strong>推理端不值得。</strong>训练后量化到 FP4 对源模型
+          直接对局 <span class="mono">0.504</span>，一分不损；
+          单独跑一条低精度训练线没有换来更强的模型</td>
+      <td class="num mono">±8.6</td></tr>
+  <tr><td>换精度能不能沿用原来的步数？</td>
+      <td><strong>不能。</strong>三种精度的最优预算相差 <strong>44%</strong>，
+          必须与精度一起定</td>
+      <td class="num mono">—</td></tr>
+  <tr><td>单场对打的误差条可信吗？</td>
+      <td><strong>不可信。</strong>六场重复的散布明显大于单场自报的 ±8~11，
+          必须多场合并拟合</td>
+      <td class="num mono">—</td></tr>
+  </table>
+
+  <p>
+  最后一条尤其值得强调：<strong>这套装置连自己的可信度都是实测出来的。</strong>
+  如果只打一场就下结论，本报告里几乎每一个数都会带着一个被低估两倍的误差条。
+  </p>
+
+  <h3>它接下来能量什么</h3>
+
+  <p>
+  装置已经建成并校准，<strong>每一个新问题的边际成本就只剩 GPU 机时</strong>。
+  同一把尺子可以直接用来回答：
+  </p>
+
+  <ul>
+  <li><strong>更激进的量化位置</strong> —— 已知训练后量化到 FP4 零损失，
+      那么把量化推进到激活、KV、甚至注意力内部，代价各是多少</li>
+  <li><strong>更激进的格式</strong> —— 更小的块、更少的位数、不同的缩放策略，
+      各自的棋力代价是多少</li>
+  <li><strong>混合精度的分配</strong> ——
+      哪些层能压、哪些层压不得，可以逐层量而不是整体猜</li>
+  <li><strong>低精度与模型规模的交互</strong> ——
+      已经观察到低精度在超配模型上的行为与在小模型上不同，值得单独量</li>
+  </ul>
+
+  <h3>诚实的边界</h3>
+
+  <p>
+  这把尺子量的是 <strong>14.2M 参数、Blokus Duo 这个任务</strong>上的结论。
+  它在两件事上强：<strong>方法之间的相对优劣</strong>，
+  以及<strong>那些与任务无关的工程结论</strong>（例如
+  「FP32 主权重不能省，否则退火段的更新会被完整吞掉」——
+  这是数值问题，与下棋无关）。
+  </p>
+
+  <p>
+  它不直接给出大模型上的绝对数值。但反过来说：<strong>在一个能把能力量准的地方
+  先把方法排出高下，再拿到量不准的地方去用，比在量不准的地方直接猜要可靠得多。</strong>
+  这正是本项目作为低精度方法评测平台的价值所在。
+  </p>
+
+
+</div>
+
+<script>
+// 编辑文件后自动刷新 —— 方便边写边看，不用手动按 F5。
+// 用 HEAD 请求比对 Last-Modified，比轮询整页省。
+(async function () {
+  let seen = null;
+  const poll = async () => {
+    try {
+      const r = await fetch(location.pathname, { method: 'HEAD', cache: 'no-store' });
+      const t = r.headers.get('Last-Modified');
+      if (seen && t && t !== seen) return location.reload();
+      if (t) seen = t;
+    } catch (e) { /* 服务重启时会短暂失败，忽略 */ }
+  };
+  await poll();
+  setInterval(poll, 2000);
+})();
+</script>
+</body>
+</html>
