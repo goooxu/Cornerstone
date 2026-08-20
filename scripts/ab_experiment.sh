@@ -194,6 +194,11 @@ lr_for() {
 shape_for() {
   case "$1" in
     qwen-*) echo "--blocks 28 --heads 16 --kv-heads 8 --head-dim 128 --intermediate 3072" ;;
+    # `attn1-*` = 16 层**全部**带全局注意力（默认是每 4 层一次）。
+    # dim 与层数都不动，只改注意力密度 —— 参数 14.2M -> 17.3M（注意力占比 7.4% -> 24.2%）。
+    # 这是唯一没被单独测过的轴：qwen 那轮虽然是全注意力，但同时把参数翻了 31 倍、
+    # 换了 Transformer 结构，三个变量捆在一起，读不出「全注意力有没有用」。
+    attn1-*) echo "--attn-every 1" ;;
     *)      echo "" ;;
   esac
 }
