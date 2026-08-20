@@ -194,3 +194,22 @@ def test_owner_loss_is_finite_and_scales_with_weight():
     assert torch.isfinite(lo) and lo > 0
     # 对格取平均 —— 量级应当和一个普通三分类交叉熵可比，w_owner 才好当权重调
     assert 0.5 < float(lo) < 3.0
+
+
+def test_both_training_steps_pass_with_owner():
+    """**训练步有两份实现**：单卡在 `train.py`，多卡在 `pool.py`。
+
+    加这个头时只改了 `train.py` 那份，于是 `own-bf16` 起跑后指标里根本没有
+    owner 项 —— 而模型是**建对了**的（`spec["model_cfg"]` 带着 `owner_head`，
+    那个 Linear 存在、也在优化器里），只是从来没被要求输出。
+    训练照跑、loss 照降、参数量和 state_dict 的键都对，
+    从任何中间产物上都看不出来；跑完 3 小时对上尺子只会得到
+    「归属头没有效果」—— 而它根本没生效过。
+
+    所以这条不测行为，测两份实现都把开关透传下去了。
+    """
+    import re
+    for name in ("cornerstone/train.py", "cornerstone/pool.py"):
+        src = open(os.path.join(REPO, name), encoding="utf-8").read()
+        body = src[src.index("total_loss(") - 2000:src.index("total_loss(") + 200]
+        assert "with_owner" in body, f"{name} 的训练步没有把 with_owner 传下去"

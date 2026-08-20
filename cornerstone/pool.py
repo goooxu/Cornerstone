@@ -247,9 +247,15 @@ def _worker(rank: int, world: int, dev: str, spec: dict, flat: torch.Tensor, lay
                 batch = {k: v.to(d, non_blocking=True) for k, v in slots[slot].items()}
                 model.train()
                 with torch.autocast("cuda", dtype=torch.bfloat16):
-                    out = model(batch["planes"], batch["scalars"])
-                    out = (out[0].float(), out[1].float(), out[2].float())
-                    loss, parts = total_loss(out, batch, spec["w_value"], spec["w_score"])
+                    # **多卡走的是这一份训练步，不是 train.py 里那份。**
+                    # 加归属头时只改了那边，结果 own-bf16 起跑后指标里根本没有
+                    # owner 项 —— 模型建对了（model_cfg 带着 owner_head），
+                    # 只是从没被要求输出，训练照跑、loss 照降，完全看不出来。
+                    ow = bool(spec.get("owner_head"))
+                    out = model(batch["planes"], batch["scalars"], with_owner=ow)
+                    out = tuple(t.float() for t in out if t is not None)
+                    loss, parts = total_loss(out, batch, spec["w_value"], spec["w_score"],
+                                             spec.get("w_owner", 0.25))
                 opt.zero_grad(set_to_none=True)
                 loss.backward()
                 if world > 1:
@@ -335,6 +341,7 @@ class WorkerPool:
             games_per_gpu=max(1, cfg.parallel_games // self.world),
             engine_threads=cfg.engine_threads_per_gpu, weight_decay=cfg.weight_decay,
             lr=cfg.lr, grad_clip=cfg.grad_clip, w_value=cfg.w_value, w_score=cfg.w_score,
+            owner_head=cfg.owner_head, w_owner=cfg.w_owner,
             port=port or (29500 + (os.getpid() % 2000)),
         )
         self.procs = []
