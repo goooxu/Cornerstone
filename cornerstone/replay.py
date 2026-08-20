@@ -118,7 +118,7 @@ class ReplayBuffer:
         return self._cum
 
     def sample(self, batch: int, rng: np.random.Generator, threads: int = 8,
-               augment: bool = True) -> dict[str, np.ndarray]:
+               augment: bool = True, owner: bool = False) -> dict[str, np.ndarray]:
         if self.n_positions == 0:
             raise RuntimeError("replay buffer 是空的")
 
@@ -150,7 +150,11 @@ class ReplayBuffer:
         planes = np.empty((batch, E.NUM_PLANES, E.BOARD_N, E.BOARD_N), dtype=np.float32)
         scalars = np.empty((batch, E.NUM_SCALARS), dtype=np.float32)
         legal = np.empty((batch, E.NUM_ACTIONS), dtype=np.uint8)
-        E.build_batch(acts, game_off, ply, want_off, syms, planes, scalars, legal, threads)
+        # 逐格归属目标由 C++ 顺带产出：它要把整局回放到终局，而回放本来就在做。
+        # 座位相对、且跟着同一张对称置换表 —— 都在 `build_batch` 里完成。
+        own = np.empty((batch, E.NUM_CELLS), dtype=np.int8) if owner else None
+        E.build_batch(acts, game_off, ply, want_off, syms, planes, scalars, legal,
+                      threads, owner=own)
 
         # 稀疏策略目标：动作编号按对称变换重映射即可，概率不变
         top_a = np.stack([sel[i].top_actions[p] for i, p in zip(inv, ply)])
@@ -178,7 +182,7 @@ class ReplayBuffer:
         wdl = (1 - result).astype(np.int64)                 # 0 胜 / 1 和 / 2 负
         score_diff = np.where(players == 0, s0 - s1, s1 - s0) / E.TOTAL_SQUARES
 
-        return {
+        out = {
             "planes": planes,
             "scalars": scalars,
             "legal": legal,
@@ -190,6 +194,9 @@ class ReplayBuffer:
             "wdl": wdl,
             "score_diff": score_diff.astype(np.float32),
         }
+        if own is not None:
+            out["owner"] = own.astype(np.int64)      # 交叉熵的 target 要 int64
+        return out
 
     # ---- 持久化 ----
 

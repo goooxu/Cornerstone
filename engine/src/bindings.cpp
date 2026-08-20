@@ -437,7 +437,8 @@ PYBIND11_MODULE(_engine, m) {
              py::object syms_obj,
              py::array_t<float, py::array::c_style> planes,
              py::array_t<float, py::array::c_style> scalars,
-             py::array_t<uint8_t, py::array::c_style> legal, int threads) {
+             py::array_t<uint8_t, py::array::c_style> legal, int threads,
+             py::object owner_obj) {
               const int n_games = int(game_offsets.size()) - 1;
               if (n_games < 0) throw py::value_error("game_offsets 至少要有 1 个元素");
               if (want_offsets.size() != game_offsets.size())
@@ -446,6 +447,15 @@ PYBIND11_MODULE(_engine, m) {
               if (planes.size() < n * NUM_PLANES * PLANE_SIZE) throw py::value_error("planes 太小");
               if (scalars.size() < n * NUM_SCALARS) throw py::value_error("scalars 太小");
               if (legal.size() < n * NUM_ACTIONS) throw py::value_error("legal 太小");
+
+              // owner 可选：传 None 就不算终局归属，老调用点不受影响
+              int8_t* ow = nullptr;
+              py::array_t<int8_t, py::array::c_style> owner_arr;
+              if (!owner_obj.is_none()) {
+                  owner_arr = owner_obj.cast<py::array_t<int8_t, py::array::c_style>>();
+                  if (owner_arr.size() < n * NUM_CELLS) throw py::value_error("owner 太小");
+                  ow = owner_arr.mutable_data();
+              }
 
               const int8_t* syms = nullptr;
               py::array_t<int8_t, py::array::c_style> syms_arr;
@@ -464,11 +474,11 @@ PYBIND11_MODULE(_engine, m) {
               uint8_t* l = legal.mutable_data();
 
               py::gil_scoped_release release;
-              build_batch(a, go, n_games, wp, wo, syms, p, s, l, threads);
+              build_batch(a, go, n_games, wp, wo, syms, p, s, l, ow, threads);
           },
           py::arg("actions"), py::arg("game_offsets"), py::arg("want_ply"),
           py::arg("want_offsets"), py::arg("syms"), py::arg("planes"), py::arg("scalars"),
-          py::arg("legal"), py::arg("threads") = 1);
+          py::arg("legal"), py::arg("threads") = 1, py::arg("owner") = py::none());
 
     m.def("decode_action", &decode_action, py::arg("action"));
     m.def("encode_action", [](int ori, int anchor_cell) { return encode_action(ori, anchor_cell); },

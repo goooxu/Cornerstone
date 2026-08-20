@@ -24,9 +24,17 @@ namespace cornerstone {
 //     planes  [n, NUM_PLANES, 14, 14]
 //     scalars [n, NUM_SCALARS]
 //     legal   [n, NUM_ACTIONS]  0/1
+//     owner   [n, NUM_CELLS]    终局归属，0=空 1=己方 2=对方；传 nullptr 表示不要
+//
+// `owner` 是**座位相对**的：以该样本当时的行棋方为「己方」，与 9 个输入平面同一口径。
+// 绝对座位的标签会在 rot180 与反对角变换下产生分布外样本 ——
+// 特征里不放 `ply` 也是同一个理由（见 docs/02 的对称群一节）。
+//
+// 拿终局占用要把整局回放完，而主循环在抽完最后一个想要的 ply 就停了，
+// 所以额外走一遍。一局约 27 手，相对特征重建可以忽略。
 void build_batch(const int32_t* actions, const int32_t* game_offsets, int n_games,
                  const int32_t* want_ply, const int32_t* want_offsets,
                  const int8_t* syms, float* planes, float* scalars, uint8_t* legal,
-                 int threads);
+                 int8_t* owner, int threads);
 
 }  // namespace cornerstone

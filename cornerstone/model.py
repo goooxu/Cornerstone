@@ -51,6 +51,11 @@ class ModelConfig:
     head_dim: int = 0            # 0 = dim // heads；Qwen3 里它与 dim 解耦
     intermediate: int = 0        # 0 = dim * mlp_ratio；Qwen3-0.6B 是 3072
     dw_kernel: int = 5           # 深度可分离卷积核大小
+    # 逐格归属辅助头：预测终局时每个格归谁（空/己方/对方）。
+    # **默认关，模型与今天逐位相同** —— `load_weights` 对缺键和多键都抛错，
+    # 无条件加一个头会让三把尺子和所有历史 checkpoint 立刻装不进去。
+    # 与 `arch` 同一个模式：默认值保住一切现存产物。
+    owner_head: bool = False
     # 主干 GEMM 的计算精度：bf16 | fp8(MXFP8) | fp4(NVFP4)。三者的**参数存储完全
     # 相同**，差别只在 te.Linear 前向时用哪个量化配方。
     precision: str = "bf16"
@@ -260,6 +265,10 @@ class CornerNet(nn.Module):
         self.value = nn.Sequential(nn.Linear(2 * d, d), nn.SiLU(), nn.Linear(d, 3))
         # 辅助头：终局占格数差，信号比稀疏的三分类结果密集得多
         self.score = nn.Sequential(nn.Linear(2 * d, d), nn.SiLU(), nn.Linear(d, 1))
+        # 逐格归属头：终局时每个格归谁（空/己方/对方）。占格数差正是它的求和 ——
+        # 这是把已有的标量辅助头升级成逐格版本，把 2 个标签变成 198 个。
+        # 它学的是**对局结果**而不是搜索的输出，所以往循环里注入了搜索给不了的信息。
+        self.owner = nn.Linear(d, 3) if cfg.owner_head else None
 
         self.reset_parameters()
 
@@ -385,15 +394,21 @@ class CornerNet(nn.Module):
         dev = self.pos.device
         return torch.cuda.device(dev) if dev.type == "cuda" else contextlib.nullcontext()
 
-    def forward(self, planes: torch.Tensor, scalars: torch.Tensor):
+    def forward(self, planes: torch.Tensor, scalars: torch.Tensor,
+                with_owner: bool = False):
         """返回 (policy_logits[B, 17836], wdl_logits[B, 3], score_diff[B])。
 
         policy_logits 未做合法性 mask —— mask 由调用方施加（训练和推理的 mask 来源不同）。
+
+        `with_owner=True` 时**多返回一项** `owner_logits[B, 196, 3]`（逐格归属）。
+        **默认 False，所以推理契约一个字没变** —— `pol, wdl, sc = model(...)`
+        这个三元组解包散布在 pool / evaluate / web / requantize 四个调用点上，
+        只有训练步会传 True。
         """
         with self._device_scope():
-            return self._forward(planes, scalars)
+            return self._forward(planes, scalars, with_owner)
 
-    def _forward(self, planes: torch.Tensor, scalars: torch.Tensor):
+    def _forward(self, planes: torch.Tensor, scalars: torch.Tensor, with_owner: bool = False):
         # 参数是 bf16 而输入是 fp32 时，没有 autocast 的路径会直接报
         # `Input type (float) and bias type (c10::BFloat16) should be the same`。
         # 全仓 4 个推理点都包了 autocast，但它们的 `enabled=` 都挂着
@@ -422,9 +437,12 @@ class CornerNet(nn.Module):
 
         pooled = torch.cat([h.mean(dim=1), h.amax(dim=1)], dim=-1)
         wdl, sc = self.value(pooled), self.score(pooled).squeeze(-1)
+        own = self.owner(h) if (with_owner and self.owner is not None) else None
         if b != b0:
             pol, wdl, sc = pol[:b0], wdl[:b0], sc[:b0]      # 去掉补齐用的样本
-        return pol, wdl, sc
+            if own is not None:
+                own = own[:b0]
+        return (pol, wdl, sc, own) if with_owner else (pol, wdl, sc)
 
     def num_params(self) -> int:
         return sum(p.numel() for p in self.parameters())

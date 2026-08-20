@@ -128,6 +128,11 @@ class TrainConfig:
     grad_clip: float = 1.0
     w_value: float = 1.0
     w_score: float = 0.25
+    # 逐格归属辅助头。默认关 —— 开了才会多一个 owner 头与对应的目标。
+    owner_head: bool = False
+    # 辅助任务权重过大会挤占主任务。起手与 w_score 同量级，这是个没标定过的旋钮：
+    # 若开了头之后棋力反而掉，**先怀疑这个权重再怀疑这个头**。
+    w_owner: float = 0.25
     augment: bool = True
     loader_threads: int = 32
 
@@ -170,7 +175,8 @@ class _Sampler:
     def _draw(self) -> dict:
         c = self.tr.cfg
         return self.tr.buffer.sample(c.batch_size, self.tr.rng,
-                                     threads=c.loader_threads, augment=c.augment)
+                                     threads=c.loader_threads, augment=c.augment,
+                                     owner=c.owner_head)
 
     def peek(self) -> dict:
         if self._first is None:
@@ -196,6 +202,7 @@ class Trainer:
         # 等于一开始就丢一半精度，而训练看不出任何异常。
         self.model = CornerNet(ModelConfig(
             dim=cfg.dim, blocks=cfg.blocks, attn_every=cfg.attn_every,
+            owner_head=cfg.owner_head,
             precision=cfg.precision, arch=cfg.arch, heads=cfg.heads,
             kv_heads=cfg.kv_heads, head_dim=cfg.head_dim,
             intermediate=cfg.intermediate,
@@ -407,7 +414,8 @@ class Trainer:
             if should_stop is not None and should_stop():
                 break
             batch_np = self.buffer.sample(c.batch_size, self.rng,
-                                          threads=c.loader_threads, augment=c.augment)
+                                          threads=c.loader_threads, augment=c.augment,
+                                          owner=c.owner_head)
             batch = {k: torch.from_numpy(v).to(self.device, non_blocking=True)
                      for k, v in batch_np.items()}
 
@@ -417,10 +425,11 @@ class Trainer:
 
             with torch.autocast("cuda", dtype=torch.bfloat16,
                                 enabled=self.device.type == "cuda"):
-                out = self.model(batch["planes"], batch["scalars"])
+                out = self.model(batch["planes"], batch["scalars"],
+                                 with_owner=c.owner_head)
                 # 损失在 fp32 下算：策略是 17836 类的 log_softmax，BF16 精度不够
-                out = (out[0].float(), out[1].float(), out[2].float())
-                loss, parts = total_loss(out, batch, c.w_value, c.w_score)
+                out = tuple(t.float() for t in out if t is not None)
+                loss, parts = total_loss(out, batch, c.w_value, c.w_score, c.w_owner)
 
             self.opt.zero_grad(set_to_none=True)
             loss.backward()

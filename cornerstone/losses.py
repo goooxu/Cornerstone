@@ -77,9 +77,27 @@ def policy_entropy_model(logits: torch.Tensor, legal: torch.Tensor) -> torch.Ten
     return -(p * logp.masked_fill(~legal, 0.0)).sum(dim=1).mean()
 
 
-def total_loss(out, batch, w_value: float = 1.0, w_score: float = 0.25) -> tuple:
-    """out = (policy_logits, wdl_logits, score_pred)。返回 (总损失, 各项明细)。"""
-    pol, wdl, sc = out
+def owner_loss(owner_logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """逐格归属的三分类：0=空 / 1=己方 / 2=对方（终局）。
+
+    `owner_logits` [B, 196, 3]，`target` [B, 196] int64。对格取平均，
+    所以它的梯度量级与其它几项可比，`w_owner` 才能当成普通权重来调。
+
+    每个格都有标签（空也是一类），不需要 mask —— 这与策略头不同，
+    那边非法动作必须屏蔽。
+    """
+    b, n, c = owner_logits.shape
+    return F.cross_entropy(owner_logits.reshape(b * n, c).float(), target.reshape(b * n))
+
+
+def total_loss(out, batch, w_value: float = 1.0, w_score: float = 0.25,
+               w_owner: float = 0.25) -> tuple:
+    """out = (policy_logits, wdl_logits, score_pred[, owner_logits])。
+
+    第四项可选：只有开了归属头的跑才会有。返回 (总损失, 各项明细)。
+    """
+    pol, wdl, sc = out[0], out[1], out[2]
+    own = out[3] if len(out) > 3 else None
     legal = batch["legal"].bool()
 
     lp = policy_loss(pol, legal, batch["top_actions"], batch["top_probs"],
@@ -87,11 +105,16 @@ def total_loss(out, batch, w_value: float = 1.0, w_score: float = 0.25) -> tuple
     lv = value_loss(wdl, batch["wdl"])
     ls = score_loss(sc, batch["score_diff"])
     loss = lp + w_value * lv + w_score * ls
+    lo = None
+    if own is not None:
+        lo = owner_loss(own, batch["owner"])
+        loss = loss + w_owner * lo
 
     with torch.no_grad():
         acc = (wdl.argmax(dim=-1) == batch["wdl"]).float().mean()
         ent = policy_entropy_model(pol, legal)
-    return loss, {
+        own_acc = (own.argmax(-1) == batch["owner"]).float().mean() if own is not None else None
+    parts = {
         "loss": loss.detach(),
         "policy": lp.detach(),
         "value": lv.detach(),
@@ -101,3 +124,7 @@ def total_loss(out, batch, w_value: float = 1.0, w_score: float = 0.25) -> tuple
         # 读取方（plot_metrics / compare_runs）要新名优先、回退旧名。
         "policy_entropy_model": ent,
     }
+    if lo is not None:
+        parts["owner"] = lo.detach()
+        parts["owner_acc"] = own_acc
+    return loss, parts
