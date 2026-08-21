@@ -23,7 +23,22 @@ namespace cornerstone {
 // 双方各 21 枚，一局最多 42 手
 inline constexpr int MAX_PLIES = 2 * NUM_PIECES;
 
-inline constexpr int NUM_PLANES  = 9;
+// 平面布局（顺序即兼容性契约 —— 老模型靠「切前 9 个」继续工作）：
+//   0..7  八个位板平面：己方占格 / 对方占格 / 双方可落区 / 双方角点 / 双方起始格
+//   8     恒为 1，给网络一个偏置与边界参考
+//   9     己方可达度：该格被己方多少个合法着法覆盖，min(n,64)/64
+//   10    对方可达度：同上
+//
+// **常数平面必须钉死在下标 8**，不能写成 NUM_PLANES-1 —— 扩容时它会跟着漂到
+// 下标 10，于是老 checkpoint 切出来的第 9 个平面从「恒 1」变成「恒 0」。
+// 那不会报任何错：模型照样加载、照样推理，只是棋力莫名其妙掉一截。
+inline constexpr int N_BB_PLANES = 8;    // 前八个位板平面
+inline constexpr int PLANE_CONST = 8;    // 恒 1 的那个平面
+inline constexpr int PLANE_MOB_ME = 9;   // 己方可达度
+inline constexpr int PLANE_MOB_OP = 10;  // 对方可达度
+inline constexpr int NUM_PLANES  = 11;
+// 老模型只吃前 9 个平面（ModelConfig.in_planes 默认 9）。
+inline constexpr int NUM_PLANES_LEGACY = 9;
 inline constexpr int NUM_SCALARS = 2 * NUM_PIECES + 2;   // 44
 inline constexpr int PLANE_SIZE  = NUM_CELLS;
 
@@ -60,6 +75,9 @@ public:
     bool is_legal(int action) const;
     // 写入长度为 NUM_ACTIONS 的 0/1 掩码
     void legal_mask(uint8_t* out) const;
+
+    // 可达度平面：p 方的每个格被多少个合法着法覆盖，归一化后写进 dst[NUM_CELLS]。
+    void mobility_plane(int p, float* dst) const;
 
     // 落子。非法着法抛异常。落子后自动处理停手与终局判定。
     void play(int action);

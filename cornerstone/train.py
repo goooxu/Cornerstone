@@ -132,6 +132,8 @@ class TrainConfig:
     owner_head: bool = False
     # 策略头隐藏层宽度；0 = 单个 Linear（今天的样子）。见 ModelConfig.policy_hidden。
     policy_hidden: int = 0
+    # 吃几个输入平面：9 = 老布局，11 = 加上两个可达度平面。见 ModelConfig.in_planes。
+    in_planes: int = 9
     # 辅助任务权重过大会挤占主任务。起手与 w_score 同量级，这是个没标定过的旋钮：
     # 若开了头之后棋力反而掉，**先怀疑这个权重再怀疑这个头**。
     w_owner: float = 0.25
@@ -205,6 +207,7 @@ class Trainer:
         self.model = CornerNet(ModelConfig(
             dim=cfg.dim, blocks=cfg.blocks, attn_every=cfg.attn_every,
             owner_head=cfg.owner_head, policy_hidden=cfg.policy_hidden,
+            in_planes=cfg.in_planes,
             precision=cfg.precision, arch=cfg.arch, heads=cfg.heads,
             kv_heads=cfg.kv_heads, head_dim=cfg.head_dim,
             intermediate=cfg.intermediate,

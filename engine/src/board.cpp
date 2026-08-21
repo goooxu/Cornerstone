@@ -174,6 +174,25 @@ void Board::advance_turn() {
     terminal_ = true;
 }
 
+void Board::mobility_plane(int p, float* dst) const {
+    std::memset(dst, 0, sizeof(float) * PLANE_SIZE);
+    if (terminal_) return;                      // 终局：两边都无从落子
+
+    std::vector<int32_t> mv;
+    generate<false>(p, &mv);                    // 已支持任意玩家，见 has_any_move
+    if (mv.empty()) return;                     // 该方已停手，全 0 是正确的
+
+    int count[NUM_CELLS] = {0};
+    for (int32_t a : mv) {
+        const BB& m = action_masks()[size_t(a)];
+        for (int cell = 0; cell < NUM_CELLS; ++cell)
+            if (m.test(cell_to_bit(cell))) ++count[cell];
+    }
+    constexpr float SCALE = 64.0f;
+    for (int cell = 0; cell < NUM_CELLS; ++cell)
+        dst[cell] = std::min(float(count[cell]), SCALE) / SCALE;
+}
+
 void Board::features(float* planes, float* scalars) const {
     const int me = cur_, op = 1 - cur_;
 
@@ -184,19 +203,34 @@ void Board::features(float* planes, float* scalars) const {
     const BB my_start = BB::single(bit_of(START_R[me], START_C[me]));
     const BB op_start = BB::single(bit_of(START_R[op], START_C[op]));
 
-    const BB* src[NUM_PLANES - 1] = {
+    // **这里一律用具名常量，不用 NUM_PLANES-1** —— 后者在扩平面时会跟着漂：
+    // 数组维度变大而初始化值不够（空指针），常数平面也会从下标 8 挪走，
+    // 而后者不报任何错，只是让老 checkpoint 的第 9 个平面从恒 1 变成恒 0。
+    const BB* src[N_BB_PLANES] = {
         &occ_[me], &occ_[op], &my_allowed, &my_anchors,
         &op_allowed, &op_anchors, &my_start, &op_start,
     };
 
     std::memset(planes, 0, sizeof(float) * NUM_PLANES * PLANE_SIZE);
-    for (int pl = 0; pl < NUM_PLANES - 1; ++pl) {
+    for (int pl = 0; pl < N_BB_PLANES; ++pl) {
         float* dst = planes + pl * PLANE_SIZE;
         for (int cell = 0; cell < NUM_CELLS; ++cell)
             dst[cell] = src[pl]->test(cell_to_bit(cell)) ? 1.0f : 0.0f;
     }
-    // 最后一个平面恒为 1，给网络一个偏置/边界参考
-    std::fill(planes + (NUM_PLANES - 1) * PLANE_SIZE, planes + NUM_PLANES * PLANE_SIZE, 1.0f);
+    // 偏置/边界参考平面，恒为 1
+    std::fill(planes + PLANE_CONST * PLANE_SIZE,
+              planes + (PLANE_CONST + 1) * PLANE_SIZE, 1.0f);
+
+    // 可达度场：每个格被该方多少个合法着法覆盖。
+    //
+    // 这是 Blokus 的核心量 —— 只在这个场上做贪心的 greedy-mobility 就能赢过
+    // 多数人类。网络本来要自己从「21 枚在手棋子 x 局部形状匹配」里推出它，
+    // 那是很深的组合推理；而走法生成器本来就在算这些着法，白拿。
+    //
+    // 归一化到 [0,1]：开局单格可被上百手覆盖，除以 64 后截断，
+    // 让常见范围落在 0~1 而不是让少数极大值把其余压成 0。
+    mobility_plane(me, planes + PLANE_MOB_ME * PLANE_SIZE);
+    mobility_plane(op, planes + PLANE_MOB_OP * PLANE_SIZE);
 
     for (int i = 0; i < NUM_PIECES; ++i) {
         scalars[i] = (remaining_[me] >> i) & 1u ? 1.0f : 0.0f;

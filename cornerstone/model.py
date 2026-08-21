@@ -29,7 +29,9 @@ from . import _engine as E
 
 BOARD = E.BOARD_N
 CELLS = E.NUM_CELLS
-PLANES = E.NUM_PLANES
+PLANES = E.NUM_PLANES                    # 引擎实际产出的平面数（现为 11）
+# 老布局的平面数。模型默认只吃这么多 —— 加平面不能改变任何现存模型的输入。
+NUM_PLANES_LEGACY = 9
 SCALARS = E.NUM_SCALARS
 PIECES = E.NUM_PIECES
 ORI = E.NUM_ORI
@@ -65,6 +67,11 @@ class ModelConfig:
     # 而搜索只看策略先验排前 16 的着法（开局合法着法有 414 个），
     # 先验排错了，64 次模拟救不回来 —— 低模拟数下先验近乎直接决定落子。
     policy_hidden: int = 0
+    # 吃几个输入平面。引擎从 2026-08 起产 11 个（多了两个可达度平面），
+    # **默认 9 = 老布局**，`_forward` 会把多出来的切掉 ——
+    # 三把尺子和全部历史 checkpoint 因此一个字都不用改。
+    # 平面顺序即兼容性契约，见 engine/include/cornerstone/board.hpp 的注释。
+    in_planes: int = NUM_PLANES_LEGACY
     # 主干 GEMM 的计算精度：bf16 | fp8(MXFP8) | fp4(NVFP4)。三者的**参数存储完全
     # 相同**，差别只在 te.Linear 前向时用哪个量化配方。
     precision: str = "bf16"
@@ -249,7 +256,7 @@ class CornerNet(nn.Module):
         force_bf16_at = lambda i: cfg.fp8_first_last_bf16 and i in (0, last)
 
         if cfg.arch == "poly":
-            self.stem = nn.Conv2d(PLANES, d, 3, padding=1, bias=True)
+            self.stem = nn.Conv2d(cfg.in_planes, d, 3, padding=1, bias=True)
             self.pos = nn.Parameter(torch.zeros(1, CELLS, d))
             # 双方剩余棋子 + 占格数 -> 广播到每个格
             self.scalar_mlp = nn.Sequential(
@@ -296,7 +303,7 @@ class CornerNet(nn.Module):
         self.n_tokens = CELLS + n_extra
 
         # 格 token：逐格线性投影。骨干里没有卷积了，局部性交给注意力。
-        self.cell_proj = nn.Linear(PLANES, d)
+        self.cell_proj = nn.Linear(cfg.in_planes, d)
         # 棋子 token：每枚棋子「在手/已用」两种状态各一个可学习向量
         self.piece_emb = nn.Embedding(2 * PIECES, d)
         # 占格数 token：两个标量各投一个
@@ -319,8 +326,8 @@ class CornerNet(nn.Module):
     def _qwen_tokens(self, planes: torch.Tensor, scalars: torch.Tensor) -> torch.Tensor:
         b = planes.shape[0]
         d = self.cfg.dim
-        # (B, PLANES, 14, 14) -> (B, 196, PLANES)
-        cells = planes.permute(0, 2, 3, 1).reshape(b, CELLS, PLANES)
+        # (B, in_planes, 14, 14) -> (B, 196, in_planes)
+        cells = planes.permute(0, 2, 3, 1).reshape(b, CELLS, self.cfg.in_planes)
         cell_tok = self.cell_proj(cells) + self.type_emb[0]
 
         # scalars 前 2*PIECES 项是双方每枚棋子的剩余标志（1=在手）
@@ -429,6 +436,12 @@ class CornerNet(nn.Module):
         # `device.type == "cuda"` —— CPU 上 autocast 是关的，而 web 有真实的
         # CPU 回退路径，单测也直接在 CPU 上调 forward。护栏放在唯一入口，
         # 比指望每条调用路径都记得转 dtype 可靠。
+        # 引擎产 11 个平面，老模型只吃前 9 个。切片放在唯一入口，
+        # 这样三把尺子、历史 checkpoint、web、arena、requantize 全都不用动 ——
+        # 它们照常拿到 11 个平面，模型自己丢掉多的那两个。
+        if planes.shape[1] > self.cfg.in_planes:
+            planes = planes[:, : self.cfg.in_planes]
+
         dt = self.pos.dtype
         if not torch.is_autocast_enabled() and planes.dtype != dt:
             planes, scalars = planes.to(dt), scalars.to(dt)

@@ -260,3 +260,89 @@ def test_policy_hidden_grows_only_the_policy_head():
     for k in ga:
         if k != "policy":
             assert ga[k] == gb[k], f"{k} 也跟着变了，应该只动策略头"
+
+
+# ------------------------------------------------------------- 可达度输入平面
+
+def _mobility_by_hand(board):
+    """独立重算「当前行棋方的可达度」—— 不碰 features()，只用公开的着法 API。"""
+    n = E.BOARD_N
+    cnt = np.zeros(n * n, np.int64)
+    for a in board.legal_moves():
+        for (r, c) in E.decode_action(a)["cells"]:
+            cnt[r * n + c] += 1
+    return (np.minimum(cnt, 64) / 64.0).astype(np.float32)
+
+
+def test_mobility_plane_matches_an_independent_recount():
+    """平面 9 必须与「枚举合法着法、逐格累加」逐位一致。
+
+    这是唯一真正能证伪计数逻辑的测试：漏一类着法、把 anchor 当成覆盖格、
+    归一化写错——三种都不会报错，只会喂给网络一个悄悄失真的场。
+    """
+    rng = np.random.default_rng(11)
+    b = E.Board()
+    acts, want = [], []
+    while not b.terminal:
+        want.append(_mobility_by_hand(b))
+        mv = b.legal_moves()
+        acts.append(int(rng.choice(mv)) if len(mv) else -1)
+        b.play(acts[-1])
+    planes, _ = _build(np.asarray(acts, np.int32))
+    got = planes[:, E.NUM_PLANES - 2].reshape(len(want), -1)
+    assert np.allclose(got, np.asarray(want)), "可达度平面与独立重算不一致"
+
+
+def test_legacy_planes_are_untouched_by_the_extension():
+    """**平面顺序是兼容性契约。**
+
+    常数平面必须还钉在下标 8。它原先写成 `NUM_PLANES-1`，扩容时会跟着漂到
+    下标 10 —— 而这不报任何错：老 checkpoint 照样加载、照样推理，
+    只是切出来的第 9 个平面从恒 1 变成恒 0，棋力莫名其妙掉一截。
+    """
+    rng = np.random.default_rng(3)
+    b = E.Board()
+    acts = []
+    while not b.terminal:
+        mv = b.legal_moves()
+        acts.append(int(rng.choice(mv)) if len(mv) else -1)
+        b.play(acts[-1])
+    planes, _ = _build(np.asarray(acts, np.int32))
+    assert np.all(planes[:, 8] == 1.0), "常数平面不在下标 8 了"
+    # 前两个平面就是双方占格，拿 legal/occupancy 之外的独立口径核一下形状即可
+    assert planes.shape[1] == E.NUM_PLANES >= 11
+
+
+def test_mobility_support_is_inside_the_allowed_region():
+    """可达度的支撑集必须落在该方的可落区内 —— 放不下的格不可能被覆盖。
+
+    这条对两个平面都成立，所以能同时守住「传错玩家」这种错法。
+    """
+    rng = np.random.default_rng(5)
+    b = E.Board()
+    acts = []
+    while not b.terminal:
+        mv = b.legal_moves()
+        acts.append(int(rng.choice(mv)) if len(mv) else -1)
+        b.play(acts[-1])
+    planes, _ = _build(np.asarray(acts, np.int32))
+    t = planes.shape[0]
+    for mob, allowed, who in ((9, 2, "己方"), (10, 4, "对方")):
+        sup = planes[:, mob].reshape(t, -1) > 0
+        ok = planes[:, allowed].reshape(t, -1) > 0.5
+        assert not (sup & ~ok).any(), f"{who}可达度落到了可落区之外"
+
+
+def test_old_models_ignore_the_new_planes():
+    """`in_planes` 默认 9：老模型拿到 11 个平面时必须切掉多的两个，
+    且结果与只喂 9 个平面**逐位相同**。三把尺子靠这条继续可用。
+    """
+    import torch
+    from cornerstone.model import CornerNet, ModelConfig
+    assert ModelConfig().in_planes == 9
+    m = CornerNet(_cfg()).eval()
+    assert m.stem.in_channels == 9
+    x = torch.randn(2, E.NUM_PLANES, E.BOARD_N, E.BOARD_N)
+    s = torch.randn(2, E.NUM_SCALARS)
+    with torch.no_grad():
+        assert torch.equal(m(x, s)[0], m(x[:, :9], s)[0])
