@@ -201,6 +201,10 @@ shape_for() {
     attn1-*) echo "--attn-every 1" ;;
     # `own-*` = 打开逐格归属辅助头（预测终局时每个格归谁）。
     # 除这个头之外一切与尺子 v4-bf16-111k 逐字相同 —— 又一个单变量对照。
+    # `-w10` = 把归属头的权重从 0.25 降到 0.10。**必须排在 `own-*` 之前** ——
+    # case 取第一个匹配，放后面的话 own-bf16-w10 会先撞上通配那条、权重仍是 0.25，
+    # 而日志上除了 w_owner 那个数没有任何异常。
+    own-*-w10) echo "--owner-head true --w-owner 0.10" ;;
     own-*)   echo "--owner-head true" ;;
     *)      echo "" ;;
   esac
