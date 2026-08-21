@@ -56,6 +56,15 @@ class ModelConfig:
     # 无条件加一个头会让三把尺子和所有历史 checkpoint 立刻装不进去。
     # 与 `arch` 同一个模式：默认值保住一切现存产物。
     owner_head: bool = False
+    # 策略头的隐藏层宽度。0 = 单个 Linear（今天的样子），>0 = 加一层 SiLU。
+    # **默认 0，模型与今天逐位相同** —— 与 owner_head / arch 同一个模式。
+    #
+    # 为什么值得动它：这是全网唯一没有非线性的头，而它的输出是 17836 维。
+    # 策略头 23,387 参数 / 17836 个输出 = 每个动作 1.31 个参数；
+    # 价值头 132,099 参数 / 3 个输出 = 每个 44,033 个。
+    # 而搜索只看策略先验排前 16 的着法（开局合法着法有 414 个），
+    # 先验排错了，64 次模拟救不回来 —— 低模拟数下先验近乎直接决定落子。
+    policy_hidden: int = 0
     # 主干 GEMM 的计算精度：bf16 | fp8(MXFP8) | fp4(NVFP4)。三者的**参数存储完全
     # 相同**，差别只在 te.Linear 前向时用哪个量化配方。
     precision: str = "bf16"
@@ -260,7 +269,9 @@ class CornerNet(nn.Module):
         self.norm_out = nn.RMSNorm(d)
 
         # 策略头：每个格给出 91 个朝向的 logit。动作编号 = ori*196 + 格号
-        self.policy = nn.Linear(d, ORI)
+        self.policy = nn.Linear(d, ORI) if cfg.policy_hidden <= 0 else nn.Sequential(
+            nn.Linear(d, cfg.policy_hidden), nn.SiLU(),
+            nn.Linear(cfg.policy_hidden, ORI))
         # 价值头：胜/和/负三分类。和局是本项目里的真实结果，不能用 tanh 标量糊过去
         self.value = nn.Sequential(nn.Linear(2 * d, d), nn.SiLU(), nn.Linear(d, 3))
         # 辅助头：终局占格数差，信号比稀疏的三分类结果密集得多
@@ -332,9 +343,12 @@ class CornerNet(nn.Module):
         if self.cfg.arch == "qwen":
             nn.init.trunc_normal_(self.type_emb, std=0.02)
             nn.init.trunc_normal_(self.piece_emb.weight, std=0.02)
-        # 策略头零初始化 -> 训练一开始策略就是均匀分布，不会给 MCTS 一个随机的强先验
-        nn.init.zeros_(self.policy.weight)
-        nn.init.zeros_(self.policy.bias)
+        # 策略头**最后一层**零初始化 -> 训练一开始策略就是均匀分布，
+        # 不会给 MCTS 一个随机的强先验。加了隐藏层之后只零最后那层即可 ——
+        # 隐藏层照常随机初始化，输出仍恒为 0，语义一个字没变。
+        last = self.policy if isinstance(self.policy, nn.Linear) else self.policy[-1]
+        nn.init.zeros_(last.weight)
+        nn.init.zeros_(last.bias)
 
     def to_param_dtype(self) -> "CornerNet":
         """把参数降到 `cfg.param_dtype`（计算权重）。

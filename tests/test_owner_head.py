@@ -213,3 +213,50 @@ def test_both_training_steps_pass_with_owner():
         src = open(os.path.join(REPO, name), encoding="utf-8").read()
         body = src[src.index("total_loss(") - 2000:src.index("total_loss(") + 200]
         assert "with_owner" in body, f"{name} 的训练步没有把 with_owner 传下去"
+
+
+# ------------------------------------------------------------- 策略头隐藏层
+
+def test_policy_hidden_defaults_off_and_keeps_key_names():
+    """默认 0：键名必须还是 `policy.weight` —— 一改成 Sequential 就变成
+    `policy.0.weight`，三把尺子和所有历史 checkpoint 立刻装不进去。
+    """
+    from cornerstone.model import CornerNet, ModelConfig
+    assert ModelConfig().policy_hidden == 0
+    keys = set(CornerNet(_cfg()).state_dict())
+    assert "policy.weight" in keys and "policy.0.weight" not in keys
+
+
+def test_policy_hidden_preserves_the_uniform_prior():
+    """**零初始化的语义不能丢。**
+
+    策略头零初始化是为了训练一开始就是均匀先验，不给 MCTS 一个随机的强先验。
+    加隐藏层后 `self.policy.weight` 不再存在，`reset_parameters` 必须改成
+    只零**最后一层** —— 漏掉的话初始先验变成随机的强先验，
+    而这件事不报错、只是让早期自博弈被带偏，从 loss 上看不出来。
+    """
+    import torch
+    from cornerstone.model import CornerNet
+    for hidden in (0, 128):
+        m = CornerNet(_cfg(policy_hidden=hidden)).eval()
+        x = torch.randn(2, E.NUM_PLANES, E.BOARD_N, E.BOARD_N)
+        s = torch.randn(2, E.NUM_SCALARS)
+        with torch.no_grad():
+            pol = m(x, s)[0]
+        assert torch.all(pol == 0), f"policy_hidden={hidden} 的初始先验不是均匀的"
+
+
+def test_policy_hidden_grows_only_the_policy_head():
+    from cornerstone.model import CornerNet
+    a = CornerNet(_cfg())
+    b = CornerNet(_cfg(policy_hidden=128))
+    def by_head(m):
+        g = {}
+        for n, p in m.named_parameters():
+            g[n.split(".")[0]] = g.get(n.split(".")[0], 0) + p.numel()
+        return g
+    ga, gb = by_head(a), by_head(b)
+    assert gb["policy"] > ga["policy"]
+    for k in ga:
+        if k != "policy":
+            assert ga[k] == gb[k], f"{k} 也跟着变了，应该只动策略头"

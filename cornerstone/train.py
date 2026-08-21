@@ -130,6 +130,8 @@ class TrainConfig:
     w_score: float = 0.25
     # 逐格归属辅助头。默认关 —— 开了才会多一个 owner 头与对应的目标。
     owner_head: bool = False
+    # 策略头隐藏层宽度；0 = 单个 Linear（今天的样子）。见 ModelConfig.policy_hidden。
+    policy_hidden: int = 0
     # 辅助任务权重过大会挤占主任务。起手与 w_score 同量级，这是个没标定过的旋钮：
     # 若开了头之后棋力反而掉，**先怀疑这个权重再怀疑这个头**。
     w_owner: float = 0.25
@@ -202,7 +204,7 @@ class Trainer:
         # 等于一开始就丢一半精度，而训练看不出任何异常。
         self.model = CornerNet(ModelConfig(
             dim=cfg.dim, blocks=cfg.blocks, attn_every=cfg.attn_every,
-            owner_head=cfg.owner_head,
+            owner_head=cfg.owner_head, policy_hidden=cfg.policy_hidden,
             precision=cfg.precision, arch=cfg.arch, heads=cfg.heads,
             kv_heads=cfg.kv_heads, head_dim=cfg.head_dim,
             intermediate=cfg.intermediate,
