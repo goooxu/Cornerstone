@@ -32,7 +32,10 @@ def _random_game(seed: int = 7):
     return np.asarray(acts, dtype=np.int32), b.score(0), b.score(1)
 
 
-def _build(acts, sym=None):
+def _build(acts, sym=None, mobility=True):
+    """可达度平面默认**关**（算它要两次全量走法生成，自博弈慢 27%），
+    所以要测它就得显式打开。这里默认 True 是因为本文件的可达度那几条都要它；
+    `test_mobility_is_off_by_default` 专门测关掉时的行为。"""
     t = len(acts)
     off = np.array([0, t], dtype=np.int32)
     ply = np.arange(t, dtype=np.int32)
@@ -41,7 +44,8 @@ def _build(acts, sym=None):
     legal = np.empty((t, E.NUM_ACTIONS), np.uint8)
     owner = np.empty((t, E.NUM_CELLS), np.int8)
     syms = None if sym is None else np.full(t, sym, np.int8)
-    E.build_batch(acts, off, ply, off, syms, planes, scalars, legal, 1, owner=owner)
+    E.build_batch(acts, off, ply, off, syms, planes, scalars, legal, 1, owner=owner,
+                  with_mobility=mobility)
     return planes, owner
 
 
@@ -346,3 +350,30 @@ def test_old_models_ignore_the_new_planes():
     s = torch.randn(2, E.NUM_SCALARS)
     with torch.no_grad():
         assert torch.equal(m(x, s)[0], m(x[:, :9], s)[0])
+
+
+def test_mobility_is_off_by_default_and_costs_nothing_when_off():
+    """**默认必须关。**
+
+    可达度平面实测只值 +7.4 ± 14.3（不显著），却让自博弈慢 27% ——
+    features() 无条件多算两遍全量走法生成，而每个待评估叶子都要调它一次。
+    这个回归在 mobp/data2/data4 三条跑上白付了几小时机时才被查出来。
+
+    关掉时前 9 个平面必须与开着时**逐位相同** —— 否则就不是「省掉多余计算」，
+    而是悄悄改变了模型的输入。
+    """
+    acts, _, _ = _random_game()
+    on, _ = _build(acts, mobility=True)
+    off, _ = _build(acts, mobility=False)
+    assert np.array_equal(on[:, :9], off[:, :9]), "关掉可达度改变了前 9 个平面"
+    assert not off[:, 9].any() and not off[:, 10].any(), "关掉时平面 9/10 应为全零"
+    assert on[:, 9].any(), "开启时平面 9 应非零"
+
+    # 不传参数 = 关。引擎默认产 9 平面的语义，老模型才不会被静默喂零。
+    t = len(acts)
+    o = np.array([0, t], dtype=np.int32)
+    pl = np.empty((t, E.NUM_PLANES, E.BOARD_N, E.BOARD_N), np.float32)
+    sc = np.empty((t, E.NUM_SCALARS), np.float32)
+    lg = np.empty((t, E.NUM_ACTIONS), np.uint8)
+    E.build_batch(acts, o, np.arange(t, dtype=np.int32), o, None, pl, sc, lg, 1)
+    assert not pl[:, 9].any(), "默认应当是关的"
