@@ -227,6 +227,7 @@ shape_for() {
     #
     # 代价：自博弈占一轮的 47%，x4 之后一轮 42.4s -> 103s，111k 步要 7.4 小时。
     # 但**这个代价与 attn1 那类不同**：自博弈是跨机器可并行的，训练步不是。
+    data2-*) echo "--games-per-iter 4096" ;;
     data4-*) echo "--games-per-iter 8192" ;;
     *)      echo "" ;;
   esac

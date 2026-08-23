@@ -35,6 +35,6 @@ namespace cornerstone {
 void build_batch(const int32_t* actions, const int32_t* game_offsets, int n_games,
                  const int32_t* want_ply, const int32_t* want_offsets,
                  const int8_t* syms, float* planes, float* scalars, uint8_t* legal,
-                 int8_t* owner, int threads);
+                 int8_t* owner, int threads, bool with_mobility = false);
 
 }  // namespace cornerstone

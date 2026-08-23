@@ -13,7 +13,8 @@ namespace {
 
 void build_range(int lo, int hi, const int32_t* actions, const int32_t* game_offsets,
                  const int32_t* want_ply, const int32_t* want_offsets, const int8_t* syms,
-                 float* planes, float* scalars, uint8_t* legal, int8_t* owner) {
+                 float* planes, float* scalars, uint8_t* legal, int8_t* owner,
+                 bool with_mobility) {
     const auto& scell = sym_cell();
     const auto& saction = sym_action();
 
@@ -66,10 +67,10 @@ void build_range(int lo, int hi, const int32_t* actions, const int32_t* game_off
                 }
 
                 if (s == 0) {
-                    b.features(dp, ds);
+                    b.features(dp, ds, with_mobility);
                     b.legal_mask(dl);
                 } else {
-                    b.features(tmp_planes.data(), ds);
+                    b.features(tmp_planes.data(), ds, with_mobility);
                     b.legal_mask(tmp_legal.data());
                     const auto& cmap = scell[size_t(s)];
                     for (int pl = 0; pl < NUM_PLANES; ++pl) {
@@ -95,13 +96,13 @@ void build_range(int lo, int hi, const int32_t* actions, const int32_t* game_off
 void build_batch(const int32_t* actions, const int32_t* game_offsets, int n_games,
                  const int32_t* want_ply, const int32_t* want_offsets, const int8_t* syms,
                  float* planes, float* scalars, uint8_t* legal, int8_t* owner,
-                 int threads) {
+                 int threads, bool with_mobility) {
     threads = std::max(1, std::min(threads, n_games));
     if (n_games <= 0) return;
 
     if (threads == 1) {
         build_range(0, n_games, actions, game_offsets, want_ply, want_offsets, syms,
-                    planes, scalars, legal, owner);
+                    planes, scalars, legal, owner, with_mobility);
         return;
     }
 
@@ -111,7 +112,7 @@ void build_batch(const int32_t* actions, const int32_t* game_offsets, int n_game
         const int lo = n_games * t / threads;
         const int hi = n_games * (t + 1) / threads;
         pool.emplace_back(build_range, lo, hi, actions, game_offsets, want_ply, want_offsets,
-                          syms, planes, scalars, legal, owner);
+                          syms, planes, scalars, legal, owner, with_mobility);
     }
     for (auto& th : pool) th.join();
 }

@@ -85,7 +85,13 @@ public:
     // 以当前行棋方视角写出特征。
     //   planes:  NUM_PLANES * NUM_CELLS 个 float
     //   scalars: NUM_SCALARS 个 float
-    void features(float* planes, float* scalars) const;
+    // `with_mobility=false` 时**不算平面 9/10**（留零），省掉两次全量走法生成。
+    //
+    // 那两个平面实测只值 +7.4 ± 14.3（不显著），却让自博弈慢 27%
+    // —— 每个待评估叶子都要调一次 features()。默认关，要用的跑显式打开。
+    // 开关由模型的 `in_planes` 驱动（见 selfplay.py），不可能出现
+    // 「模型要 11 个平面而引擎只产 9 个」这种静默错配。
+    void features(float* planes, float* scalars, bool with_mobility = false) const;
 
     // 调试用的可读棋盘
     std::string to_string() const;

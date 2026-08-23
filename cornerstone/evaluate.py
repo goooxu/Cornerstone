@@ -89,6 +89,8 @@ def evaluate_vs_baseline(
         simulations=simulations,
         max_considered=16,
         temperature_plies=0,     # 评测时不加采样噪声，要看确定性棋力
+        # 只在模型真的吃可达度平面时才算 —— 算它要两次全量走法生成
+        with_mobility=getattr(model.cfg, "in_planes", 9) > 9,
     )
     ev = E.EvalConfig(enabled=True, opponent=BASELINES[opponent], opening_plies=opening_plies)
     driver = SelfPlayDriver(model, device, num_games=min(parallel_games, games),
@@ -165,7 +167,11 @@ def evaluate_vs_network(
 
     dev = torch.device(device)
     parallel = max(2, min(parallel_games, games))
-    mcts = E.MctsConfig(simulations=simulations, max_considered=16, temperature_plies=0)
+    # 两个模型共用同一份特征缓冲：只要**有一方**要吃可达度平面就得算，
+    # 另一方按 in_planes 切片自动忽略多的那两个。
+    need_mob = any(getattr(m.cfg, "in_planes", 9) > 9 for m in (model_a, model_b))
+    mcts = E.MctsConfig(simulations=simulations, max_considered=16, temperature_plies=0,
+                        with_mobility=need_mob)
     ev = E.EvalConfig(enabled=True, net_opponent=True, opening_plies=opening_plies)
     eng = E.SelfPlayEngine(parallel, mcts, seed, ev, max(1, engine_threads))
 

@@ -38,6 +38,10 @@ struct MctsConfig {
     int top_k = MAX_TOPK;         // 稀疏策略目标保留多少项
     double value_from_score = 0.0;  // >0 时把终局占格差按此权重混进价值目标
 
+    // 是否让 features() 计算可达度平面（9/10）。默认关 —— 算它要两次全量走法生成，
+    // 自博弈每个叶子都调一次，实测慢 27%。由模型的 in_planes 驱动，见 selfplay.py。
+    bool with_mobility = false;
+
     // 自博弈的随机开局注入。**这是状态分布的旋钮，temperature_plies 不是。**
     //
     // 实测（tools/diag_diversity.py）：训练到第 8 万步时，512 局自博弈的**首手

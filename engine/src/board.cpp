@@ -193,7 +193,7 @@ void Board::mobility_plane(int p, float* dst) const {
         dst[cell] = std::min(float(count[cell]), SCALE) / SCALE;
 }
 
-void Board::features(float* planes, float* scalars) const {
+void Board::features(float* planes, float* scalars, bool with_mobility) const {
     const int me = cur_, op = 1 - cur_;
 
     BB my_allowed, my_anchors, op_allowed, op_anchors;
@@ -229,8 +229,11 @@ void Board::features(float* planes, float* scalars) const {
     //
     // 归一化到 [0,1]：开局单格可被上百手覆盖，除以 64 后截断，
     // 让常见范围落在 0~1 而不是让少数极大值把其余压成 0。
-    mobility_plane(me, planes + PLANE_MOB_ME * PLANE_SIZE);
-    mobility_plane(op, planes + PLANE_MOB_OP * PLANE_SIZE);
+    // 默认不算 —— 见头文件。memset 已经把这两个平面清零了。
+    if (with_mobility) {
+        mobility_plane(me, planes + PLANE_MOB_ME * PLANE_SIZE);
+        mobility_plane(op, planes + PLANE_MOB_OP * PLANE_SIZE);
+    }
 
     for (int i = 0; i < NUM_PIECES; ++i) {
         scalars[i] = (remaining_[me] >> i) & 1u ? 1.0f : 0.0f;

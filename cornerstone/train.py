@@ -180,7 +180,7 @@ class _Sampler:
         c = self.tr.cfg
         return self.tr.buffer.sample(c.batch_size, self.tr.rng,
                                      threads=c.loader_threads, augment=c.augment,
-                                     owner=c.owner_head)
+                                     owner=c.owner_head, mobility=c.in_planes > 9)
 
     def peek(self) -> dict:
         if self._first is None:
@@ -420,7 +420,7 @@ class Trainer:
                 break
             batch_np = self.buffer.sample(c.batch_size, self.rng,
                                           threads=c.loader_threads, augment=c.augment,
-                                          owner=c.owner_head)
+                                          owner=c.owner_head, mobility=c.in_planes > 9)
             batch = {k: torch.from_numpy(v).to(self.device, non_blocking=True)
                      for k, v in batch_np.items()}
 

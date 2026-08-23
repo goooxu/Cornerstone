@@ -235,7 +235,8 @@ PYBIND11_MODULE(_engine, m) {
     py::class_<MctsConfig>(m, "MctsConfig")
         .def(py::init([](int simulations, int max_considered, double c_visit, double c_scale,
                          int temperature_plies, int top_k, double value_from_score,
-                         double random_opening_prob, int random_opening_max_plies) {
+                         double random_opening_prob, int random_opening_max_plies,
+                         bool with_mobility) {
                  MctsConfig c;
                  c.simulations = simulations;
                  c.max_considered = max_considered;
@@ -246,6 +247,7 @@ PYBIND11_MODULE(_engine, m) {
                  c.value_from_score = value_from_score;
                  c.random_opening_prob = random_opening_prob;
                  c.random_opening_max_plies = random_opening_max_plies;
+                 c.with_mobility = with_mobility;
                  return c;
              }),
              py::arg("simulations") = 128, py::arg("max_considered") = 16,
@@ -253,7 +255,9 @@ PYBIND11_MODULE(_engine, m) {
              py::arg("temperature_plies") = 12, py::arg("top_k") = MAX_TOPK,
              py::arg("value_from_score") = 0.0,
              py::arg("random_opening_prob") = 0.0,
-             py::arg("random_opening_max_plies") = 0)
+             py::arg("random_opening_max_plies") = 0,
+             py::arg("with_mobility") = false)
+        .def_readwrite("with_mobility", &MctsConfig::with_mobility)
         .def_readwrite("simulations", &MctsConfig::simulations)
         .def_readwrite("max_considered", &MctsConfig::max_considered)
         .def_readwrite("c_visit", &MctsConfig::c_visit)
@@ -438,7 +442,7 @@ PYBIND11_MODULE(_engine, m) {
              py::array_t<float, py::array::c_style> planes,
              py::array_t<float, py::array::c_style> scalars,
              py::array_t<uint8_t, py::array::c_style> legal, int threads,
-             py::object owner_obj) {
+             py::object owner_obj, bool with_mobility) {
               const int n_games = int(game_offsets.size()) - 1;
               if (n_games < 0) throw py::value_error("game_offsets 至少要有 1 个元素");
               if (want_offsets.size() != game_offsets.size())
@@ -474,11 +478,12 @@ PYBIND11_MODULE(_engine, m) {
               uint8_t* l = legal.mutable_data();
 
               py::gil_scoped_release release;
-              build_batch(a, go, n_games, wp, wo, syms, p, s, l, ow, threads);
+              build_batch(a, go, n_games, wp, wo, syms, p, s, l, ow, threads, with_mobility);
           },
           py::arg("actions"), py::arg("game_offsets"), py::arg("want_ply"),
           py::arg("want_offsets"), py::arg("syms"), py::arg("planes"), py::arg("scalars"),
-          py::arg("legal"), py::arg("threads") = 1, py::arg("owner") = py::none());
+          py::arg("legal"), py::arg("threads") = 1, py::arg("owner") = py::none(),
+          py::arg("with_mobility") = false);
 
     m.def("decode_action", &decode_action, py::arg("action"));
     m.def("encode_action", [](int ori, int anchor_cell) { return encode_action(ori, anchor_cell); },

@@ -118,7 +118,8 @@ class ReplayBuffer:
         return self._cum
 
     def sample(self, batch: int, rng: np.random.Generator, threads: int = 8,
-               augment: bool = True, owner: bool = False) -> dict[str, np.ndarray]:
+               augment: bool = True, owner: bool = False,
+               mobility: bool = False) -> dict[str, np.ndarray]:
         if self.n_positions == 0:
             raise RuntimeError("replay buffer 是空的")
 
@@ -153,8 +154,9 @@ class ReplayBuffer:
         # 逐格归属目标由 C++ 顺带产出：它要把整局回放到终局，而回放本来就在做。
         # 座位相对、且跟着同一张对称置换表 —— 都在 `build_batch` 里完成。
         own = np.empty((batch, E.NUM_CELLS), dtype=np.int8) if owner else None
+        # mobility 由 TrainConfig.in_planes 驱动 —— 不吃那两个平面的跑不该为它付钱
         E.build_batch(acts, game_off, ply, want_off, syms, planes, scalars, legal,
-                      threads, owner=own)
+                      threads, owner=own, with_mobility=mobility)
 
         # 稀疏策略目标：动作编号按对称变换重映射即可，概率不变
         top_a = np.stack([sel[i].top_actions[p] for i, p in zip(inv, ply)])

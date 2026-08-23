@@ -94,6 +94,14 @@ class SelfPlayDriver:
         self.device = torch.device(device)
         self.dtype = dtype
         self.mcts = mcts or E.MctsConfig()
+        # **可达度平面由模型的 in_planes 驱动，不是独立旋钮。**
+        # 算它要两次全量走法生成，而自博弈每个待评估叶子都调一次 features()，
+        # 实测慢 27%（101.5 -> 74.3 局/s）—— 所以只在模型真的要吃它时才算。
+        #
+        # 写在这里而不是让调用方传，是为了让「模型要 11 个平面而引擎只产 9 个」
+        # 这类错配**不可能发生**：那种错不报错，只是让平面 9/10 恒为 0，
+        # 表现成「这个模型莫名其妙变弱了」。
+        self.mcts.with_mobility = getattr(model.cfg, "in_planes", 9) > 9
         # 各局的树完全独立，engine_threads>1 时把树搜索摊到多核上。
         # 单线程时 144 核里只用得上一个 —— 而着法生成与树操作正是 CPU 侧的主要开销。
         self.engine = E.SelfPlayEngine(num_games, self.mcts, seed,

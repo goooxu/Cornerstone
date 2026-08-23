@@ -439,7 +439,8 @@ struct SelfPlayEngine::Impl {
     void write_features(size_t k, float* planes, float* scalars) const {
         const GameState& g = games[size_t(batch[k])];
         g.nodes[size_t(g.pending)].board.features(
-            planes + k * NUM_PLANES * PLANE_SIZE, scalars + k * NUM_SCALARS);
+            planes + k * NUM_PLANES * PLANE_SIZE, scalars + k * NUM_SCALARS,
+            cfg.with_mobility);
     }
 
     void feed(const float* logits, const float* wdl) {
