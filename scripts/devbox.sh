@@ -61,6 +61,12 @@ cmd_up() {
     --cap-add SYS_NICE \
     --ulimit memlock=-1 \
     --ulimit stack=67108864 \
+    `# core=0 不是洁癖：宿主机 ulimit -c 是 0，但**容器里默认 unlimited**，` \
+    `# 而 core_pattern 是 core.%e.%t.%p —— 相对路径，落在进程 CWD，也就是仓库里。` \
+    `# 训练进程被 SIGTERM 停掉时会掉一个 core，一个 2~11 GB（自博弈的常驻内存全在里面）。` \
+    `# 实际吃过：23 个 core 悄悄占了 69 GB，而它们被 .gitignore 忽略、git status 干净，` \
+    `# 只有 du 才看得见。改这个参数要重建容器（down 再 up）。` \
+    --ulimit core=0 \
     --user "$(id -u):$(id -g)" \
     -e HOME="$CHOME" \
     -e PYTHONDONTWRITEBYTECODE=1 \
