@@ -1,0 +1,282 @@
+{
+  "participants": [
+    {
+      "name": "net@120227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00120227.pt",
+      "elo": 0.0,
+      "stderr": 0.0,
+      "games": 2800,
+      "score_rate": 0.47232142857142856
+    },
+    {
+      "name": "net@100227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00100227.pt",
+      "elo": -0.9792649218013274,
+      "stderr": 12.281247285546197,
+      "games": 2800,
+      "score_rate": 0.4707142857142857
+    },
+    {
+      "name": "net@110227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00110227.pt",
+      "elo": 11.083529999952386,
+      "stderr": 12.302319555905562,
+      "games": 2800,
+      "score_rate": 0.4905357142857143
+    },
+    {
+      "name": "net@130227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00130227.pt",
+      "elo": 1.957749704025371,
+      "stderr": 12.650125509030987,
+      "games": 2800,
+      "score_rate": 0.4755357142857143
+    },
+    {
+      "name": "net@110234",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-fp8/ckpt/step00110234.pt",
+      "elo": 32.47680439172062,
+      "stderr": 12.453015558898734,
+      "games": 2800,
+      "score_rate": 0.5257142857142857
+    },
+    {
+      "name": "net@100234",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-fp8/ckpt/step00100234.pt",
+      "elo": 45.66519821993208,
+      "stderr": 11.744151734263886,
+      "games": 2800,
+      "score_rate": 0.5473214285714286
+    },
+    {
+      "name": "net@80234",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-fp8/ckpt/step00080234.pt",
+      "elo": 29.976123899209462,
+      "stderr": 13.319386870103271,
+      "games": 2800,
+      "score_rate": 0.5216071428571428
+    },
+    {
+      "name": "net@130234",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-fp8/ckpt/step00130234.pt",
+      "elo": 14.557272584354802,
+      "stderr": 11.982216459223748,
+      "games": 2800,
+      "score_rate": 0.49625
+    }
+  ],
+  "pairs": [
+    {
+      "a": "net@120227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 193.5,
+      "rate_a": 0.48375
+    },
+    {
+      "a": "net@120227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 200.5,
+      "rate_a": 0.50125
+    },
+    {
+      "a": "net@120227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 190.5,
+      "rate_a": 0.47625
+    },
+    {
+      "a": "net@120227",
+      "b": "net@110234",
+      "games": 400,
+      "score_a": 179.5,
+      "rate_a": 0.44875
+    },
+    {
+      "a": "net@120227",
+      "b": "net@100234",
+      "games": 400,
+      "score_a": 177.0,
+      "rate_a": 0.4425
+    },
+    {
+      "a": "net@120227",
+      "b": "net@80234",
+      "games": 400,
+      "score_a": 176.5,
+      "rate_a": 0.44125
+    },
+    {
+      "a": "net@120227",
+      "b": "net@130234",
+      "games": 400,
+      "score_a": 205.0,
+      "rate_a": 0.5125
+    },
+    {
+      "a": "net@100227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 184.0,
+      "rate_a": 0.46
+    },
+    {
+      "a": "net@100227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 203.5,
+      "rate_a": 0.50875
+    },
+    {
+      "a": "net@100227",
+      "b": "net@110234",
+      "games": 400,
+      "score_a": 173.5,
+      "rate_a": 0.43375
+    },
+    {
+      "a": "net@100227",
+      "b": "net@100234",
+      "games": 400,
+      "score_a": 179.0,
+      "rate_a": 0.4475
+    },
+    {
+      "a": "net@100227",
+      "b": "net@80234",
+      "games": 400,
+      "score_a": 193.5,
+      "rate_a": 0.48375
+    },
+    {
+      "a": "net@100227",
+      "b": "net@130234",
+      "games": 400,
+      "score_a": 178.0,
+      "rate_a": 0.445
+    },
+    {
+      "a": "net@110227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 211.0,
+      "rate_a": 0.5275
+    },
+    {
+      "a": "net@110227",
+      "b": "net@110234",
+      "games": 400,
+      "score_a": 181.0,
+      "rate_a": 0.4525
+    },
+    {
+      "a": "net@110227",
+      "b": "net@100234",
+      "games": 400,
+      "score_a": 178.0,
+      "rate_a": 0.445
+    },
+    {
+      "a": "net@110227",
+      "b": "net@80234",
+      "games": 400,
+      "score_a": 196.5,
+      "rate_a": 0.49125
+    },
+    {
+      "a": "net@110227",
+      "b": "net@130234",
+      "games": 400,
+      "score_a": 191.5,
+      "rate_a": 0.47875
+    },
+    {
+      "a": "net@130227",
+      "b": "net@110234",
+      "games": 400,
+      "score_a": 179.0,
+      "rate_a": 0.4475
+    },
+    {
+      "a": "net@130227",
+      "b": "net@100234",
+      "games": 400,
+      "score_a": 172.0,
+      "rate_a": 0.43
+    },
+    {
+      "a": "net@130227",
+      "b": "net@80234",
+      "games": 400,
+      "score_a": 182.5,
+      "rate_a": 0.45625
+    },
+    {
+      "a": "net@130227",
+      "b": "net@130234",
+      "games": 400,
+      "score_a": 203.0,
+      "rate_a": 0.5075
+    },
+    {
+      "a": "net@110234",
+      "b": "net@100234",
+      "games": 400,
+      "score_a": 190.5,
+      "rate_a": 0.47625
+    },
+    {
+      "a": "net@110234",
+      "b": "net@80234",
+      "games": 400,
+      "score_a": 189.0,
+      "rate_a": 0.4725
+    },
+    {
+      "a": "net@110234",
+      "b": "net@130234",
+      "games": 400,
+      "score_a": 205.5,
+      "rate_a": 0.51375
+    },
+    {
+      "a": "net@100234",
+      "b": "net@80234",
+      "games": 400,
+      "score_a": 211.0,
+      "rate_a": 0.5275
+    },
+    {
+      "a": "net@100234",
+      "b": "net@130234",
+      "games": 400,
+      "score_a": 218.0,
+      "rate_a": 0.545
+    },
+    {
+      "a": "net@80234",
+      "b": "net@130234",
+      "games": 400,
+      "score_a": 209.5,
+      "rate_a": 0.52375
+    }
+  ],
+  "config": {
+    "games": 400,
+    "simulations": 0,
+    "opening_plies": 2,
+    "anchor": "none",
+    "seed": 1,
+    "pairs_mode": "all"
+  }
+}

@@ -1,0 +1,3329 @@
+{
+  "participants": [
+    {
+      "name": "net@10227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00010227.pt",
+      "elo": 0.0,
+      "stderr": 0.0,
+      "games": 11600,
+      "score_rate": 0.07926724137931035
+    },
+    {
+      "name": "net@20227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00020227.pt",
+      "elo": 217.47559348520207,
+      "stderr": 9.925512447806273,
+      "games": 11600,
+      "score_rate": 0.22051724137931034
+    },
+    {
+      "name": "net@30227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00030227.pt",
+      "elo": 365.9462492593605,
+      "stderr": 9.589104135546853,
+      "games": 11600,
+      "score_rate": 0.38004310344827585
+    },
+    {
+      "name": "net@40227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00040227.pt",
+      "elo": 461.09342872517317,
+      "stderr": 9.133924524985053,
+      "games": 11600,
+      "score_rate": 0.5045258620689655
+    },
+    {
+      "name": "net@50227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00050227.pt",
+      "elo": 483.7947507867942,
+      "stderr": 10.161865412534226,
+      "games": 11600,
+      "score_rate": 0.5353017241379311
+    },
+    {
+      "name": "net@60227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00060227.pt",
+      "elo": 510.125540557382,
+      "stderr": 9.942281495466728,
+      "games": 11601,
+      "score_rate": 0.570942160158607
+    },
+    {
+      "name": "net@70227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00070227.pt",
+      "elo": 508.39839396198465,
+      "stderr": 9.425523937990315,
+      "games": 11600,
+      "score_rate": 0.5686206896551724
+    },
+    {
+      "name": "net@80227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00080227.pt",
+      "elo": 510.5070452638991,
+      "stderr": 9.707443869511739,
+      "games": 11600,
+      "score_rate": 0.5714655172413793
+    },
+    {
+      "name": "net@90227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00090227.pt",
+      "elo": 521.4991066994345,
+      "stderr": 9.439274482539563,
+      "games": 11600,
+      "score_rate": 0.58625
+    },
+    {
+      "name": "net@100227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00100227.pt",
+      "elo": 532.1392187664266,
+      "stderr": 9.539276404631538,
+      "games": 11601,
+      "score_rate": 0.6004654771140419
+    },
+    {
+      "name": "net@110227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00110227.pt",
+      "elo": 541.3342018701383,
+      "stderr": 9.958321799838318,
+      "games": 11600,
+      "score_rate": 0.6126724137931034
+    },
+    {
+      "name": "net@120227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00120227.pt",
+      "elo": 528.0367027550819,
+      "stderr": 9.969593445497209,
+      "games": 11600,
+      "score_rate": 0.595
+    },
+    {
+      "name": "net@130227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00130227.pt",
+      "elo": 531.0735698750809,
+      "stderr": 10.125018485929925,
+      "games": 11600,
+      "score_rate": 0.5990517241379311
+    },
+    {
+      "name": "net@140227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00140227.pt",
+      "elo": 519.1223423764181,
+      "stderr": 9.773503047208042,
+      "games": 11600,
+      "score_rate": 0.5830603448275862
+    },
+    {
+      "name": "net@150227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16-oldarch/ckpt/step00150227.pt",
+      "elo": 516.7166149318505,
+      "stderr": 9.823732875082776,
+      "games": 11600,
+      "score_rate": 0.5798275862068966
+    },
+    {
+      "name": "net@10227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00010227.pt",
+      "elo": 39.44381236622627,
+      "stderr": 10.814056165632312,
+      "games": 11600,
+      "score_rate": 0.0978448275862069
+    },
+    {
+      "name": "net@20227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00020227.pt",
+      "elo": 224.7790933813321,
+      "stderr": 10.582058866571387,
+      "games": 11600,
+      "score_rate": 0.22711206896551725
+    },
+    {
+      "name": "net@30227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00030227.pt",
+      "elo": 391.7831777805278,
+      "stderr": 9.531237351278074,
+      "games": 11600,
+      "score_rate": 0.41267241379310343
+    },
+    {
+      "name": "net@40227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00040227.pt",
+      "elo": 432.82801185634855,
+      "stderr": 10.288724247977411,
+      "games": 11600,
+      "score_rate": 0.46650862068965515
+    },
+    {
+      "name": "net@50227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00050227.pt",
+      "elo": 469.781766678244,
+      "stderr": 10.331417282174558,
+      "games": 11600,
+      "score_rate": 0.5162931034482758
+    },
+    {
+      "name": "net@60227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00060227.pt",
+      "elo": 470.38588350155885,
+      "stderr": 9.095079973251739,
+      "games": 11600,
+      "score_rate": 0.5171120689655172
+    },
+    {
+      "name": "net@70227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00070227.pt",
+      "elo": 497.2100991270429,
+      "stderr": 9.718277944285239,
+      "games": 11600,
+      "score_rate": 0.5534913793103449
+    },
+    {
+      "name": "net@80227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00080227.pt",
+      "elo": 516.2358320961387,
+      "stderr": 9.427510514088894,
+      "games": 11600,
+      "score_rate": 0.5791810344827586
+    },
+    {
+      "name": "net@90227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00090227.pt",
+      "elo": 510.85866614174665,
+      "stderr": 9.645939409614126,
+      "games": 11600,
+      "score_rate": 0.5719396551724137
+    },
+    {
+      "name": "net@100227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00100227.pt",
+      "elo": 517.1975164022051,
+      "stderr": 9.824052803190098,
+      "games": 11600,
+      "score_rate": 0.5804741379310345
+    },
+    {
+      "name": "net@110227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00110227.pt",
+      "elo": 516.2999296802838,
+      "stderr": 10.867047033617187,
+      "games": 11600,
+      "score_rate": 0.5792672413793103
+    },
+    {
+      "name": "net@120227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00120227.pt",
+      "elo": 520.8242932905941,
+      "stderr": 9.725441495001329,
+      "games": 11600,
+      "score_rate": 0.5853448275862069
+    },
+    {
+      "name": "net@130227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00130227.pt",
+      "elo": 513.5455620068725,
+      "stderr": 9.866977907229177,
+      "games": 11600,
+      "score_rate": 0.5755603448275862
+    },
+    {
+      "name": "net@140227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00140227.pt",
+      "elo": 512.969524504763,
+      "stderr": 9.767137574982824,
+      "games": 11600,
+      "score_rate": 0.5747844827586207
+    },
+    {
+      "name": "net@150227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00150227.pt",
+      "elo": 513.417540385393,
+      "stderr": 10.263987855974626,
+      "games": 11600,
+      "score_rate": 0.5753879310344827
+    }
+  ],
+  "pairs": [
+    {
+      "a": "net@10227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 98.5,
+      "rate_a": 0.24625
+    },
+    {
+      "a": "net@10227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 39.5,
+      "rate_a": 0.09875
+    },
+    {
+      "a": "net@10227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 31.0,
+      "rate_a": 0.0775
+    },
+    {
+      "a": "net@10227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 22.0,
+      "rate_a": 0.055
+    },
+    {
+      "a": "net@10227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 20.0,
+      "rate_a": 0.05
+    },
+    {
+      "a": "net@10227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 19.5,
+      "rate_a": 0.04875
+    },
+    {
+      "a": "net@10227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 24.0,
+      "rate_a": 0.06
+    },
+    {
+      "a": "net@10227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 14.5,
+      "rate_a": 0.03625
+    },
+    {
+      "a": "net@10227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 14.0,
+      "rate_a": 0.035
+    },
+    {
+      "a": "net@10227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 16.5,
+      "rate_a": 0.04125
+    },
+    {
+      "a": "net@10227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 19.0,
+      "rate_a": 0.0475
+    },
+    {
+      "a": "net@10227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 11.5,
+      "rate_a": 0.02875
+    },
+    {
+      "a": "net@10227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 17.0,
+      "rate_a": 0.0425
+    },
+    {
+      "a": "net@10227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 14.0,
+      "rate_a": 0.035
+    },
+    {
+      "a": "net@10227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 191.0,
+      "rate_a": 0.4775
+    },
+    {
+      "a": "net@10227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 76.0,
+      "rate_a": 0.19
+    },
+    {
+      "a": "net@10227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 43.5,
+      "rate_a": 0.10875
+    },
+    {
+      "a": "net@10227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 31.0,
+      "rate_a": 0.0775
+    },
+    {
+      "a": "net@10227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 26.0,
+      "rate_a": 0.065
+    },
+    {
+      "a": "net@10227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 29.0,
+      "rate_a": 0.0725
+    },
+    {
+      "a": "net@10227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 21.5,
+      "rate_a": 0.05375
+    },
+    {
+      "a": "net@10227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 24.5,
+      "rate_a": 0.06125
+    },
+    {
+      "a": "net@10227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 14.0,
+      "rate_a": 0.035
+    },
+    {
+      "a": "net@10227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 7.5,
+      "rate_a": 0.01875
+    },
+    {
+      "a": "net@10227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 20.0,
+      "rate_a": 0.05
+    },
+    {
+      "a": "net@10227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 15.5,
+      "rate_a": 0.03875
+    },
+    {
+      "a": "net@10227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 19.0,
+      "rate_a": 0.0475
+    },
+    {
+      "a": "net@10227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 21.5,
+      "rate_a": 0.05375
+    },
+    {
+      "a": "net@10227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 18.5,
+      "rate_a": 0.04625
+    },
+    {
+      "a": "net@20227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 119.5,
+      "rate_a": 0.29875
+    },
+    {
+      "a": "net@20227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 81.5,
+      "rate_a": 0.20375
+    },
+    {
+      "a": "net@20227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 79.0,
+      "rate_a": 0.1975
+    },
+    {
+      "a": "net@20227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 64.5,
+      "rate_a": 0.16125
+    },
+    {
+      "a": "net@20227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 77.5,
+      "rate_a": 0.19375
+    },
+    {
+      "a": "net@20227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 57.5,
+      "rate_a": 0.14375
+    },
+    {
+      "a": "net@20227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 59.0,
+      "rate_a": 0.1475
+    },
+    {
+      "a": "net@20227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 50.5,
+      "rate_a": 0.12625
+    },
+    {
+      "a": "net@20227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 62.0,
+      "rate_a": 0.155
+    },
+    {
+      "a": "net@20227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 49.0,
+      "rate_a": 0.1225
+    },
+    {
+      "a": "net@20227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 51.5,
+      "rate_a": 0.12875
+    },
+    {
+      "a": "net@20227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 51.0,
+      "rate_a": 0.1275
+    },
+    {
+      "a": "net@20227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 69.5,
+      "rate_a": 0.17375
+    },
+    {
+      "a": "net@20227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 266.5,
+      "rate_a": 0.66625
+    },
+    {
+      "a": "net@20227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 191.0,
+      "rate_a": 0.4775
+    },
+    {
+      "a": "net@20227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 108.0,
+      "rate_a": 0.27
+    },
+    {
+      "a": "net@20227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 84.5,
+      "rate_a": 0.21125
+    },
+    {
+      "a": "net@20227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 61.5,
+      "rate_a": 0.15375
+    },
+    {
+      "a": "net@20227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 70.0,
+      "rate_a": 0.175
+    },
+    {
+      "a": "net@20227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 85.0,
+      "rate_a": 0.2125
+    },
+    {
+      "a": "net@20227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 64.5,
+      "rate_a": 0.16125
+    },
+    {
+      "a": "net@20227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 63.0,
+      "rate_a": 0.1575
+    },
+    {
+      "a": "net@20227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 60.0,
+      "rate_a": 0.15
+    },
+    {
+      "a": "net@20227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 71.5,
+      "rate_a": 0.17875
+    },
+    {
+      "a": "net@20227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 66.5,
+      "rate_a": 0.16625
+    },
+    {
+      "a": "net@20227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 74.0,
+      "rate_a": 0.185
+    },
+    {
+      "a": "net@20227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 59.0,
+      "rate_a": 0.1475
+    },
+    {
+      "a": "net@20227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 59.5,
+      "rate_a": 0.14875
+    },
+    {
+      "a": "net@30227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 137.5,
+      "rate_a": 0.34375
+    },
+    {
+      "a": "net@30227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 140.0,
+      "rate_a": 0.35
+    },
+    {
+      "a": "net@30227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 117.0,
+      "rate_a": 0.2925
+    },
+    {
+      "a": "net@30227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 125.5,
+      "rate_a": 0.31375
+    },
+    {
+      "a": "net@30227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 115.5,
+      "rate_a": 0.28875
+    },
+    {
+      "a": "net@30227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 127.5,
+      "rate_a": 0.31875
+    },
+    {
+      "a": "net@30227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 103.0,
+      "rate_a": 0.2575
+    },
+    {
+      "a": "net@30227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 115.5,
+      "rate_a": 0.28875
+    },
+    {
+      "a": "net@30227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 121.0,
+      "rate_a": 0.3025
+    },
+    {
+      "a": "net@30227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 104.5,
+      "rate_a": 0.26125
+    },
+    {
+      "a": "net@30227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 113.0,
+      "rate_a": 0.2825
+    },
+    {
+      "a": "net@30227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 110.5,
+      "rate_a": 0.27625
+    },
+    {
+      "a": "net@30227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 343.0,
+      "rate_a": 0.8575
+    },
+    {
+      "a": "net@30227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 278.5,
+      "rate_a": 0.69625
+    },
+    {
+      "a": "net@30227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 191.0,
+      "rate_a": 0.4775
+    },
+    {
+      "a": "net@30227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 164.0,
+      "rate_a": 0.41
+    },
+    {
+      "a": "net@30227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 135.5,
+      "rate_a": 0.33875
+    },
+    {
+      "a": "net@30227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 149.0,
+      "rate_a": 0.3725
+    },
+    {
+      "a": "net@30227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 129.0,
+      "rate_a": 0.3225
+    },
+    {
+      "a": "net@30227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 124.5,
+      "rate_a": 0.31125
+    },
+    {
+      "a": "net@30227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 112.5,
+      "rate_a": 0.28125
+    },
+    {
+      "a": "net@30227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 119.0,
+      "rate_a": 0.2975
+    },
+    {
+      "a": "net@30227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 116.0,
+      "rate_a": 0.29
+    },
+    {
+      "a": "net@30227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 108.0,
+      "rate_a": 0.27
+    },
+    {
+      "a": "net@30227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 124.5,
+      "rate_a": 0.31125
+    },
+    {
+      "a": "net@30227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 119.0,
+      "rate_a": 0.2975
+    },
+    {
+      "a": "net@30227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 123.5,
+      "rate_a": 0.30875
+    },
+    {
+      "a": "net@40227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 191.5,
+      "rate_a": 0.47875
+    },
+    {
+      "a": "net@40227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 165.0,
+      "rate_a": 0.4125
+    },
+    {
+      "a": "net@40227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 163.5,
+      "rate_a": 0.40875
+    },
+    {
+      "a": "net@40227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 174.0,
+      "rate_a": 0.435
+    },
+    {
+      "a": "net@40227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 159.5,
+      "rate_a": 0.39875
+    },
+    {
+      "a": "net@40227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 165.5,
+      "rate_a": 0.41375
+    },
+    {
+      "a": "net@40227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 170.0,
+      "rate_a": 0.425
+    },
+    {
+      "a": "net@40227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 158.5,
+      "rate_a": 0.39625
+    },
+    {
+      "a": "net@40227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 152.5,
+      "rate_a": 0.38125
+    },
+    {
+      "a": "net@40227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 163.0,
+      "rate_a": 0.4075
+    },
+    {
+      "a": "net@40227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 168.5,
+      "rate_a": 0.42125
+    },
+    {
+      "a": "net@40227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 374.5,
+      "rate_a": 0.93625
+    },
+    {
+      "a": "net@40227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 317.5,
+      "rate_a": 0.79375
+    },
+    {
+      "a": "net@40227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 239.0,
+      "rate_a": 0.5975
+    },
+    {
+      "a": "net@40227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 212.5,
+      "rate_a": 0.53125
+    },
+    {
+      "a": "net@40227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 191.5,
+      "rate_a": 0.47875
+    },
+    {
+      "a": "net@40227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 202.0,
+      "rate_a": 0.505
+    },
+    {
+      "a": "net@40227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 182.0,
+      "rate_a": 0.455
+    },
+    {
+      "a": "net@40227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 166.5,
+      "rate_a": 0.41625
+    },
+    {
+      "a": "net@40227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 172.0,
+      "rate_a": 0.43
+    },
+    {
+      "a": "net@40227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 172.0,
+      "rate_a": 0.43
+    },
+    {
+      "a": "net@40227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 171.0,
+      "rate_a": 0.4275
+    },
+    {
+      "a": "net@40227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 160.0,
+      "rate_a": 0.4
+    },
+    {
+      "a": "net@40227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 166.5,
+      "rate_a": 0.41625
+    },
+    {
+      "a": "net@40227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 164.5,
+      "rate_a": 0.41125
+    },
+    {
+      "a": "net@40227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 179.5,
+      "rate_a": 0.44875
+    },
+    {
+      "a": "net@50227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 189.5,
+      "rate_a": 0.47375
+    },
+    {
+      "a": "net@50227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 200.0,
+      "rate_a": 0.5
+    },
+    {
+      "a": "net@50227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 183.5,
+      "rate_a": 0.45875
+    },
+    {
+      "a": "net@50227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 189.0,
+      "rate_a": 0.4725
+    },
+    {
+      "a": "net@50227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 175.5,
+      "rate_a": 0.43875
+    },
+    {
+      "a": "net@50227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 157.5,
+      "rate_a": 0.39375
+    },
+    {
+      "a": "net@50227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 164.5,
+      "rate_a": 0.41125
+    },
+    {
+      "a": "net@50227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 169.5,
+      "rate_a": 0.42375
+    },
+    {
+      "a": "net@50227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 177.5,
+      "rate_a": 0.44375
+    },
+    {
+      "a": "net@50227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 185.5,
+      "rate_a": 0.46375
+    },
+    {
+      "a": "net@50227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 370.0,
+      "rate_a": 0.925
+    },
+    {
+      "a": "net@50227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 328.5,
+      "rate_a": 0.82125
+    },
+    {
+      "a": "net@50227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 244.5,
+      "rate_a": 0.61125
+    },
+    {
+      "a": "net@50227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 228.0,
+      "rate_a": 0.57
+    },
+    {
+      "a": "net@50227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 208.0,
+      "rate_a": 0.52
+    },
+    {
+      "a": "net@50227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 197.5,
+      "rate_a": 0.49375
+    },
+    {
+      "a": "net@50227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 196.5,
+      "rate_a": 0.49125
+    },
+    {
+      "a": "net@50227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 182.5,
+      "rate_a": 0.45625
+    },
+    {
+      "a": "net@50227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 188.0,
+      "rate_a": 0.47
+    },
+    {
+      "a": "net@50227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 188.5,
+      "rate_a": 0.47125
+    },
+    {
+      "a": "net@50227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 197.0,
+      "rate_a": 0.4925
+    },
+    {
+      "a": "net@50227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 168.5,
+      "rate_a": 0.42125
+    },
+    {
+      "a": "net@50227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 172.5,
+      "rate_a": 0.43125
+    },
+    {
+      "a": "net@50227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 194.5,
+      "rate_a": 0.48625
+    },
+    {
+      "a": "net@50227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 185.5,
+      "rate_a": 0.46375
+    },
+    {
+      "a": "net@60227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 194.0,
+      "rate_a": 0.485
+    },
+    {
+      "a": "net@60227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 194.5,
+      "rate_a": 0.48625
+    },
+    {
+      "a": "net@60227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 205.0,
+      "rate_a": 0.5125
+    },
+    {
+      "a": "net@60227",
+      "b": "net@100227",
+      "games": 401,
+      "score_a": 178.5,
+      "rate_a": 0.4451371571072319
+    },
+    {
+      "a": "net@60227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 185.0,
+      "rate_a": 0.4625
+    },
+    {
+      "a": "net@60227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 177.0,
+      "rate_a": 0.4425
+    },
+    {
+      "a": "net@60227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 182.5,
+      "rate_a": 0.45625
+    },
+    {
+      "a": "net@60227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 199.0,
+      "rate_a": 0.4975
+    },
+    {
+      "a": "net@60227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 202.5,
+      "rate_a": 0.50625
+    },
+    {
+      "a": "net@60227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 381.0,
+      "rate_a": 0.9525
+    },
+    {
+      "a": "net@60227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 334.5,
+      "rate_a": 0.83625
+    },
+    {
+      "a": "net@60227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 268.5,
+      "rate_a": 0.67125
+    },
+    {
+      "a": "net@60227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 239.5,
+      "rate_a": 0.59875
+    },
+    {
+      "a": "net@60227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 230.5,
+      "rate_a": 0.57625
+    },
+    {
+      "a": "net@60227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 214.5,
+      "rate_a": 0.53625
+    },
+    {
+      "a": "net@60227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 200.5,
+      "rate_a": 0.50125
+    },
+    {
+      "a": "net@60227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 187.0,
+      "rate_a": 0.4675
+    },
+    {
+      "a": "net@60227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 199.0,
+      "rate_a": 0.4975
+    },
+    {
+      "a": "net@60227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 194.0,
+      "rate_a": 0.485
+    },
+    {
+      "a": "net@60227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 192.5,
+      "rate_a": 0.48125
+    },
+    {
+      "a": "net@60227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 195.0,
+      "rate_a": 0.4875
+    },
+    {
+      "a": "net@60227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 207.0,
+      "rate_a": 0.5175
+    },
+    {
+      "a": "net@60227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 214.5,
+      "rate_a": 0.53625
+    },
+    {
+      "a": "net@60227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 203.5,
+      "rate_a": 0.50875
+    },
+    {
+      "a": "net@70227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 206.0,
+      "rate_a": 0.515
+    },
+    {
+      "a": "net@70227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 195.0,
+      "rate_a": 0.4875
+    },
+    {
+      "a": "net@70227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 195.0,
+      "rate_a": 0.4875
+    },
+    {
+      "a": "net@70227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 195.0,
+      "rate_a": 0.4875
+    },
+    {
+      "a": "net@70227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 189.0,
+      "rate_a": 0.4725
+    },
+    {
+      "a": "net@70227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 181.5,
+      "rate_a": 0.45375
+    },
+    {
+      "a": "net@70227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 190.0,
+      "rate_a": 0.475
+    },
+    {
+      "a": "net@70227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 193.5,
+      "rate_a": 0.48375
+    },
+    {
+      "a": "net@70227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 378.0,
+      "rate_a": 0.945
+    },
+    {
+      "a": "net@70227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 336.0,
+      "rate_a": 0.84
+    },
+    {
+      "a": "net@70227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 271.5,
+      "rate_a": 0.67875
+    },
+    {
+      "a": "net@70227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 248.0,
+      "rate_a": 0.62
+    },
+    {
+      "a": "net@70227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 226.5,
+      "rate_a": 0.56625
+    },
+    {
+      "a": "net@70227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 217.0,
+      "rate_a": 0.5425
+    },
+    {
+      "a": "net@70227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 209.5,
+      "rate_a": 0.52375
+    },
+    {
+      "a": "net@70227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 197.5,
+      "rate_a": 0.49375
+    },
+    {
+      "a": "net@70227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 199.0,
+      "rate_a": 0.4975
+    },
+    {
+      "a": "net@70227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 189.0,
+      "rate_a": 0.4725
+    },
+    {
+      "a": "net@70227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 194.5,
+      "rate_a": 0.48625
+    },
+    {
+      "a": "net@70227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 186.0,
+      "rate_a": 0.465
+    },
+    {
+      "a": "net@70227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 190.5,
+      "rate_a": 0.47625
+    },
+    {
+      "a": "net@70227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 189.5,
+      "rate_a": 0.47375
+    },
+    {
+      "a": "net@70227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 198.5,
+      "rate_a": 0.49625
+    },
+    {
+      "a": "net@80227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 188.0,
+      "rate_a": 0.47
+    },
+    {
+      "a": "net@80227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 200.5,
+      "rate_a": 0.50125
+    },
+    {
+      "a": "net@80227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 168.0,
+      "rate_a": 0.42
+    },
+    {
+      "a": "net@80227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 189.5,
+      "rate_a": 0.47375
+    },
+    {
+      "a": "net@80227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 185.0,
+      "rate_a": 0.4625
+    },
+    {
+      "a": "net@80227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 188.5,
+      "rate_a": 0.47125
+    },
+    {
+      "a": "net@80227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 197.0,
+      "rate_a": 0.4925
+    },
+    {
+      "a": "net@80227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 374.0,
+      "rate_a": 0.935
+    },
+    {
+      "a": "net@80227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 332.0,
+      "rate_a": 0.83
+    },
+    {
+      "a": "net@80227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 278.0,
+      "rate_a": 0.695
+    },
+    {
+      "a": "net@80227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 235.0,
+      "rate_a": 0.5875
+    },
+    {
+      "a": "net@80227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 240.5,
+      "rate_a": 0.60125
+    },
+    {
+      "a": "net@80227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 224.5,
+      "rate_a": 0.56125
+    },
+    {
+      "a": "net@80227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 209.5,
+      "rate_a": 0.52375
+    },
+    {
+      "a": "net@80227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 197.5,
+      "rate_a": 0.49375
+    },
+    {
+      "a": "net@80227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 202.5,
+      "rate_a": 0.50625
+    },
+    {
+      "a": "net@80227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 192.5,
+      "rate_a": 0.48125
+    },
+    {
+      "a": "net@80227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 196.5,
+      "rate_a": 0.49125
+    },
+    {
+      "a": "net@80227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 186.0,
+      "rate_a": 0.465
+    },
+    {
+      "a": "net@80227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 199.0,
+      "rate_a": 0.4975
+    },
+    {
+      "a": "net@80227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 200.0,
+      "rate_a": 0.5
+    },
+    {
+      "a": "net@80227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 200.0,
+      "rate_a": 0.5
+    },
+    {
+      "a": "net@90227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 200.5,
+      "rate_a": 0.50125
+    },
+    {
+      "a": "net@90227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 204.0,
+      "rate_a": 0.51
+    },
+    {
+      "a": "net@90227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 212.5,
+      "rate_a": 0.53125
+    },
+    {
+      "a": "net@90227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 200.5,
+      "rate_a": 0.50125
+    },
+    {
+      "a": "net@90227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 196.5,
+      "rate_a": 0.49125
+    },
+    {
+      "a": "net@90227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 210.0,
+      "rate_a": 0.525
+    },
+    {
+      "a": "net@90227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 374.5,
+      "rate_a": 0.93625
+    },
+    {
+      "a": "net@90227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 333.5,
+      "rate_a": 0.83375
+    },
+    {
+      "a": "net@90227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 270.0,
+      "rate_a": 0.675
+    },
+    {
+      "a": "net@90227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 255.0,
+      "rate_a": 0.6375
+    },
+    {
+      "a": "net@90227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 235.0,
+      "rate_a": 0.5875
+    },
+    {
+      "a": "net@90227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 233.5,
+      "rate_a": 0.58375
+    },
+    {
+      "a": "net@90227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 215.0,
+      "rate_a": 0.5375
+    },
+    {
+      "a": "net@90227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 198.5,
+      "rate_a": 0.49625
+    },
+    {
+      "a": "net@90227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 219.0,
+      "rate_a": 0.5475
+    },
+    {
+      "a": "net@90227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 181.0,
+      "rate_a": 0.4525
+    },
+    {
+      "a": "net@90227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 197.5,
+      "rate_a": 0.49375
+    },
+    {
+      "a": "net@90227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 207.0,
+      "rate_a": 0.5175
+    },
+    {
+      "a": "net@90227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 194.5,
+      "rate_a": 0.48625
+    },
+    {
+      "a": "net@90227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 197.5,
+      "rate_a": 0.49375
+    },
+    {
+      "a": "net@90227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 202.5,
+      "rate_a": 0.50625
+    },
+    {
+      "a": "net@100227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 199.5,
+      "rate_a": 0.49875
+    },
+    {
+      "a": "net@100227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 200.0,
+      "rate_a": 0.5
+    },
+    {
+      "a": "net@100227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 204.5,
+      "rate_a": 0.51125
+    },
+    {
+      "a": "net@100227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 204.5,
+      "rate_a": 0.51125
+    },
+    {
+      "a": "net@100227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 209.5,
+      "rate_a": 0.52375
+    },
+    {
+      "a": "net@100227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 374.0,
+      "rate_a": 0.935
+    },
+    {
+      "a": "net@100227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 346.0,
+      "rate_a": 0.865
+    },
+    {
+      "a": "net@100227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 268.5,
+      "rate_a": 0.67125
+    },
+    {
+      "a": "net@100227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 254.5,
+      "rate_a": 0.63625
+    },
+    {
+      "a": "net@100227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 252.0,
+      "rate_a": 0.63
+    },
+    {
+      "a": "net@100227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 233.5,
+      "rate_a": 0.58375
+    },
+    {
+      "a": "net@100227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 222.0,
+      "rate_a": 0.555
+    },
+    {
+      "a": "net@100227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 208.5,
+      "rate_a": 0.52125
+    },
+    {
+      "a": "net@100227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 213.0,
+      "rate_a": 0.5325
+    },
+    {
+      "a": "net@100227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 201.0,
+      "rate_a": 0.5025
+    },
+    {
+      "a": "net@100227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 210.0,
+      "rate_a": 0.525
+    },
+    {
+      "a": "net@100227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 205.0,
+      "rate_a": 0.5125
+    },
+    {
+      "a": "net@100227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 209.5,
+      "rate_a": 0.52375
+    },
+    {
+      "a": "net@100227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 211.5,
+      "rate_a": 0.52875
+    },
+    {
+      "a": "net@100227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 221.0,
+      "rate_a": 0.5525
+    },
+    {
+      "a": "net@110227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 215.5,
+      "rate_a": 0.53875
+    },
+    {
+      "a": "net@110227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 196.5,
+      "rate_a": 0.49125
+    },
+    {
+      "a": "net@110227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 216.0,
+      "rate_a": 0.54
+    },
+    {
+      "a": "net@110227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 222.5,
+      "rate_a": 0.55625
+    },
+    {
+      "a": "net@110227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 385.5,
+      "rate_a": 0.96375
+    },
+    {
+      "a": "net@110227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 344.5,
+      "rate_a": 0.86125
+    },
+    {
+      "a": "net@110227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 291.0,
+      "rate_a": 0.7275
+    },
+    {
+      "a": "net@110227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 269.5,
+      "rate_a": 0.67375
+    },
+    {
+      "a": "net@110227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 245.5,
+      "rate_a": 0.61375
+    },
+    {
+      "a": "net@110227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 239.5,
+      "rate_a": 0.59875
+    },
+    {
+      "a": "net@110227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 229.5,
+      "rate_a": 0.57375
+    },
+    {
+      "a": "net@110227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 227.5,
+      "rate_a": 0.56875
+    },
+    {
+      "a": "net@110227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 205.0,
+      "rate_a": 0.5125
+    },
+    {
+      "a": "net@110227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 206.5,
+      "rate_a": 0.51625
+    },
+    {
+      "a": "net@110227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 215.5,
+      "rate_a": 0.53875
+    },
+    {
+      "a": "net@110227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 217.5,
+      "rate_a": 0.54375
+    },
+    {
+      "a": "net@110227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 220.0,
+      "rate_a": 0.55
+    },
+    {
+      "a": "net@110227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 224.5,
+      "rate_a": 0.56125
+    },
+    {
+      "a": "net@110227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 208.0,
+      "rate_a": 0.52
+    },
+    {
+      "a": "net@120227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 207.0,
+      "rate_a": 0.5175
+    },
+    {
+      "a": "net@120227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 207.5,
+      "rate_a": 0.51875
+    },
+    {
+      "a": "net@120227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 209.5,
+      "rate_a": 0.52375
+    },
+    {
+      "a": "net@120227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 387.0,
+      "rate_a": 0.9675
+    },
+    {
+      "a": "net@120227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 343.0,
+      "rate_a": 0.8575
+    },
+    {
+      "a": "net@120227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 277.0,
+      "rate_a": 0.6925
+    },
+    {
+      "a": "net@120227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 252.5,
+      "rate_a": 0.63125
+    },
+    {
+      "a": "net@120227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 226.0,
+      "rate_a": 0.565
+    },
+    {
+      "a": "net@120227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 240.5,
+      "rate_a": 0.60125
+    },
+    {
+      "a": "net@120227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 225.0,
+      "rate_a": 0.5625
+    },
+    {
+      "a": "net@120227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 202.5,
+      "rate_a": 0.50625
+    },
+    {
+      "a": "net@120227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 194.5,
+      "rate_a": 0.48625
+    },
+    {
+      "a": "net@120227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 203.5,
+      "rate_a": 0.50875
+    },
+    {
+      "a": "net@120227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 220.0,
+      "rate_a": 0.55
+    },
+    {
+      "a": "net@120227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 195.0,
+      "rate_a": 0.4875
+    },
+    {
+      "a": "net@120227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 208.0,
+      "rate_a": 0.52
+    },
+    {
+      "a": "net@120227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 203.0,
+      "rate_a": 0.5075
+    },
+    {
+      "a": "net@120227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 196.0,
+      "rate_a": 0.49
+    },
+    {
+      "a": "net@130227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 204.5,
+      "rate_a": 0.51125
+    },
+    {
+      "a": "net@130227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 204.5,
+      "rate_a": 0.51125
+    },
+    {
+      "a": "net@130227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 384.0,
+      "rate_a": 0.96
+    },
+    {
+      "a": "net@130227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 345.5,
+      "rate_a": 0.86375
+    },
+    {
+      "a": "net@130227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 272.0,
+      "rate_a": 0.68
+    },
+    {
+      "a": "net@130227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 243.5,
+      "rate_a": 0.60875
+    },
+    {
+      "a": "net@130227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 222.0,
+      "rate_a": 0.555
+    },
+    {
+      "a": "net@130227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 223.5,
+      "rate_a": 0.55875
+    },
+    {
+      "a": "net@130227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 227.0,
+      "rate_a": 0.5675
+    },
+    {
+      "a": "net@130227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 229.5,
+      "rate_a": 0.57375
+    },
+    {
+      "a": "net@130227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 193.5,
+      "rate_a": 0.48375
+    },
+    {
+      "a": "net@130227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 220.0,
+      "rate_a": 0.55
+    },
+    {
+      "a": "net@130227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 206.5,
+      "rate_a": 0.51625
+    },
+    {
+      "a": "net@130227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 197.0,
+      "rate_a": 0.4925
+    },
+    {
+      "a": "net@130227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 212.0,
+      "rate_a": 0.53
+    },
+    {
+      "a": "net@130227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 220.5,
+      "rate_a": 0.55125
+    },
+    {
+      "a": "net@130227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 190.5,
+      "rate_a": 0.47625
+    },
+    {
+      "a": "net@140227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 197.5,
+      "rate_a": 0.49375
+    },
+    {
+      "a": "net@140227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 379.5,
+      "rate_a": 0.94875
+    },
+    {
+      "a": "net@140227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 327.5,
+      "rate_a": 0.81875
+    },
+    {
+      "a": "net@140227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 264.5,
+      "rate_a": 0.66125
+    },
+    {
+      "a": "net@140227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 249.5,
+      "rate_a": 0.62375
+    },
+    {
+      "a": "net@140227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 224.5,
+      "rate_a": 0.56125
+    },
+    {
+      "a": "net@140227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 230.5,
+      "rate_a": 0.57625
+    },
+    {
+      "a": "net@140227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 210.0,
+      "rate_a": 0.525
+    },
+    {
+      "a": "net@140227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 199.0,
+      "rate_a": 0.4975
+    },
+    {
+      "a": "net@140227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 217.0,
+      "rate_a": 0.5425
+    },
+    {
+      "a": "net@140227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 186.0,
+      "rate_a": 0.465
+    },
+    {
+      "a": "net@140227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 196.5,
+      "rate_a": 0.49125
+    },
+    {
+      "a": "net@140227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 202.5,
+      "rate_a": 0.50625
+    },
+    {
+      "a": "net@140227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 201.5,
+      "rate_a": 0.50375
+    },
+    {
+      "a": "net@140227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 220.5,
+      "rate_a": 0.55125
+    },
+    {
+      "a": "net@140227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 185.0,
+      "rate_a": 0.4625
+    },
+    {
+      "a": "net@150227",
+      "b": "net@10227",
+      "games": 400,
+      "score_a": 379.0,
+      "rate_a": 0.9475
+    },
+    {
+      "a": "net@150227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 332.5,
+      "rate_a": 0.83125
+    },
+    {
+      "a": "net@150227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 271.5,
+      "rate_a": 0.67875
+    },
+    {
+      "a": "net@150227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 256.5,
+      "rate_a": 0.64125
+    },
+    {
+      "a": "net@150227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 227.0,
+      "rate_a": 0.5675
+    },
+    {
+      "a": "net@150227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 233.0,
+      "rate_a": 0.5825
+    },
+    {
+      "a": "net@150227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 210.0,
+      "rate_a": 0.525
+    },
+    {
+      "a": "net@150227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 193.0,
+      "rate_a": 0.4825
+    },
+    {
+      "a": "net@150227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 206.5,
+      "rate_a": 0.51625
+    },
+    {
+      "a": "net@150227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 203.0,
+      "rate_a": 0.5075
+    },
+    {
+      "a": "net@150227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 199.0,
+      "rate_a": 0.4975
+    },
+    {
+      "a": "net@150227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 205.5,
+      "rate_a": 0.51375
+    },
+    {
+      "a": "net@150227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 200.0,
+      "rate_a": 0.5
+    },
+    {
+      "a": "net@150227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 196.5,
+      "rate_a": 0.49125
+    },
+    {
+      "a": "net@150227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 207.5,
+      "rate_a": 0.51875
+    },
+    {
+      "a": "net@10227",
+      "b": "net@20227",
+      "games": 400,
+      "score_a": 118.0,
+      "rate_a": 0.295
+    },
+    {
+      "a": "net@10227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 61.0,
+      "rate_a": 0.1525
+    },
+    {
+      "a": "net@10227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 40.5,
+      "rate_a": 0.10125
+    },
+    {
+      "a": "net@10227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 24.0,
+      "rate_a": 0.06
+    },
+    {
+      "a": "net@10227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 40.0,
+      "rate_a": 0.1
+    },
+    {
+      "a": "net@10227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 27.5,
+      "rate_a": 0.06875
+    },
+    {
+      "a": "net@10227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 16.5,
+      "rate_a": 0.04125
+    },
+    {
+      "a": "net@10227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 19.5,
+      "rate_a": 0.04875
+    },
+    {
+      "a": "net@10227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 17.5,
+      "rate_a": 0.04375
+    },
+    {
+      "a": "net@10227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 17.5,
+      "rate_a": 0.04375
+    },
+    {
+      "a": "net@10227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 14.5,
+      "rate_a": 0.03625
+    },
+    {
+      "a": "net@10227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 24.0,
+      "rate_a": 0.06
+    },
+    {
+      "a": "net@10227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 23.0,
+      "rate_a": 0.0575
+    },
+    {
+      "a": "net@10227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 33.0,
+      "rate_a": 0.0825
+    },
+    {
+      "a": "net@20227",
+      "b": "net@30227",
+      "games": 400,
+      "score_a": 112.5,
+      "rate_a": 0.28125
+    },
+    {
+      "a": "net@20227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 82.0,
+      "rate_a": 0.205
+    },
+    {
+      "a": "net@20227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 69.5,
+      "rate_a": 0.17375
+    },
+    {
+      "a": "net@20227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 87.5,
+      "rate_a": 0.21875
+    },
+    {
+      "a": "net@20227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 66.5,
+      "rate_a": 0.16625
+    },
+    {
+      "a": "net@20227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 69.0,
+      "rate_a": 0.1725
+    },
+    {
+      "a": "net@20227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 66.0,
+      "rate_a": 0.165
+    },
+    {
+      "a": "net@20227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 58.0,
+      "rate_a": 0.145
+    },
+    {
+      "a": "net@20227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 55.5,
+      "rate_a": 0.13875
+    },
+    {
+      "a": "net@20227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 58.0,
+      "rate_a": 0.145
+    },
+    {
+      "a": "net@20227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 73.0,
+      "rate_a": 0.1825
+    },
+    {
+      "a": "net@20227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 60.0,
+      "rate_a": 0.15
+    },
+    {
+      "a": "net@20227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 61.5,
+      "rate_a": 0.15375
+    },
+    {
+      "a": "net@30227",
+      "b": "net@40227",
+      "games": 400,
+      "score_a": 192.5,
+      "rate_a": 0.48125
+    },
+    {
+      "a": "net@30227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 160.0,
+      "rate_a": 0.4
+    },
+    {
+      "a": "net@30227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 149.0,
+      "rate_a": 0.3725
+    },
+    {
+      "a": "net@30227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 142.0,
+      "rate_a": 0.355
+    },
+    {
+      "a": "net@30227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 124.0,
+      "rate_a": 0.31
+    },
+    {
+      "a": "net@30227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 135.0,
+      "rate_a": 0.3375
+    },
+    {
+      "a": "net@30227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 137.5,
+      "rate_a": 0.34375
+    },
+    {
+      "a": "net@30227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 143.5,
+      "rate_a": 0.35875
+    },
+    {
+      "a": "net@30227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 124.5,
+      "rate_a": 0.31125
+    },
+    {
+      "a": "net@30227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 138.0,
+      "rate_a": 0.345
+    },
+    {
+      "a": "net@30227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 128.0,
+      "rate_a": 0.32
+    },
+    {
+      "a": "net@30227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 145.0,
+      "rate_a": 0.3625
+    },
+    {
+      "a": "net@40227",
+      "b": "net@50227",
+      "games": 400,
+      "score_a": 176.5,
+      "rate_a": 0.44125
+    },
+    {
+      "a": "net@40227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 171.0,
+      "rate_a": 0.4275
+    },
+    {
+      "a": "net@40227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 161.0,
+      "rate_a": 0.4025
+    },
+    {
+      "a": "net@40227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 154.0,
+      "rate_a": 0.385
+    },
+    {
+      "a": "net@40227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 169.0,
+      "rate_a": 0.4225
+    },
+    {
+      "a": "net@40227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 158.5,
+      "rate_a": 0.39625
+    },
+    {
+      "a": "net@40227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 138.0,
+      "rate_a": 0.345
+    },
+    {
+      "a": "net@40227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 159.0,
+      "rate_a": 0.3975
+    },
+    {
+      "a": "net@40227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 156.5,
+      "rate_a": 0.39125
+    },
+    {
+      "a": "net@40227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 146.0,
+      "rate_a": 0.365
+    },
+    {
+      "a": "net@40227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 160.5,
+      "rate_a": 0.40125
+    },
+    {
+      "a": "net@50227",
+      "b": "net@60227",
+      "games": 400,
+      "score_a": 199.5,
+      "rate_a": 0.49875
+    },
+    {
+      "a": "net@50227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 174.0,
+      "rate_a": 0.435
+    },
+    {
+      "a": "net@50227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 172.5,
+      "rate_a": 0.43125
+    },
+    {
+      "a": "net@50227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 179.5,
+      "rate_a": 0.44875
+    },
+    {
+      "a": "net@50227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 182.0,
+      "rate_a": 0.455
+    },
+    {
+      "a": "net@50227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 169.0,
+      "rate_a": 0.4225
+    },
+    {
+      "a": "net@50227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 164.5,
+      "rate_a": 0.41125
+    },
+    {
+      "a": "net@50227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 184.5,
+      "rate_a": 0.46125
+    },
+    {
+      "a": "net@50227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 171.0,
+      "rate_a": 0.4275
+    },
+    {
+      "a": "net@50227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 174.5,
+      "rate_a": 0.43625
+    },
+    {
+      "a": "net@60227",
+      "b": "net@70227",
+      "games": 400,
+      "score_a": 196.0,
+      "rate_a": 0.49
+    },
+    {
+      "a": "net@60227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 180.0,
+      "rate_a": 0.45
+    },
+    {
+      "a": "net@60227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 181.0,
+      "rate_a": 0.4525
+    },
+    {
+      "a": "net@60227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 168.0,
+      "rate_a": 0.42
+    },
+    {
+      "a": "net@60227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 178.0,
+      "rate_a": 0.445
+    },
+    {
+      "a": "net@60227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 175.0,
+      "rate_a": 0.4375
+    },
+    {
+      "a": "net@60227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 157.5,
+      "rate_a": 0.39375
+    },
+    {
+      "a": "net@60227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 172.0,
+      "rate_a": 0.43
+    },
+    {
+      "a": "net@60227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 175.5,
+      "rate_a": 0.43875
+    },
+    {
+      "a": "net@70227",
+      "b": "net@80227",
+      "games": 400,
+      "score_a": 185.5,
+      "rate_a": 0.46375
+    },
+    {
+      "a": "net@70227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 200.5,
+      "rate_a": 0.50125
+    },
+    {
+      "a": "net@70227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 197.0,
+      "rate_a": 0.4925
+    },
+    {
+      "a": "net@70227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 197.0,
+      "rate_a": 0.4925
+    },
+    {
+      "a": "net@70227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 190.5,
+      "rate_a": 0.47625
+    },
+    {
+      "a": "net@70227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 202.5,
+      "rate_a": 0.50625
+    },
+    {
+      "a": "net@70227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 190.0,
+      "rate_a": 0.475
+    },
+    {
+      "a": "net@70227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 196.5,
+      "rate_a": 0.49125
+    },
+    {
+      "a": "net@80227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 220.0,
+      "rate_a": 0.55
+    },
+    {
+      "a": "net@80227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 199.0,
+      "rate_a": 0.4975
+    },
+    {
+      "a": "net@80227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 198.5,
+      "rate_a": 0.49625
+    },
+    {
+      "a": "net@80227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 205.0,
+      "rate_a": 0.5125
+    },
+    {
+      "a": "net@80227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 211.5,
+      "rate_a": 0.52875
+    },
+    {
+      "a": "net@80227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 188.0,
+      "rate_a": 0.47
+    },
+    {
+      "a": "net@80227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 201.0,
+      "rate_a": 0.5025
+    },
+    {
+      "a": "net@90227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 197.0,
+      "rate_a": 0.4925
+    },
+    {
+      "a": "net@90227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 193.0,
+      "rate_a": 0.4825
+    },
+    {
+      "a": "net@90227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 205.0,
+      "rate_a": 0.5125
+    },
+    {
+      "a": "net@90227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 204.5,
+      "rate_a": 0.51125
+    },
+    {
+      "a": "net@90227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 200.5,
+      "rate_a": 0.50125
+    },
+    {
+      "a": "net@90227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 203.5,
+      "rate_a": 0.50875
+    },
+    {
+      "a": "net@100227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 197.0,
+      "rate_a": 0.4925
+    },
+    {
+      "a": "net@100227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 185.0,
+      "rate_a": 0.4625
+    },
+    {
+      "a": "net@100227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 192.5,
+      "rate_a": 0.48125
+    },
+    {
+      "a": "net@100227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 204.0,
+      "rate_a": 0.51
+    },
+    {
+      "a": "net@100227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 193.0,
+      "rate_a": 0.4825
+    },
+    {
+      "a": "net@110227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 223.5,
+      "rate_a": 0.55875
+    },
+    {
+      "a": "net@110227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 193.0,
+      "rate_a": 0.4825
+    },
+    {
+      "a": "net@110227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 192.0,
+      "rate_a": 0.48
+    },
+    {
+      "a": "net@110227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 202.0,
+      "rate_a": 0.505
+    },
+    {
+      "a": "net@120227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 206.0,
+      "rate_a": 0.515
+    },
+    {
+      "a": "net@120227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 200.0,
+      "rate_a": 0.5
+    },
+    {
+      "a": "net@120227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 203.5,
+      "rate_a": 0.50875
+    },
+    {
+      "a": "net@130227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 217.5,
+      "rate_a": 0.54375
+    },
+    {
+      "a": "net@130227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 201.0,
+      "rate_a": 0.5025
+    },
+    {
+      "a": "net@140227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 196.0,
+      "rate_a": 0.49
+    }
+  ],
+  "config": {
+    "games": 400,
+    "simulations": 0,
+    "opening_plies": 2,
+    "anchor": "none",
+    "seed": 1,
+    "pairs_mode": "all"
+  }
+}

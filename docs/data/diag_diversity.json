@@ -1,0 +1,73 @@
+{
+  "config": {
+    "ckpts": [
+      "../runs/v2-bf16/ckpt/step00010227.pt",
+      "../runs/v2-bf16/ckpt/step00080227.pt",
+      "../runs/v2-bf16/ckpt/step00150227.pt"
+    ],
+    "games": 512,
+    "parallel": 1024,
+    "simulations": 64,
+    "temperature_plies": 12,
+    "engine_threads": 16,
+    "device": "cuda",
+    "seed": 1,
+    "out": "../runs/diag_diversity.json"
+  },
+  "rows": [
+    {
+      "games": 622,
+      "mean_plies": 29.705787781350484,
+      "uniq_first_move": 48,
+      "uniq_first_2": 176,
+      "uniq_first_4": 521,
+      "uniq_first_8": 622,
+      "uniq_games": 622,
+      "diverge_p10": 0.0,
+      "diverge_median": 0.0,
+      "diverge_p90": 1.0,
+      "identical_pair_rate": 0.0,
+      "p0_win_rate": 0.5707395498392283,
+      "draw_rate": 0.012861736334405145,
+      "step": 10227,
+      "ckpt": "step00010227.pt",
+      "evals_per_s": 51874
+    },
+    {
+      "games": 665,
+      "mean_plies": 29.92932330827068,
+      "uniq_first_move": 1,
+      "uniq_first_2": 8,
+      "uniq_first_4": 31,
+      "uniq_first_8": 141,
+      "uniq_games": 563,
+      "diverge_p10": 1.0,
+      "diverge_median": 1.0,
+      "diverge_p90": 6.0,
+      "identical_pair_rate": 0.00020030045067601402,
+      "p0_win_rate": 0.9203007518796993,
+      "draw_rate": 0.009022556390977444,
+      "step": 80227,
+      "ckpt": "step00080227.pt",
+      "evals_per_s": 51467
+    },
+    {
+      "games": 787,
+      "mean_plies": 30.810673443456164,
+      "uniq_first_move": 1,
+      "uniq_first_2": 5,
+      "uniq_first_4": 15,
+      "uniq_first_8": 65,
+      "uniq_games": 432,
+      "diverge_p10": 1.0,
+      "diverge_median": 1.0,
+      "diverge_p90": 11.0,
+      "identical_pair_rate": 0.008313717634096258,
+      "p0_win_rate": 0.8869123252858958,
+      "draw_rate": 0.048284625158831,
+      "step": 150227,
+      "ckpt": "step00150227.pt",
+      "evals_per_s": 51063
+    }
+  ]
+}

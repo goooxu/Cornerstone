@@ -482,7 +482,7 @@ grep '\[自检\]' ../runs/v2-fp8/train.log | sort | uniq -c
 | checkpoint | 15 份里程碑（每 1 万步一档，10,234 … 150,234） |
 | 单份大小 | 162.5 MiB（与 BF16 那条完全相同） |
 | 训练指标 | `runs/v2-fp8/logs/metrics.jsonl`（376 行） |
-| 评测原始数据 | `runs/arena_v2_fp8.json`（190 对）、`runs/cross_ab.json`（28 对，§5） |
+| 评测原始数据 | [`arena_v2_fp8.json`](../docs/附录-arena原始结果.md)（190 对）、`docs/data/cross_ab.json`（28 对，§5） |
 
 `runs/` 不进 git，路径列在这里是为了在开发机上能找到原始数据。
 

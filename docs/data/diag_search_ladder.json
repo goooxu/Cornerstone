@@ -1,0 +1,347 @@
+{
+  "participants": [
+    {
+      "name": "greedy-mobility",
+      "kind": "rule",
+      "spec": "greedy-mobility",
+      "elo": 0.0,
+      "stderr": 0.0,
+      "games": 3201,
+      "score_rate": 0.006872852233676976
+    },
+    {
+      "name": "net@80227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00080227.pt",
+      "elo": 821.5863817307264,
+      "stderr": 47.86805988528068,
+      "games": 3201,
+      "score_rate": 0.5393626991565136
+    },
+    {
+      "name": "net@90227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00090227.pt",
+      "elo": 788.7691855322396,
+      "stderr": 46.84892825250853,
+      "games": 3200,
+      "score_rate": 0.49234375
+    },
+    {
+      "name": "net@100227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00100227.pt",
+      "elo": 812.7720420793486,
+      "stderr": 47.501367899697904,
+      "games": 3200,
+      "score_rate": 0.5265625
+    },
+    {
+      "name": "net@110227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00110227.pt",
+      "elo": 832.983195239578,
+      "stderr": 47.927255900588385,
+      "games": 3200,
+      "score_rate": 0.555625
+    },
+    {
+      "name": "net@120227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00120227.pt",
+      "elo": 860.2522019353939,
+      "stderr": 47.401443910321944,
+      "games": 3200,
+      "score_rate": 0.59484375
+    },
+    {
+      "name": "net@130227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00130227.pt",
+      "elo": 852.4144421108012,
+      "stderr": 47.44478661147757,
+      "games": 3200,
+      "score_rate": 0.58359375
+    },
+    {
+      "name": "net@140227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00140227.pt",
+      "elo": 857.2017413996258,
+      "stderr": 47.782905314655856,
+      "games": 3200,
+      "score_rate": 0.59046875
+    },
+    {
+      "name": "net@150227",
+      "kind": "net",
+      "spec": "/home/scratch.gemsg_sw/blokus-duo-claude-opus-5/runs/v2-bf16/ckpt/step00150227.pt",
+      "elo": 871.1798719738889,
+      "stderr": 48.718736439075656,
+      "games": 3200,
+      "score_rate": 0.61046875
+    }
+  ],
+  "pairs": [
+    {
+      "a": "greedy-mobility",
+      "b": "net@80227",
+      "games": 401,
+      "score_a": 3.0,
+      "rate_a": 0.007481296758104738
+    },
+    {
+      "a": "greedy-mobility",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 1.0,
+      "rate_a": 0.0025
+    },
+    {
+      "a": "greedy-mobility",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 7.0,
+      "rate_a": 0.0175
+    },
+    {
+      "a": "greedy-mobility",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 4.0,
+      "rate_a": 0.01
+    },
+    {
+      "a": "greedy-mobility",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 1.0,
+      "rate_a": 0.0025
+    },
+    {
+      "a": "greedy-mobility",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 2.0,
+      "rate_a": 0.005
+    },
+    {
+      "a": "greedy-mobility",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 2.0,
+      "rate_a": 0.005
+    },
+    {
+      "a": "greedy-mobility",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 2.0,
+      "rate_a": 0.005
+    },
+    {
+      "a": "net@80227",
+      "b": "net@90227",
+      "games": 400,
+      "score_a": 218.0,
+      "rate_a": 0.545
+    },
+    {
+      "a": "net@80227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 216.0,
+      "rate_a": 0.54
+    },
+    {
+      "a": "net@80227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 199.0,
+      "rate_a": 0.4975
+    },
+    {
+      "a": "net@80227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 164.0,
+      "rate_a": 0.41
+    },
+    {
+      "a": "net@80227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 180.0,
+      "rate_a": 0.45
+    },
+    {
+      "a": "net@80227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 177.0,
+      "rate_a": 0.4425
+    },
+    {
+      "a": "net@80227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 174.5,
+      "rate_a": 0.43625
+    },
+    {
+      "a": "net@90227",
+      "b": "net@100227",
+      "games": 400,
+      "score_a": 187.0,
+      "rate_a": 0.4675
+    },
+    {
+      "a": "net@90227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 173.5,
+      "rate_a": 0.43375
+    },
+    {
+      "a": "net@90227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 162.5,
+      "rate_a": 0.40625
+    },
+    {
+      "a": "net@90227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 160.5,
+      "rate_a": 0.40125
+    },
+    {
+      "a": "net@90227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 154.5,
+      "rate_a": 0.38625
+    },
+    {
+      "a": "net@90227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 156.5,
+      "rate_a": 0.39125
+    },
+    {
+      "a": "net@100227",
+      "b": "net@110227",
+      "games": 400,
+      "score_a": 183.5,
+      "rate_a": 0.45875
+    },
+    {
+      "a": "net@100227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 186.0,
+      "rate_a": 0.465
+    },
+    {
+      "a": "net@100227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 174.0,
+      "rate_a": 0.435
+    },
+    {
+      "a": "net@100227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 191.5,
+      "rate_a": 0.47875
+    },
+    {
+      "a": "net@100227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 160.0,
+      "rate_a": 0.4
+    },
+    {
+      "a": "net@110227",
+      "b": "net@120227",
+      "games": 400,
+      "score_a": 183.0,
+      "rate_a": 0.4575
+    },
+    {
+      "a": "net@110227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 196.0,
+      "rate_a": 0.49
+    },
+    {
+      "a": "net@110227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 179.5,
+      "rate_a": 0.44875
+    },
+    {
+      "a": "net@110227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 179.5,
+      "rate_a": 0.44875
+    },
+    {
+      "a": "net@120227",
+      "b": "net@130227",
+      "games": 400,
+      "score_a": 206.5,
+      "rate_a": 0.51625
+    },
+    {
+      "a": "net@120227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 199.5,
+      "rate_a": 0.49875
+    },
+    {
+      "a": "net@120227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 194.0,
+      "rate_a": 0.485
+    },
+    {
+      "a": "net@130227",
+      "b": "net@140227",
+      "games": 400,
+      "score_a": 198.0,
+      "rate_a": 0.495
+    },
+    {
+      "a": "net@130227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 188.5,
+      "rate_a": 0.47125
+    },
+    {
+      "a": "net@140227",
+      "b": "net@150227",
+      "games": 400,
+      "score_a": 191.5,
+      "rate_a": 0.47875
+    }
+  ],
+  "config": {
+    "games": 400,
+    "simulations": 64,
+    "opening_plies": 2,
+    "anchor": "greedy-mobility",
+    "seed": 1,
+    "pairs_mode": "all"
+  }
+}
